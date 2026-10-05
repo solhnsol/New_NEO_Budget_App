@@ -25,6 +25,8 @@ Tests/
 
 언어를 정하면 해당 언어의 package 관례로 디렉터리를 조정한다. Runtime Core에 fixture runner/파일 I/O를 끌어들이지 않는다.
 
+현재 Swift Package에서 Core는 `Sources/NEOBudgetCore`, 테스트용 Infrastructure는 별도 `Sources/NEOBudgetInMemoryStorage` target으로 분리했다. 정규화는 Parsing으로 이동했고 중립 RawNotification/Repository 계약만 구현했다. 나머지 금융 계층은 이 문서의 설계 초안이다. Platform/iOS와 Platform/Android는 경계 문서만 둔다. 상세 결과는 platform-boundary-review.md 참조.
+
 ## 핵심 모델 제안
 
 | 모델 | 주요 정보/책임 |

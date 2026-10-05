@@ -4,10 +4,16 @@ import PackageDescription
 let package = Package(
     name: "NEOBudgetCore",
     products: [
-        .library(name: "NEOBudgetCore", targets: ["NEOBudgetCore"])
+        .library(name: "NEOBudgetCore", targets: ["NEOBudgetCore"]),
+        .library(name: "NEOBudgetInMemoryStorage", targets: ["NEOBudgetInMemoryStorage"])
     ],
     targets: [
         .target(name: "NEOBudgetCore"),
-        .testTarget(name: "NEOBudgetCoreTests", dependencies: ["NEOBudgetCore"])
+        .target(name: "NEOBudgetInMemoryStorage", dependencies: ["NEOBudgetCore"]),
+        .testTarget(
+            name: "NEOBudgetCoreTests",
+            dependencies: ["NEOBudgetCore", "NEOBudgetInMemoryStorage"],
+            resources: [.copy("Fixtures")]
+        )
     ]
 )

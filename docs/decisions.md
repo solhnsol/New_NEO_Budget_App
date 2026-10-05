@@ -5,7 +5,7 @@
 ## 이미 사용자 지시로 확정된 범위
 
 - offline-first/local-first, deterministic, idempotent, testable.
-- iPhone 내부 자체 엔진, Actual/FastAPI 실행 의존성 없음.
+- iPhone 내부 자체 엔진, Actual/FastAPI 실행 의존성 없음. Android 확장을 고려하되 현재 Swift를 유지하고 OS adapter와 Core를 분리.
 - 현재 Windows에서 개발 가능한 Core와 저장 인터페이스부터 진행.
 - UI/App Intents/Shortcuts/SwiftData/Core Data/background/iCloud/StoreKit/배포는 현재 구현하지 않음.
 - 첫 milestone은 샘플 알림 → 정확한 원장, 반복 처리 중복 없음, 이체/취소/환불의 정확한 소비 통계.
@@ -51,8 +51,17 @@
 
 - 첫 저장소는 in-memory 계약 테스트 후 파일/SQLite 어댑터 후보를 비교. 특정 iOS DB로 확정하지 않음.
 - 이월은 없음/양수만/음수 포함, 그룹 정책과 소급 변경을 구체적인 수치로 논의.
-- 현재 로컬 계획 브랜치 plan/local-first-core만 생성. commit/push/PR과 기능 브랜치 순서는 변경 내용을 제시한 뒤 함께 확인.
+- 사용자 승인으로 준비 커밋 `2b8aefe`와 main/plan/local-first-core 기준점을 생성했다. 작성자는 사용자가 제공한 solhnsol 정보로 이 저장소에만 설정했다. push는 HTTPS/SSH 인증 부재로 실패했으며 원격 공개 완료가 아니다.
+- 사용자 요청 범위의 플랫폼 경계 리팩터링은 refactor/platform-neutral-boundaries 브랜치에서 진행한다.
 
 사용자는 Linux 환경을 고집할 필요가 없으며 더 빠른 Windows 환경에서 clone 후 이어갈 수 있다고 설명했다. 현재 작업은 Windows 인계가 가능한 소스/문서로 준비하고 환경별 검증 결과를 구분한다.
 
 모든 설명은 결정 내용 → 사용자에게 보이는 예시 → 대안/비용 → 검증 방법 → 선택의 순서로 진행한다. 알고리즘은 입력/설정/버전을 명시하고 근거를 기록한다.
+
+## D006 — 플랫폼 경계: 사용자 요청 범위로 구현
+
+Swift Core를 유지하고 Apple framework/OS 객체/구체 DB 호출을 분리한다. Android 앱/KMP/JNI 또는 iOS 기능을 지금 구현하지 않는다.
+
+최소 변경: 정규화는 Parsing에 배치, RawNotification은 순수 값, 원본 저장은 protocol, in-memory adapter는 별도 target. Foundation의 NFC 기능은 Linux 검증을 유지하고 불필요하게 다시 만들지 않는다. raw ID 동일 기록 재삽입/충돌 계약만 정의하며 금융 dedup 정책은 D003의 선택을 그대로 남긴다.
+
+같은 Swift 엔진의 Android 재사용 후보는 공식 Android SDK/Java 연동 경로다. OS 중립 구조가 Android 실행·패키징 검증을 대신하지 않으며 해당 결정/검증은 추후 진행한다.
