@@ -1,0 +1,13 @@
+.build/
+.swiftpm/
+.tooling/
+*.xcodeproj/
+.DS_Store
+
+# Local financial data and credentials are never repository fixtures.
+.env
+.env.*
+data/
+*.db
+*.db-wal
+*.db-shm
