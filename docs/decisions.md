@@ -51,7 +51,7 @@
 
 - 첫 저장소는 in-memory 계약 테스트 후 파일/SQLite 어댑터 후보를 비교. 특정 iOS DB로 확정하지 않음.
 - 이월은 없음/양수만/음수 포함, 그룹 정책과 소급 변경을 구체적인 수치로 논의.
-- 사용자 승인으로 준비 커밋 `2b8aefe`와 main/plan/local-first-core 기준점을 생성했다. 작성자는 사용자가 제공한 solhnsol 정보로 이 저장소에만 설정했다. push는 HTTPS/SSH 인증 부재로 실패했으며 원격 공개 완료가 아니다.
+- 사용자 승인으로 준비 커밋 `2b8aefe`와 main/plan/local-first-core 기준점을 생성했다. 작성자는 사용자가 제공한 solhnsol 정보로 이 저장소에만 설정했다. 최초 push는 HTTPS/SSH 인증 부재로 실패했으나, 2026-10-06 사용자 GitHub 기기 인증 후 세 브랜치 업로드와 원격 커밋 일치 확인을 완료했다.
 - 사용자 요청 범위의 플랫폼 경계 리팩터링은 refactor/platform-neutral-boundaries 브랜치에서 진행한다.
 
 사용자는 Linux 환경을 고집할 필요가 없으며 더 빠른 Windows 환경에서 clone 후 이어갈 수 있다고 설명했다. 현재 작업은 Windows 인계가 가능한 소스/문서로 준비하고 환경별 검증 결과를 구분한다.

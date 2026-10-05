@@ -19,7 +19,7 @@ swift test
 
 현재 변경은 로컬 브랜치에만 있으므로 원격 clone만으로 아직 이 소스를 받을 수 없다. 브랜치 공개 후 안내를 갱신한다.
 
-준비 커밋은 생성됐지만 push는 GitHub 인증이 없어 실패했다. 현재 리팩터링 브랜치는 `refactor/platform-neutral-boundaries`이며 인증/공개 후 이 브랜치로 Windows 작업을 이어갈 수 있다.
+2026-10-06 GitHub 인증 후 `main`, `plan/local-first-core`, `refactor/platform-neutral-boundaries` 업로드와 원격 커밋 일치 확인을 완료했다. Windows에서는 `refactor/platform-neutral-boundaries`를 clone해 이어서 작업한다. 명령은 `docs/handoff.md`를 참고한다.
 
 통과 기준: build 성공, 테스트 발견/실행, 실패 0개. 실제 Windows 실행 로그 또는 Windows CI를 확보하기 전에는 Windows 검증 완료로 보고하지 않는다. CI 도구/버전/공개는 별도 결정한다.
 

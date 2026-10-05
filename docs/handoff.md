@@ -1,6 +1,6 @@
 # Windows 세션 인계
 
-현재 작업 브랜치: `refactor/platform-neutral-boundaries`. 준비 커밋 `2b8aefe`를 main/plan/local-first-core에 만들었다. 사용자가 commit/push를 승인했지만 GitHub 인증이 없어 push에 실패했다. 원격 공개 완료로 오해하지 않는다.
+현재 작업 브랜치: `refactor/platform-neutral-boundaries`. 2026-10-06 GitHub 업로드 및 원격 커밋 일치 확인 완료. `main`과 `plan/local-first-core`는 준비 커밋 `2b8aefe`, 작업 브랜치는 Core 경계 리팩터링 `607abf2`와 이후 인계 문서 수정 커밋을 포함한다.
 
 ## 확정된 방향
 
@@ -20,7 +20,7 @@ Swift Package, 중립 RawNotification, Parsing의 Foundation 기반 알림 텍�
 1. 강한 ID 없는 모호한 유사 알림: 확인 후보 보관 vs 별도 거래 반영+중복 의심 표시.
 2. 지난달 구매의 이번 달 환불: 이번 달 소비 상쇄 vs 원구매 월 수정/이월 재계산. 앞서 사용자에게 제시한 질문은 아직 답을 받지 못했다.
 3. 최소 원장 부호/금액 범위, 카드 미납/납부/환불 규약과 in-memory 저장 계약을 예시로 설명하고 구현.
-4. GitHub 인증 복구와 원격 push 또는 bundle Windows 인계. 실제 Windows 검증 방식은 선택 필요.
+4. Windows에서 작업 브랜치를 clone하고 Swift 빌드/테스트 검증. 실제 Windows 검증은 아직 수행하지 않았다.
 
 ## 환경 및 검증
 
@@ -34,24 +34,16 @@ Linux 테스트 도구는 `.tooling/`에 격리돼 있으며 Git에서 제외된
 
 실제 금융 알림 샘플은 현재 새 저장소에 복사하지 않았다. 기존 테스트/40개 fixture의 형식과 시나리오는 분석했으며, 원문을 가져오기 전에 익명화한다.
 
-## 원격 인증 없이 Windows로 먼저 옮기기
-
-이력과 세 브랜치를 담은 `New_NEO_Budget_App.bundle`을 생성해 검증했다. 이 파일에는 `.tooling/`, 빌드 캐시, GitHub 인증 정보가 들어가지 않는다. 현재 checkpoint의 bundle을 다운로드한 폴더에서:
+## GitHub에서 Windows로 이어받기
 
 ```powershell
-git clone --branch refactor/platform-neutral-boundaries .\New_NEO_Budget_App.bundle New_NEO_Budget_App
+git clone --branch refactor/platform-neutral-boundaries https://github.com/solhnsol/New_NEO_Budget_App.git
 Set-Location New_NEO_Budget_App
-git remote rename origin offline-bundle
-git branch main offline-bundle/main
-git branch plan/local-first-core offline-bundle/plan/local-first-core
-git remote add origin https://github.com/solhnsol/New_NEO_Budget_App.git
-```
-
-Windows Git의 GitHub 인증을 완료한 뒤 원격에 공개한다:
-
-```powershell
-git push origin main plan/local-first-core refactor/platform-neutral-boundaries
+swift --version
+swift build
 swift test
 ```
 
-이는 Windows 인계를 선택했을 때 사용할 경로이며 현재 원격 push가 성공했다는 의미가 아니다. bundle 이후 새 커밋이 생기면 최신 bundle 또는 원격 브랜치를 사용한다. 소스만 ZIP으로 복사하는 것과 달리 bundle은 커밋 작성자와 브랜치 이력을 유지한다.
+공식 Swift Windows 설치를 먼저 완료한다. clone은 현재 공개 저장소에서 인증 없이 가능하며, Windows에서 이후 push할 때는 해당 환경의 GitHub 인증이 필요하다. Linux의 `.tooling/`이나 인증 정보를 Windows로 복사하지 않는다.
+
+기존 `New_NEO_Budget_App.bundle`은 초기 두 커밋을 보관한 오프라인 백업이며 이후 문서 커밋은 포함하지 않는다. 이어서 작업할 때는 GitHub의 최신 작업 브랜치를 사용한다.
