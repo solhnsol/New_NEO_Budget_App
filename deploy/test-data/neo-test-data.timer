@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh local synthetic NEO test data hourly
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=neo-test-data.service
+
+[Install]
+WantedBy=timers.target
