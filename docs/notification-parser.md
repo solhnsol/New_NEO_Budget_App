@@ -1,30 +1,40 @@
-# 금융 알림 parser 계약
+# 금융 알림 ingestion 계약
 
-`TransactionCandidateParser`의 출력은 금융 사실의 제안이지 저장 완료된 원장이 아니다.
+Parser의 출력은 ledger 후보가 아니라 알림에서 직접 관측한 사실이다.
 
 ```text
 RawNotification
   -> TransactionCandidateParser
+  -> TransactionCandidateDraft
+  -> TransactionAccountResolver / TransactionCandidateAssembler
   -> TransactionCandidate
-  -> correlator/review
-  -> CandidateProcessingRepository
+  -> CandidateDeduplicationValidator
+  -> CandidateProcessingRepository (atomic)
   -> Ledger
 ```
 
-Parser에는 repository, ledger, 시스템 clock, locale, OS 계좌 객체가 전달되지 않는다. application은 확인된 계좌/카드 binding, 통화, 예산 월, 환불 원거래 연결을 `NotificationParsingContext`로 제공한다.
+## 경계
 
-## ready 조건
+- Parser는 금액, 방향, 행위 종류, 원문 상대방, 수단 힌트, 시각과 evidence만 추출한다.
+- Draft에는 `AccountID`, `CreditInstrumentID`, `LedgerEntryID`가 없다.
+- `NotificationParsingContext`에는 결정론에 필요한 타임존, 기준 시각, parser ID/version만 있다.
+- Resolver가 계좌 또는 카드 수단을 바인딩하고 Assembler가 실제 `TransactionCandidate`와 proposed entry를 만든다.
+- Parser와 Assembler는 repository나 ledger를 수정하지 않는다.
+- `CandidateProcessingRepository.process`만 candidate 저장과 ready ledger 승격을 하나의 원자 작업으로 수행한다.
 
-- 지원하는 행위가 명시돼 있음: 승인/사용/결제, 입금, 이체/송금, 취소/환불, 카드대금/결제대금.
-- 잔액 줄이 아닌 원 단위 거래 금액이 있음.
-- `notificationAtUnixMilliseconds`가 있음. 수집 시각을 실제 거래 시각으로 바꾸지 않음.
-- source binding과 행위별 필수 상대가 있음.
-- 거래번호/승인번호 등 강한 금융 거래 reference가 있음.
-- 환불은 원거래 ledger ID와 원구매 예산 월을 찾을 수 있음.
+## review 및 identity 규칙
 
-하나라도 부족하면 `needsReview`다. 지원하지 않는 광고/안내는 `rejected`다. `sourceDeliveryID`는 raw 재전송 식별자일 뿐 금융 거래 reference로 승격하지 않는다.
+강한 ID가 없다는 사실만으로 review가 되지 않는다. 금액·방향·계좌 등이 충분하고 parser issue가 soft뿐이면 merchant/payee가 없어도 ready로 조립할 수 있다. 강한 identity가 없는 유사 후보가 이미 있을 때만 dedup 계층이 `ambiguousWithoutStrongIdentity`를 올린다.
 
-## 생성 결과
+승인번호는 application scope 안의 유용한 evidence지만 단독 전역 strong ID가 아니다. Source delivery ID나 provider transaction ID는 scope를 포함해 비교한다. 같은 strong evidence가 확인되면 dedup 결과는 기존 candidate의 duplicate이며 두 번째 candidate를 atomic promotion에 넘기지 않는다.
+
+Candidate/entry ID는 raw notification ID, parser version, event index를 길이 구분해 결정적으로 만든다. 승인번호를 ID로 사용하지 않는다.
+
+## 시각 provenance
+
+원문 거래 시각이 없을 때 notification timestamp, 그마저 없으면 capture timestamp를 fallback으로 쓸 수 있다. `ObservedTimestamp.source`는 각각 `text`, `notificationTime`, `captureTime`을 보존한다. Capture fallback은 `timeAbsentFallback` soft issue이며 그 자체로 자동 처리를 막지 않는다.
+
+## ledger 결과
 
 - 은행/현금 지출: 음수 `Posting`과 expense `BudgetImpact`.
 - 카드 사용: 양수 `LiabilityChange`와 expense `BudgetImpact`; 현금 Posting 없음.
@@ -33,8 +43,4 @@ Parser에는 repository, ledger, 시스템 clock, locale, OS 계좌 객체가 �
 - 카드대금: 음수 은행 `Posting`과 음수 `LiabilityChange`; 소비 예산 영향 없음.
 - 환불: 실제 발생 시각의 양수 Posting 또는 음수 Liability, 원구매 월의 return `BudgetImpact`.
 
-Candidate/entry ID는 application identifier, 행위, provider reference를 길이 구분해 결정적으로 만든다. 같은 provider 거래가 서로 다른 title/body 배치로 들어와도 identity는 같지만, 서로 다른 provider의 알림을 하나의 거래로 결합하는 책임은 parser가 아니라 후속 correlator에 있다.
-
-## 현재 한계
-
-현재 구현은 익명 합성 입력으로 검증한 엄격한 한국어 baseline이다. 특정 provider의 모든 문구를 지원한다고 간주하지 않는다. provider profile을 추가할 때는 개인정보를 제거한 실제 title/subtitle/body, 기대 candidate 상태, parser policy version을 fixture로 함께 보관한다.
+현재 한국어 parser는 경계 검증용 보수적 baseline이다. `synthetic-notification-coverage.json` 26개 형식은 결정론과 provenance를 검증하지만 provider별 완전 지원을 뜻하지 않는다. 상세 fixture 구현은 atomic promotion 계약 이후 단계에서 확장한다.

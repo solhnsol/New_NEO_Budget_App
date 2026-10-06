@@ -1,4 +1,4 @@
-# Parser 계약 (Parser Contract) — 설계 초안
+# Parser 계약 (Parser Contract) — Core 경계 채택
 
 상태: **초안. 코드 변경 없음.** Core ledger / candidate promotion 구현과 병렬로 준비한 문서이며, 아래 §9의 열린 질문은 구현 에이전트·사용자와 합의 후 확정한다.
 짝 문서: [parser-fixtures.md](parser-fixtures.md) (케이스별 fixture matrix).
@@ -8,7 +8,7 @@
 ## 1. 파이프라인에서의 위치
 
 ```text
-금융 앱 알림 → RawNotification → [Parser] → TransactionCandidate(Draft)
+금융 앱 알림 → RawNotification → [Parser] → TransactionCandidateDraft
             → validation / dedup / review → ledger
 ```
 
@@ -270,9 +270,9 @@ ML 확률이 아니라 규칙 기반 등급이다. 시작 1.0에서 감점하고
 
 해시 알고리즘·직렬화 형식은 구현 에이전트가 고정하되, **fixture는 해시값이 아니라 "evidence kind와 구성 필드"를 단언**한다(구현 종속 방지). 구성 문자열 자체를 노출하는 테스트 헬퍼(`fingerprintInput`)를 두면 fixture에서 정확한 구성을 검증할 수 있다.
 
-## 9. 기존 Core 타입과의 매핑 및 열린 질문
+## 9. Core 타입 매핑과 채택된 결정
 
-현재 `TransactionCandidate`(`Sources/NEOBudgetCore/Domain/TransactionCandidate.swift`)는 `evidenceIDs`, `status`, `issues`, `proposedEntry: LedgerEntry?`, `policyVersion`만 갖고, `ready`는 `proposedEntry != nil && issues.isEmpty`를 요구한다. `LedgerEntry`는 `AccountID` 기반 Posting을 요구하므로 **parser 단계에서는 `ready`를 만들 수 없다.**
+`TransactionCandidateDraft`는 parser 전용 facts 타입이며 계좌/카드/ledger ID를 갖지 않는다. `TransactionCandidate`는 audit용 optional `sourceDraft`를 보존하고, `ready`는 `proposedEntry != nil && issues.isEmpty`를 요구한다. `TransactionAccountResolver`와 `TransactionCandidateAssembler`가 binding과 entry 생성을 담당하므로 **parser 단계에서는 `ready`를 만들 수 없다.**
 
 제안 매핑:
 
@@ -284,15 +284,15 @@ ML 확률이 아니라 규칙 기반 등급이다. 시작 1.0에서 감점하고
 | `failed` | `needsReview` + `parserUncertain`, 파싱된 필드 없음 |
 | `notTransaction` | candidate 없음 (raw에 분류 결과만 기록) |
 
-열린 질문 (구현 에이전트/사용자 확인 필요):
+채택된 구현 결정:
 
-- **Q1 Draft 위치.** parsed facts(`TransactionCandidateDraft`)를 `TransactionCandidate`에 필드로 추가할지, parser 전용 타입으로 두고 Assembler가 변환할지. 현재 `TransactionCandidate`에는 파싱 사실을 담을 곳이 없다. 이 문서는 후자(parser 전용 타입)를 가정한다.
-- **Q2 `parsed` 상태.** `CandidateStatus`에 pre-binding 상태가 필요한가, 아니면 Assembler 내부 타입으로만 둘 것인가.
-- **Q3 `merchantMissing`을 soft로 둔 결정.** 상호가 없어도 금액/수단/시각이 확실하면 자동 처리 가능으로 본다(상호는 메타데이터). 더 보수적으로 가려면 hard로 올린다.
-- **Q4 `approval-no` 강도.** scoped로 두었다. 이 조합을 dedup에서 strong으로 인정할지는 D003의 연장 결정.
-- **Q5 시각 fallback 허용.** 시각 absent 시 알림/수신 시각으로 대체(soft)하는 정책이 사용자 의도와 맞는지(§4.3). 대안: 항상 review.
+- **Q1 Draft 위치.** 별도 parser 출력 타입으로 두고 assembled candidate가 audit용 `sourceDraft`를 보존한다.
+- **Q2 `parsed` 상태.** `CandidateStatus`에 추가하지 않고 Draft 타입 자체가 pre-binding 상태다.
+- **Q3 `merchantMissing`.** soft issue이며 금액/방향/binding이 충분하면 자동 처리 가능하다.
+- **Q4 `approval-no` 강도.** scoped evidence이며 전역 strong ID로 보지 않는다.
+- **Q5 시각 fallback.** notification/capture timestamp fallback을 허용하고 provenance와 soft issue를 보존한다.
 - **Q6 통화 `$` 기본값 금지.** 구현상 편의와 정확성의 절충(§4.2). 사용자의 실제 해외 결제 알림 샘플로 재검토.
-- **Q7 candidate ID 생성.** `TransactionCandidateID`를 `hash(rawNotificationID + parserVersion + eventIndex)`처럼 결정적으로 만들지(재파싱 시 같은 ID) vs 외부 주입. 재파싱 정책과 연결.
+- **Q7 candidate ID 생성.** rawNotificationID + parserVersion + eventIndex를 길이 구분해 결정적으로 만든다. 승인번호를 ID로 쓰지 않는다.
 
 ## 10. 테스트 규약
 

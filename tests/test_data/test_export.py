@@ -47,7 +47,7 @@ class ExportTests(unittest.TestCase):
         c.commit()
         before = c.execute("SELECT json FROM events").fetchall()
         self.assertEqual(self.run_export("--ingest-db", str(self.source), "--output", str(self.output)), 0)
-        text = self.output.read_text()
+        text = self.output.read_text(encoding="utf-8")
         for value in ("PRIVATE", "982376541", "917654329", "2026-09-19", "19:43:27", "private.example"):
             self.assertNotIn(value, text)
         data = json.loads(text)
@@ -56,7 +56,8 @@ class ExportTests(unittest.TestCase):
             "rows": 3, "unsupported": 1, "malformed": 1,
             "unparsedNotifications": 1, "pendingNotifications": 0})
         self.assertEqual(before, c.execute("SELECT json FROM events").fetchall())
-        self.assertEqual(os.stat(self.output).st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(os.stat(self.output).st_mode & 0o777, 0o600)
 
     def test_wal_refresh_sees_new_shapes_and_is_idempotent(self):
         c = self.ingest([{"type": "tb_in", "ownSelf": False}])
@@ -68,23 +69,23 @@ class ExportTests(unittest.TestCase):
         c.execute("INSERT INTO events VALUES (?)", (json.dumps({"type": "tb_out"}),))
         c.commit()
         self.assertEqual(self.run_export(*args), 0)
-        self.assertEqual(len(json.loads(self.output.read_text())["notifications"]), 2)
+        self.assertEqual(len(json.loads(self.output.read_text(encoding="utf-8"))["notifications"]), 2)
         self.assertTrue(Path(str(self.source) + "-wal").exists())
 
     def test_failed_read_keeps_previous_output_and_does_not_create_source(self):
         self.output.parent.mkdir()
-        self.output.write_text("previous")
+        self.output.write_text("previous", encoding="utf-8")
         missing = self.root / "absent.sqlite"
         self.assertEqual(self.run_export("--ingest-db", str(missing), "--output", str(self.output)), 1)
         self.assertFalse(missing.exists())
-        self.assertEqual(self.output.read_text(), "previous")
+        self.assertEqual(self.output.read_text(encoding="utf-8"), "previous")
         self.ingest([])
         c = sqlite3.connect(self.source)
         c.execute("DROP TABLE events")
         c.commit()
         c.close()
         self.assertEqual(self.run_export("--ingest-db", str(self.source), "--output", str(self.output)), 1)
-        self.assertEqual(self.output.read_text(), "previous")
+        self.assertEqual(self.output.read_text(encoding="utf-8"), "previous")
 
     def test_changes_to_personal_values_cannot_change_the_generated_fixture(self):
         a = {"type": "credit_approval", "installment": "일시불", "amount": 123,
@@ -107,8 +108,8 @@ class ExportTests(unittest.TestCase):
         c.commit()
         c.close()
         self.assertEqual(self.run_export("--inbox-db", str(self.source), "--output", str(self.output)), 0)
-        self.assertNotIn("PRIVATE", self.output.read_text())
-        data = json.loads(self.output.read_text())
+        self.assertNotIn("PRIVATE", self.output.read_text(encoding="utf-8"))
+        data = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertEqual(len(data["inboxShapes"]), 2)
         self.assertEqual(data["localReport"]["inbox"]["unsupported"], 1)
 
@@ -120,19 +121,19 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(self.run_export("--synthetic-catalog", "--output", str(self.output)), 0)
         fixture = SCRIPT.parents[2] / "Tests/NEOBudgetCoreTests/Fixtures/synthetic-notification-coverage.json"
         self.assertEqual(self.output.read_bytes(), fixture.read_bytes())
-        self.assertEqual(json.loads(fixture.read_text())["localReport"], {})
+        self.assertEqual(json.loads(fixture.read_text(encoding="utf-8"))["localReport"], {})
 
     def test_output_cannot_overwrite_database_or_follow_file_symlink(self):
         self.ingest([])
         with self.assertRaises(ValueError):
             export.atomic_write(self.source, {})
         target = self.root / "untouched.json"
-        target.write_text("original")
+        target.write_text("original", encoding="utf-8")
         link = self.root / "link.json"
         link.symlink_to(target)
         with self.assertRaises(ValueError):
             export.atomic_write(link, {})
-        self.assertEqual(target.read_text(), "original")
+        self.assertEqual(target.read_text(encoding="utf-8"), "original")
         with self.assertRaises(ValueError):
             export.atomic_write(self.root / ".git/config.json", {})
 

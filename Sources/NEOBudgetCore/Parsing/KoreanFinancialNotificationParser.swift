@@ -1,366 +1,143 @@
 import Foundation
 
-/// Strict baseline parser for explicit Korean financial-notification facts.
-/// Provider-specific wording can be layered behind the same protocol once anonymized fixtures
-/// are available. It intentionally refuses to infer missing identities, accounts, or originals.
+/// Conservative baseline parser. Provider rules may extend it without acquiring account or ledger responsibilities.
 public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sendable {
     public init() {}
 
-    public func parse(
-        _ notification: RawNotification,
-        context: NotificationParsingContext
-    ) throws -> TransactionCandidate {
-        guard !notification.id.isEmpty else {
-            throw TransactionCandidateParserError.invalidRawNotificationID
-        }
-
+    public func parse(_ notification: RawNotification, context: NotificationParsingContext) throws -> NotificationParseOutcome {
+        guard !notification.id.isEmpty else { throw NotificationParserContractError.invalidRawNotificationID }
         let text = NotificationText.joined(notification)
         let lines = text.split(separator: "\n").map(String.init)
-        let event = classify(text)
-        let providerReference = currentProviderReference(in: lines)
-        let candidateID = TransactionCandidateID(rawValue: identity(
-            prefix: "candidate",
-            notification: notification,
-            event: event,
-            providerReference: providerReference
-        ))
-        let evidenceIDs = [notification.id]
+        guard let classification = classify(text) else { return .notTransaction(classifyNonTransaction(text)) }
+        guard let amount = try parseAmount(in: lines) else { return .failed(.amountMissing) }
 
-        guard event != .unsupported else {
-            return try TransactionCandidate(
-                id: candidateID,
-                evidenceIDs: evidenceIDs,
-                status: .rejected,
-                issues: [.unsupportedEvent],
-                policyVersion: context.policyVersion
+        var issues: [ParserIssue] = []
+        let timestamp: ObservedTimestamp
+        if let notificationTime = notification.notificationAtUnixMilliseconds {
+            timestamp = ObservedTimestamp(unixMilliseconds: notificationTime, precision: .second, source: .notificationTime)
+        } else {
+            timestamp = ObservedTimestamp(
+                unixMilliseconds: notification.capturedAtUnixMilliseconds,
+                precision: .second,
+                source: .captureTime
             )
+            issues.append(.timeAbsentFallback)
         }
-        guard let amount = try parseAmount(in: lines) else {
-            return try reviewCandidate(
-                id: candidateID,
-                evidenceIDs: evidenceIDs,
-                issues: [.missingAmount],
-                context: context
-            )
-        }
-        guard amount > 0 else {
-            return try reviewCandidate(
-                id: candidateID,
-                evidenceIDs: evidenceIDs,
-                issues: [.invalidAmount],
-                context: context
-            )
-        }
-        guard let occurredAt = notification.notificationAtUnixMilliseconds else {
-            return try reviewCandidate(
-                id: candidateID,
-                evidenceIDs: evidenceIDs,
-                issues: [.missingTransactionTime],
-                context: context
-            )
-        }
-        guard let binding = context.binding else {
-            return try reviewCandidate(
-                id: candidateID,
-                evidenceIDs: evidenceIDs,
-                issues: [.unboundSource],
-                context: context
-            )
-        }
+        let counterparty = parseCounterparty(lines, direction: classification.direction)
+        if counterparty.merchantRaw == nil, counterparty.payeeRaw == nil { issues.append(.merchantMissing) }
+        let instrument = parseInstrumentHint(text)
+        if instrument.kind == .unknown { issues.append(.instrumentHintMissing) }
 
-        let draftEntry: LedgerEntry
-        switch event {
-        case .expense:
-            draftEntry = try expenseEntry(
-                id: entryID(notification, event, providerReference),
-                occurredAt: occurredAt,
-                amount: amount,
-                binding: binding,
-                context: context,
-                evidenceIDs: evidenceIDs
-            )
-        case .income:
-            guard case let .account(accountID) = binding else {
-                return try reviewCandidate(
-                    id: candidateID,
-                    evidenceIDs: evidenceIDs,
-                    issues: [.unknownAccount],
-                    context: context
-                )
-            }
-            draftEntry = LedgerEntry(
-                id: entryID(notification, event, providerReference),
-                kind: .income,
-                occurredAtUnixMilliseconds: occurredAt,
-                postings: [Posting(
-                    accountID: accountID,
-                    delta: try Money(minorUnits: amount, currency: context.currency)
-                )],
-                evidenceIDs: evidenceIDs
-            )
-        case .transfer:
-            guard case let .account(sourceAccountID) = binding,
-                  let destinationAccountID = context.transferDestinationAccountID else {
-                return try reviewCandidate(
-                    id: candidateID,
-                    evidenceIDs: evidenceIDs,
-                    issues: [.incompleteTransfer],
-                    context: context
-                )
-            }
-            draftEntry = LedgerEntry(
-                id: entryID(notification, event, providerReference),
-                kind: .transfer,
-                occurredAtUnixMilliseconds: occurredAt,
-                postings: [
-                    Posting(
-                        accountID: sourceAccountID,
-                        delta: try Money(minorUnits: -amount, currency: context.currency)
-                    ),
-                    Posting(
-                        accountID: destinationAccountID,
-                        delta: try Money(minorUnits: amount, currency: context.currency)
-                    )
-                ],
-                evidenceIDs: evidenceIDs
-            )
-        case .cardPayment:
-            guard case let .account(accountID) = binding,
-                  let instrumentID = context.cardPaymentInstrumentID else {
-                return try reviewCandidate(
-                    id: candidateID,
-                    evidenceIDs: evidenceIDs,
-                    issues: [.parserUncertain],
-                    context: context
-                )
-            }
-            draftEntry = LedgerEntry(
-                id: entryID(notification, event, providerReference),
-                kind: .cardPayment,
-                occurredAtUnixMilliseconds: occurredAt,
-                postings: [Posting(
-                    accountID: accountID,
-                    delta: try Money(minorUnits: -amount, currency: context.currency)
-                )],
-                liabilityChanges: [LiabilityChange(
-                    instrumentID: instrumentID,
-                    delta: try Money(minorUnits: -amount, currency: context.currency)
-                )],
-                evidenceIDs: evidenceIDs
-            )
-        case .adjustment:
-            guard let originalReference = originalProviderReference(in: lines),
-                  let original = context.adjustmentOriginalsByProviderReference[originalReference] else {
-                return try reviewCandidate(
-                    id: candidateID,
-                    evidenceIDs: evidenceIDs,
-                    issues: [.missingOriginalEntry],
-                    context: context
-                )
-            }
-            draftEntry = try adjustmentEntry(
-                id: entryID(notification, event, providerReference),
-                occurredAt: occurredAt,
-                amount: amount,
-                binding: binding,
-                original: original,
-                context: context,
-                evidenceIDs: evidenceIDs
-            )
-        case .unsupported:
-            preconditionFailure("Unsupported events return before entry construction")
-        }
-
-        let issues: [CandidateIssue] = providerReference == nil
-            ? [.ambiguousWithoutStrongIdentity]
-            : []
-        return try TransactionCandidate(
-            id: candidateID,
-            evidenceIDs: evidenceIDs,
-            status: issues.isEmpty ? .ready : .needsReview,
+        return .candidate(try TransactionCandidateDraft(
+            rawNotificationID: notification.id,
+            parserID: context.parserID,
+            parserVersion: context.parserVersion,
+            ruleID: classification.ruleID,
+            kind: classification.kind,
+            direction: classification.direction,
+            amount: try Money(minorUnits: amount, currency: "KRW"),
+            occurredAt: timestamp,
+            instrument: instrument,
+            counterparty: counterparty,
+            evidence: evidence(notification: notification, lines: lines),
             issues: issues,
-            proposedEntry: draftEntry,
-            policyVersion: context.policyVersion
-        )
+            confidence: .high
+        ))
     }
 
-    private enum Event: String {
-        case expense
-        case income
-        case transfer
-        case cardPayment
-        case adjustment
-        case unsupported
+    private struct Classification {
+        let kind: DraftEventKind
+        let direction: TransactionDirection
+        let ruleID: String
     }
 
-    private func classify(_ text: String) -> Event {
-        if containsAny(text, ["취소", "환불"]) { return .adjustment }
-        if containsAny(text, ["카드대금", "결제대금"]) { return .cardPayment }
-        if containsAny(text, ["이체", "송금"]) { return .transfer }
-        if text.contains("입금") { return .income }
-        if containsAny(text, ["승인", "사용", "결제"]) { return .expense }
-        return .unsupported
+    private func classify(_ text: String) -> Classification? {
+        if containsAny(text, ["카드대금", "결제대금"]) {
+            return Classification(kind: .cardBillPayment, direction: .outflow, ruleID: "card-bill-payment")
+        }
+        if containsAny(text, ["취소", "환불"]) {
+            return Classification(kind: text.contains("취소") ? .cancellation : .refund, direction: .inflow, ruleID: "adjustment")
+        }
+        if containsAny(text, ["출금이체", "이체출금", "송금"]) {
+            return Classification(kind: .transferOut, direction: .outflow, ruleID: "transfer-out")
+        }
+        if containsAny(text, ["입금이체", "이체입금"]) {
+            return Classification(kind: .transferIn, direction: .inflow, ruleID: "transfer-in")
+        }
+        if text.contains("입금") { return Classification(kind: .deposit, direction: .inflow, ruleID: "deposit") }
+        if text.contains("출금") { return Classification(kind: .withdrawal, direction: .outflow, ruleID: "withdrawal") }
+        if containsAny(text, ["승인", "사용", "결제"]) {
+            return Classification(kind: .purchase, direction: .outflow, ruleID: "purchase")
+        }
+        return nil
     }
 
-    private func containsAny(_ value: String, _ terms: [String]) -> Bool {
-        terms.contains(where: value.contains)
+    private func classifyNonTransaction(_ text: String) -> NotTransactionReason {
+        if containsAny(text, ["광고", "혜택", "이벤트"]) { return .promotion }
+        if containsAny(text, ["로그인", "인증"]) { return .authentication }
+        if text.contains("거절") { return .declined }
+        if text.contains("대기") { return .pending }
+        if text.contains("잔액") { return .balanceInquiry }
+        return .unrecognized
     }
+
+    private func containsAny(_ value: String, _ terms: [String]) -> Bool { terms.contains(where: value.contains) }
 
     private func parseAmount(in lines: [String]) throws -> Int64? {
         for line in lines where line.contains("원") && !line.contains("잔액") {
             guard let wonIndex = line.firstIndex(of: "원") else { continue }
-            let beforeWon = line[..<wonIndex]
-            let token = beforeWon.reversed().prefix { character in
-                character.isNumber || character == "," || character == " "
-            }.reversed().filter { $0.isNumber }
+            let token = line[..<wonIndex].reversed().prefix {
+                $0.isNumber || $0 == "," || $0 == " "
+            }.reversed().filter(\.isNumber)
             guard !token.isEmpty else { continue }
-            guard let value = Int64(String(token)) else {
-                throw TransactionCandidateParserError.amountOverflow
-            }
+            guard let value = Int64(String(token)) else { throw NotificationParserContractError.amountOverflow }
             return value
         }
         return nil
     }
 
-    private func currentProviderReference(in lines: [String]) -> String? {
-        reference(
-            in: lines.filter { !$0.contains("원거래") && !$0.contains("원승인") },
-            labels: ["거래번호", "승인번호", "거래ID", "거래 ID", "Transaction ID"]
-        )
+    private func parseInstrumentHint(_ text: String) -> InstrumentHint {
+        if text.contains("카드") { return InstrumentHint(kind: .creditCard, displayNameRaw: "카드") }
+        if containsAny(text, ["계좌", "입금", "출금", "이체"]) { return InstrumentHint(kind: .bankAccount) }
+        return InstrumentHint(kind: .unknown)
     }
 
-    private func originalProviderReference(in lines: [String]) -> String? {
-        reference(in: lines, labels: ["원거래번호", "원승인번호", "Original ID"])
+    private func parseCounterparty(_ lines: [String], direction: TransactionDirection) -> DraftCounterparty {
+        let labels = ["승인번호", "거래번호", "거래ID", "원승인번호", "원거래번호", "잔액"]
+        let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제"]
+        let candidate = lines.first {
+            !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0)
+        }
+        return direction == .outflow ? DraftCounterparty(merchantRaw: candidate) : DraftCounterparty(payeeRaw: candidate)
+    }
+
+    private func evidence(notification: RawNotification, lines: [String]) -> [DraftEvidence] {
+        var result: [DraftEvidence] = []
+        let scope = notification.source.applicationIdentifier
+        if let value = notification.sourceDeliveryID {
+            result.append(DraftEvidence(kind: .deliveryID, strength: .strong, value: value, scope: scope))
+        }
+        let currentLines = lines.filter { !$0.contains("원거래") && !$0.contains("원승인") }
+        if let value = reference(in: currentLines, labels: ["거래번호", "거래ID", "거래 ID", "Transaction ID"]) {
+            result.append(DraftEvidence(kind: .providerTransactionID, strength: .strong, value: value, scope: scope))
+        }
+        if let value = reference(in: lines, labels: ["승인번호"]) {
+            result.append(DraftEvidence(kind: .approvalNumber, strength: .scoped, value: value, scope: scope))
+        }
+        if let value = reference(in: lines, labels: ["원거래번호", "원승인번호", "Original ID"]) {
+            result.append(DraftEvidence(kind: .originalApprovalReference, strength: .relation, value: value, scope: scope))
+        }
+        return result
     }
 
     private func reference(in lines: [String], labels: [String]) -> String? {
         for line in lines {
             for label in labels {
                 guard let range = line.range(of: label, options: .caseInsensitive) else { continue }
-                let suffix = line[range.upperBound...]
-                    .trimmingCharacters(in: CharacterSet(charactersIn: " :#"))
+                let suffix = line[range.upperBound...].trimmingCharacters(in: CharacterSet(charactersIn: " :#"))
                 if !suffix.isEmpty { return suffix }
             }
         }
         return nil
-    }
-
-    private func identity(
-        prefix: String,
-        notification: RawNotification,
-        event: Event,
-        providerReference: String?
-    ) -> String {
-        if let providerReference {
-            return [
-                prefix,
-                lengthPrefixed(notification.source.applicationIdentifier),
-                event.rawValue,
-                lengthPrefixed(providerReference)
-            ].joined(separator: "/")
-        }
-        return [prefix, "raw", lengthPrefixed(notification.id)].joined(separator: "/")
-    }
-
-    private func lengthPrefixed(_ value: String) -> String {
-        "\(value.utf8.count):\(value)"
-    }
-
-    private func entryID(
-        _ notification: RawNotification,
-        _ event: Event,
-        _ providerReference: String?
-    ) -> LedgerEntryID {
-        LedgerEntryID(rawValue: identity(
-            prefix: "entry",
-            notification: notification,
-            event: event,
-            providerReference: providerReference
-        ))
-    }
-
-    private func reviewCandidate(
-        id: TransactionCandidateID,
-        evidenceIDs: [String],
-        issues: [CandidateIssue],
-        context: NotificationParsingContext
-    ) throws -> TransactionCandidate {
-        try TransactionCandidate(
-            id: id,
-            evidenceIDs: evidenceIDs,
-            status: .needsReview,
-            issues: issues,
-            policyVersion: context.policyVersion
-        )
-    }
-
-    private func expenseEntry(
-        id: LedgerEntryID,
-        occurredAt: Int64,
-        amount: Int64,
-        binding: NotificationLedgerBinding,
-        context: NotificationParsingContext,
-        evidenceIDs: [String]
-    ) throws -> LedgerEntry {
-        let money = try Money(minorUnits: amount, currency: context.currency)
-        let postings: [Posting]
-        let liabilities: [LiabilityChange]
-        switch binding {
-        case let .account(accountID):
-            postings = [Posting(accountID: accountID, delta: try money.negated())]
-            liabilities = []
-        case let .creditInstrument(instrumentID):
-            postings = []
-            liabilities = [LiabilityChange(instrumentID: instrumentID, delta: money)]
-        }
-        return LedgerEntry(
-            id: id,
-            kind: .expense,
-            occurredAtUnixMilliseconds: occurredAt,
-            postings: postings,
-            liabilityChanges: liabilities,
-            budgetImpact: BudgetImpact(
-                kind: .expense,
-                amount: money,
-                attributedMonth: context.currentBudgetMonth
-            ),
-            evidenceIDs: evidenceIDs
-        )
-    }
-
-    private func adjustmentEntry(
-        id: LedgerEntryID,
-        occurredAt: Int64,
-        amount: Int64,
-        binding: NotificationLedgerBinding,
-        original: AdjustmentOriginal,
-        context: NotificationParsingContext,
-        evidenceIDs: [String]
-    ) throws -> LedgerEntry {
-        let money = try Money(minorUnits: amount, currency: context.currency)
-        let postings: [Posting]
-        let liabilities: [LiabilityChange]
-        switch binding {
-        case let .account(accountID):
-            postings = [Posting(accountID: accountID, delta: money)]
-            liabilities = []
-        case let .creditInstrument(instrumentID):
-            postings = []
-            liabilities = [LiabilityChange(instrumentID: instrumentID, delta: try money.negated())]
-        }
-        return LedgerEntry(
-            id: id,
-            kind: .adjustment,
-            occurredAtUnixMilliseconds: occurredAt,
-            postings: postings,
-            liabilityChanges: liabilities,
-            budgetImpact: BudgetImpact(
-                kind: .return,
-                amount: money,
-                attributedMonth: original.budgetMonth
-            ),
-            adjustment: AdjustmentLink(originalEntryID: original.entryID, reason: .refund),
-            evidenceIDs: evidenceIDs
-        )
     }
 }

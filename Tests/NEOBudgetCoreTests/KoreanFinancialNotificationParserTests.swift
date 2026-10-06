@@ -1,40 +1,37 @@
 import Foundation
 import Testing
 import NEOBudgetCore
-import NEOBudgetInMemoryStorage
 
 private let parserBankID = AccountID(rawValue: "bank-main")
 private let parserSavingsID = AccountID(rawValue: "bank-savings")
 private let parserCardID = CreditInstrumentID(rawValue: "card-main")
 
-private func parserMonth(_ month: Int = 10) throws -> BudgetMonth {
-    try BudgetMonth(year: 2026, month: month)
-}
-
-private func parserWon(_ value: Int64) throws -> Money {
-    try Money(minorUnits: value, currency: "KRW")
-}
-
-private func parserContext(
-    binding: NotificationLedgerBinding? = .account(parserBankID),
-    destination: AccountID? = nil,
-    paymentInstrument: CreditInstrumentID? = nil,
-    originals: [String: AdjustmentOriginal] = [:]
-) throws -> NotificationParsingContext {
+private func parserWon(_ value: Int64) throws -> Money { try Money(minorUnits: value, currency: "KRW") }
+private func parserMonth(_ month: Int = 10) throws -> BudgetMonth { try BudgetMonth(year: 2026, month: month) }
+private func parserContext() throws -> NotificationParsingContext {
     try NotificationParsingContext(
-        binding: binding,
-        transferDestinationAccountID: destination,
-        cardPaymentInstrumentID: paymentInstrument,
-        adjustmentOriginalsByProviderReference: originals,
-        currentBudgetMonth: parserMonth(),
-        currency: "KRW",
-        policyVersion: "korean-financial-v1"
+        timeZoneIdentifier: "Asia/Seoul",
+        referenceTimeUnixMilliseconds: 1_800_000_000_000,
+        parserID: "korean-financial",
+        parserVersion: "2"
     )
 }
-
+private func assemblyContext(
+    counterpart: AccountID? = nil,
+    card: CreditInstrumentID? = nil,
+    originals: [String: AdjustmentOriginal] = [:]
+) throws -> CandidateAssemblyContext {
+    try CandidateAssemblyContext(
+        currentBudgetMonth: parserMonth(),
+        transferCounterpartAccountID: counterpart,
+        cardPaymentInstrumentID: card,
+        adjustmentOriginalsByEvidenceValue: originals,
+        policyVersion: "assembly-v1"
+    )
+}
 private func rawNotification(
     id: String = "raw-1",
-    applicationIdentifier: String = "fixture.finance.app",
+    deliveryID: String? = nil,
     notificationTime: Int64? = 1_780_000_000_000,
     title: String? = nil,
     subtitle: String? = nil,
@@ -42,7 +39,8 @@ private func rawNotification(
 ) -> RawNotification {
     RawNotification(
         id: id,
-        source: NotificationSource(applicationIdentifier: applicationIdentifier),
+        source: NotificationSource(applicationIdentifier: "fixture.finance.app"),
+        sourceDeliveryID: deliveryID,
         capturedAtUnixMilliseconds: 1_780_000_001_000,
         notificationAtUnixMilliseconds: notificationTime,
         title: title,
@@ -50,241 +48,192 @@ private func rawNotification(
         body: body
     )
 }
+private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateDraft {
+    let outcome = try KoreanFinancialNotificationParser().parse(raw, context: parserContext())
+    guard case let .candidate(draft) = outcome else {
+        Issue.record("Expected candidate draft, got \(outcome)")
+        throw NotificationParseFailure.amountUnparseable
+    }
+    return draft
+}
 
-@Test func explicitBankApprovalBecomesReadyCashExpenseCandidate() throws {
-    let raw = rawNotification(
+@Test func parserProducesObservedDraftWithoutAccountBinding() throws {
+    let draft = try parsedDraft(rawNotification(
         title: "승인",
         subtitle: "5,000원",
         body: "테스트상호\n승인번호 TX-001\n잔액 95,000원"
-    )
-    let candidate = try KoreanFinancialNotificationParser().parse(
-        raw,
-        context: parserContext()
-    )
-    let entry = try #require(candidate.proposedEntry)
-    let minusFiveThousand = try parserWon(-5_000)
+    ))
     let fiveThousand = try parserWon(5_000)
-    let october = try parserMonth()
-
-    #expect(candidate.status == .ready)
-    #expect(candidate.evidenceIDs == [raw.id])
-    #expect(entry.kind == .expense)
-    #expect(entry.postings == [Posting(accountID: parserBankID, delta: minusFiveThousand)])
-    #expect(entry.liabilityChanges.isEmpty)
-    #expect(entry.budgetImpact?.amount == fiveThousand)
-    #expect(entry.budgetImpact?.attributedMonth == october)
+    #expect(draft.kind == .purchase)
+    #expect(draft.amount == fiveThousand)
+    #expect(draft.rawNotificationID == "raw-1")
+    #expect(draft.occurredAt.source == .notificationTime)
+    #expect(draft.evidence.contains { $0.kind == .approvalNumber && $0.strength == .scoped })
 }
 
-@Test func explicitCardApprovalCreatesLiabilityWithoutCashPosting() throws {
-    let raw = rawNotification(
-        title: "카드 사용 승인",
-        body: "20,000원\n승인번호 CARD-001\n테스트상호"
+@Test func missingStrongIdentityAndMerchantAreSoftAndCanStillAssembleReady() throws {
+    let draft = try parsedDraft(rawNotification(title: "승인", body: "5,000원"))
+    #expect(!draft.evidence.contains { $0.strength == .strong })
+    #expect(draft.issues.contains(.merchantMissing))
+    #expect(!draft.hasHardIssues)
+
+    let candidate = try DefaultTransactionCandidateAssembler().assemble(
+        draft,
+        resolution: .resolved(.account(parserBankID)),
+        context: assemblyContext()
     )
-    let context = try parserContext(binding: .creditInstrument(parserCardID))
-    let candidate = try KoreanFinancialNotificationParser().parse(raw, context: context)
-    let entry = try #require(candidate.proposedEntry)
-    let twentyThousand = try parserWon(20_000)
-
+    let minusFiveThousand = try parserWon(-5_000)
     #expect(candidate.status == .ready)
-    #expect(entry.postings.isEmpty)
-    #expect(entry.liabilityChanges == [LiabilityChange(
-        instrumentID: parserCardID,
-        delta: twentyThousand
-    )])
-    #expect(entry.budgetImpact?.amount == twentyThousand)
+    #expect(candidate.issues.isEmpty)
+    #expect(candidate.proposedEntry?.postings == [Posting(accountID: parserBankID, delta: minusFiveThousand)])
 }
 
-@Test func missingStrongFinancialIdentityRequiresReview() throws {
-    let raw = rawNotification(title: "승인", subtitle: "5,000원", body: "테스트상호")
-    let candidate = try KoreanFinancialNotificationParser().parse(raw, context: parserContext())
-
-    #expect(candidate.status == .needsReview)
-    #expect(candidate.issues == [.ambiguousWithoutStrongIdentity])
-    #expect(candidate.proposedEntry?.kind == .expense)
-}
-
-@Test func missingTransactionTimeAndUnboundSourceStayOutOfReadyState() throws {
-    let noTime = rawNotification(
+@Test func missingTextTimeFallsBackWithProvenance() throws {
+    let draft = try parsedDraft(rawNotification(
         notificationTime: nil,
         title: "승인",
-        body: "5,000원\n승인번호 TX-001"
-    )
-    let missingTime = try KoreanFinancialNotificationParser().parse(
-        noTime,
-        context: parserContext()
-    )
-    #expect(missingTime.status == .needsReview)
-    #expect(missingTime.issues == [.missingTransactionTime])
-    #expect(missingTime.proposedEntry == nil)
-
-    let unbound = try KoreanFinancialNotificationParser().parse(
-        rawNotification(title: "승인", body: "5,000원\n승인번호 TX-002"),
-        context: parserContext(binding: nil)
-    )
-    #expect(unbound.status == .needsReview)
-    #expect(unbound.issues == [.unboundSource])
-    #expect(unbound.proposedEntry == nil)
-}
-
-@Test func sameProviderTransactionInDifferentRawLayoutsHasStableIdentity() throws {
-    let first = rawNotification(
-        id: "raw-bank-style",
-        title: "승인 5,000원",
-        body: "거래번호 SHARED-001\n테스트상호"
-    )
-    let second = rawNotification(
-        id: "raw-wallet-style",
-        title: "테스트상호",
-        body: "거래번호 SHARED-001\n5,000원 결제"
-    )
-    let parser = KoreanFinancialNotificationParser()
-    let context = try parserContext()
-    let firstCandidate = try parser.parse(first, context: context)
-    let secondCandidate = try parser.parse(second, context: context)
-
-    #expect(firstCandidate.id == secondCandidate.id)
-    #expect(firstCandidate.proposedEntry?.id == secondCandidate.proposedEntry?.id)
-    #expect(firstCandidate.evidenceIDs == [first.id])
-    #expect(secondCandidate.evidenceIDs == [second.id])
-}
-
-@Test func refundUsesActualOccurrenceTimeAndOriginalBudgetMonth() throws {
-    let original = AdjustmentOriginal(
-        entryID: LedgerEntryID(rawValue: "entry-original"),
-        budgetMonth: try parserMonth(9)
-    )
-    let raw = rawNotification(
-        notificationTime: 1_790_000_000_000,
-        title: "환불",
-        body: "15,000원\n거래번호 REFUND-001\n원거래번호 ORIGINAL-001"
-    )
-    let candidate = try KoreanFinancialNotificationParser().parse(
-        raw,
-        context: parserContext(originals: ["ORIGINAL-001": original])
-    )
-    let entry = try #require(candidate.proposedEntry)
-    let fifteenThousand = try parserWon(15_000)
-
-    #expect(candidate.status == .ready)
-    #expect(entry.occurredAtUnixMilliseconds == 1_790_000_000_000)
-    #expect(entry.postings == [Posting(accountID: parserBankID, delta: fifteenThousand)])
-    #expect(entry.budgetImpact?.kind == .return)
-    #expect(entry.budgetImpact?.attributedMonth == original.budgetMonth)
-    #expect(entry.adjustment?.originalEntryID == original.entryID)
-}
-
-@Test func transferAndCardPaymentProduceNonBudgetEntries() throws {
-    let parser = KoreanFinancialNotificationParser()
-    let transferRaw = rawNotification(
-        id: "raw-transfer",
-        title: "이체",
-        body: "10,000원\n거래번호 TRANSFER-001"
-    )
-    let transfer = try parser.parse(
-        transferRaw,
-        context: parserContext(destination: parserSavingsID)
-    )
-    let transferEntry = try #require(transfer.proposedEntry)
-    #expect(transfer.status == .ready)
-    #expect(transferEntry.kind == .transfer)
-    #expect(transferEntry.budgetImpact == nil)
-    #expect(transferEntry.postings.count == 2)
-
-    let paymentRaw = rawNotification(
-        id: "raw-card-payment",
-        title: "카드대금 출금",
-        body: "30,000원\n거래번호 PAYMENT-001"
-    )
-    let payment = try parser.parse(
-        paymentRaw,
-        context: parserContext(paymentInstrument: parserCardID)
-    )
-    let paymentEntry = try #require(payment.proposedEntry)
-    let minusThirtyThousand = try parserWon(-30_000)
-    #expect(payment.status == .ready)
-    #expect(paymentEntry.kind == .cardPayment)
-    #expect(paymentEntry.budgetImpact == nil)
-    #expect(paymentEntry.liabilityChanges == [LiabilityChange(
-        instrumentID: parserCardID,
-        delta: minusThirtyThousand
-    )])
-}
-
-@Test func incompleteTransferAndUnknownOriginalRequireReview() throws {
-    let parser = KoreanFinancialNotificationParser()
-    let transfer = try parser.parse(
-        rawNotification(title: "이체", body: "10,000원\n거래번호 TRANSFER-001"),
-        context: parserContext()
-    )
-    #expect(transfer.status == .needsReview)
-    #expect(transfer.issues == [.incompleteTransfer])
-
-    let refund = try parser.parse(
-        rawNotification(title: "취소", body: "10,000원\n거래번호 CANCEL-001\n원승인번호 OLD-001"),
-        context: parserContext()
-    )
-    #expect(refund.status == .needsReview)
-    #expect(refund.issues == [.missingOriginalEntry])
-}
-
-@Test func unsupportedOrAmountlessNotificationCannotBecomeReady() throws {
-    let parser = KoreanFinancialNotificationParser()
-    let unsupported = try parser.parse(
-        rawNotification(title: "이번 달 혜택 안내", body: "광고 알림"),
-        context: parserContext()
-    )
-    #expect(unsupported.status == .rejected)
-    #expect(unsupported.issues == [.unsupportedEvent])
-
-    let amountless = try parser.parse(
-        rawNotification(title: "승인", body: "승인번호 TX-001"),
-        context: parserContext()
-    )
-    #expect(amountless.status == .needsReview)
-    #expect(amountless.issues == [.missingAmount])
-}
-
-@Test func parserNeedsReviewOutputCannotMutateLedgerThroughProcessor() throws {
-    let candidate = try KoreanFinancialNotificationParser().parse(
-        rawNotification(title: "승인", body: "5,000원"),
-        context: parserContext()
-    )
-    var repository = try InMemoryCandidateProcessingRepository(configuration: LedgerConfiguration(
-        accounts: [Account(
-            id: parserBankID,
-            name: "생활비",
-            kind: .bank,
-            openingBalance: parserWon(100_000)
-        )]
+        body: "5,000원\n승인번호 TX-002"
     ))
-    _ = try repository.process(
-        candidate,
-        expectedCandidateRevision: 0,
-        expectedLedgerRevision: 0
-    )
-
-    let snapshot = try repository.processingSnapshot()
-    #expect(snapshot.candidates[candidate.id]?.candidate.status == .needsReview)
-    #expect(snapshot.ledger.entries.isEmpty)
-    #expect(snapshot.ledger.revision == 0)
+    #expect(draft.occurredAt.unixMilliseconds == 1_780_000_001_000)
+    #expect(draft.occurredAt.source == .captureTime)
+    #expect(draft.issues.contains(.timeAbsentFallback))
 }
 
-@Test func parserRejectsOverflowingAmountAndDecodedInvalidContext() throws {
-    let overflowing = rawNotification(
-        title: "승인",
-        body: "99,999,999,999,999,999,999원\n승인번호 TX-OVERFLOW"
+@Test func approvalNumberIsScopedEvidenceAndNeverGlobalCandidateIdentity() throws {
+    let first = try parsedDraft(rawNotification(id: "raw-a", title: "승인", body: "5,000원\n승인번호 SAME"))
+    let second = try parsedDraft(rawNotification(id: "raw-b", title: "승인", body: "5,000원\n승인번호 SAME"))
+    let assembler = DefaultTransactionCandidateAssembler()
+    let firstCandidate = try assembler.assemble(first, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    let secondCandidate = try assembler.assemble(second, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    #expect(firstCandidate.id != secondCandidate.id)
+    #expect(first.evidence.first { $0.kind == .approvalNumber }?.strength == .scoped)
+}
+
+@Test func similarRawFormsWithoutStrongIdentityBecomeAmbiguousOnlyAtDedup() throws {
+    let assembler = DefaultTransactionCandidateAssembler()
+    let firstDraft = try parsedDraft(rawNotification(
+        id: "raw-layout-a", title: "승인", body: "5,000원\n승인번호 SAME"
+    ))
+    let secondDraft = try parsedDraft(rawNotification(
+        id: "raw-layout-b", title: "결제", body: "5,000원\n승인번호 SAME"
+    ))
+    let first = try assembler.assemble(firstDraft, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    let second = try assembler.assemble(secondDraft, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    #expect(first.status == .ready)
+    #expect(second.status == .ready)
+
+    let result = try DefaultCandidateDeduplicationValidator().validate(second, against: [first])
+    guard case let .needsReview(review) = result else {
+        Issue.record("Expected ambiguous dedup review, got \(result)")
+        return
+    }
+    #expect(review.issues == [.ambiguousWithoutStrongIdentity])
+    #expect(review.proposedEntry == nil)
+}
+
+@Test func sameScopedStrongEvidenceIsRecognizedAsDuplicate() throws {
+    let assembler = DefaultTransactionCandidateAssembler()
+    let firstDraft = try parsedDraft(rawNotification(
+        id: "raw-strong-a", deliveryID: "delivery-1", title: "승인", body: "5,000원"
+    ))
+    let secondDraft = try parsedDraft(rawNotification(
+        id: "raw-strong-b", deliveryID: "delivery-1", title: "결제", body: "5,000원"
+    ))
+    let first = try assembler.assemble(firstDraft, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    let second = try assembler.assemble(secondDraft, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    #expect(try DefaultCandidateDeduplicationValidator().validate(second, against: [first]) ==
+            .duplicate(existingCandidateID: first.id))
+}
+
+@Test func similarFactsBoundToDifferentAccountsDoNotCollide() throws {
+    let assembler = DefaultTransactionCandidateAssembler()
+    let firstDraft = try parsedDraft(rawNotification(id: "raw-account-a", title: "승인", body: "5,000원"))
+    let secondDraft = try parsedDraft(rawNotification(id: "raw-account-b", title: "결제", body: "5,000원"))
+    let first = try assembler.assemble(firstDraft, resolution: .resolved(.account(parserBankID)), context: assemblyContext())
+    let second = try assembler.assemble(secondDraft, resolution: .resolved(.account(parserSavingsID)), context: assemblyContext())
+    #expect(try DefaultCandidateDeduplicationValidator().validate(second, against: [first]) == .accepted(second))
+}
+
+@Test func unresolvedAccountCreatesReviewOnlyAfterAssembly() throws {
+    let draft = try parsedDraft(rawNotification(title: "승인", body: "5,000원\n승인번호 TX-003"))
+    let candidate = try DefaultTransactionCandidateAssembler().assemble(
+        draft,
+        resolution: .unresolved(.unknownAccount),
+        context: assemblyContext()
     )
-    #expect(throws: TransactionCandidateParserError.amountOverflow) {
+    #expect(candidate.status == .needsReview)
+    #expect(candidate.issues == [.unknownAccount])
+    #expect(candidate.proposedEntry == nil)
+}
+
+@Test func assemblerBuildsRefundTransferAndCardPaymentEntries() throws {
+    let assembler = DefaultTransactionCandidateAssembler()
+    let september = try parserMonth(9)
+    let original = AdjustmentOriginal(entryID: LedgerEntryID(rawValue: "entry-original"), budgetMonth: september)
+    let refundDraft = try parsedDraft(rawNotification(
+        id: "raw-refund",
+        title: "환불",
+        body: "15,000원\n거래번호 REFUND-1\n원승인번호 ORIGINAL-1"
+    ))
+    let refund = try assembler.assemble(
+        refundDraft,
+        resolution: .resolved(.account(parserBankID)),
+        context: assemblyContext(originals: ["ORIGINAL-1": original])
+    )
+    #expect(refund.proposedEntry?.kind == .adjustment)
+    #expect(refund.proposedEntry?.budgetImpact?.attributedMonth == september)
+
+    let transferDraft = try TransactionCandidateDraft(
+        rawNotificationID: "raw-transfer",
+        parserID: "test", parserVersion: "1", ruleID: "transfer",
+        kind: .transferOut, direction: .outflow, amount: parserWon(10_000),
+        occurredAt: ObservedTimestamp(unixMilliseconds: 1, precision: .second, source: .text),
+        confidence: .high
+    )
+    let transfer = try assembler.assemble(
+        transferDraft,
+        resolution: .resolved(.account(parserBankID)),
+        context: assemblyContext(counterpart: parserSavingsID)
+    )
+    #expect(transfer.proposedEntry?.kind == .transfer)
+    #expect(transfer.proposedEntry?.postings.count == 2)
+
+    let paymentDraft = try TransactionCandidateDraft(
+        rawNotificationID: "raw-card-payment",
+        parserID: "test", parserVersion: "1", ruleID: "card-payment",
+        kind: .cardBillPayment, direction: .outflow, amount: parserWon(30_000),
+        occurredAt: ObservedTimestamp(unixMilliseconds: 2, precision: .second, source: .text),
+        confidence: .high
+    )
+    let payment = try assembler.assemble(
+        paymentDraft,
+        resolution: .resolved(.account(parserBankID)),
+        context: assemblyContext(card: parserCardID)
+    )
+    let minusThirtyThousand = try parserWon(-30_000)
+    #expect(payment.proposedEntry?.kind == .cardPayment)
+    #expect(payment.proposedEntry?.liabilityChanges == [LiabilityChange(instrumentID: parserCardID, delta: minusThirtyThousand)])
+}
+
+@Test func nonTransactionAndAmountFailureNeverCreateDraft() throws {
+    let parser = KoreanFinancialNotificationParser()
+    #expect(try parser.parse(
+        rawNotification(title: "이번 달 혜택 안내", body: "광고 알림"), context: parserContext()
+    ) == .notTransaction(.promotion))
+    #expect(try parser.parse(
+        rawNotification(title: "승인", body: "승인번호 TX-005"), context: parserContext()
+    ) == .failed(.amountMissing))
+}
+
+@Test func parserRejectsOverflowAndInvalidContext() throws {
+    #expect(throws: NotificationParserContractError.amountOverflow) {
         try KoreanFinancialNotificationParser().parse(
-            overflowing,
-            context: parserContext()
+            rawNotification(title: "승인", body: "99,999,999,999,999,999,999원"), context: parserContext()
         )
     }
-
-    let encoded = try JSONEncoder().encode(try parserContext())
-    let json = try #require(String(data: encoded, encoding: .utf8))
-    let invalid = Data(json.replacingOccurrences(of: "KRW", with: "krw").utf8)
-    #expect(throws: MoneyError.invalidCurrency("krw")) {
-        try JSONDecoder().decode(NotificationParsingContext.self, from: invalid)
+    #expect(throws: NotificationParserContractError.emptyContextValue) {
+        try NotificationParsingContext(
+            timeZoneIdentifier: "", referenceTimeUnixMilliseconds: 0, parserID: "parser", parserVersion: "1"
+        )
     }
 }

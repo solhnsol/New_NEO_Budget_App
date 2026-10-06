@@ -33,9 +33,10 @@ public enum CandidateValidationError: Error, Equatable, Sendable {
     case duplicateEvidence(String)
     case invalidState(CandidateStatus)
     case proposedEntryEvidenceMismatch
+    case draftEvidenceMismatch
 }
 
-/// A parser/deduplication result is not a financial fact until it reaches `ready` and is
+/// An assembled/deduplicated result is not a financial fact until it reaches `ready` and is
 /// explicitly committed. `needsReview` therefore cannot silently mutate the ledger.
 public struct TransactionCandidate: Codable, Equatable, Sendable {
     public let id: TransactionCandidateID
@@ -44,6 +45,7 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
     public let issues: [CandidateIssue]
     public let proposedEntry: LedgerEntry?
     public let policyVersion: String
+    public let sourceDraft: TransactionCandidateDraft?
 
     public init(
         id: TransactionCandidateID,
@@ -51,7 +53,8 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
         status: CandidateStatus,
         issues: [CandidateIssue] = [],
         proposedEntry: LedgerEntry? = nil,
-        policyVersion: String
+        policyVersion: String,
+        sourceDraft: TransactionCandidateDraft? = nil
     ) throws {
         guard !id.rawValue.isEmpty else { throw CandidateValidationError.emptyIdentifier }
         guard !policyVersion.isEmpty else { throw CandidateValidationError.emptyPolicyVersion }
@@ -82,6 +85,9 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
         if let proposedEntry, Set(proposedEntry.evidenceIDs) != uniqueEvidence {
             throw CandidateValidationError.proposedEntryEvidenceMismatch
         }
+        if let sourceDraft, !uniqueEvidence.contains(sourceDraft.rawNotificationID) {
+            throw CandidateValidationError.draftEvidenceMismatch
+        }
 
         self.id = id
         self.evidenceIDs = evidenceIDs
@@ -89,6 +95,7 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
         self.issues = issues
         self.proposedEntry = proposedEntry
         self.policyVersion = policyVersion
+        self.sourceDraft = sourceDraft
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -98,6 +105,7 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
         case issues
         case proposedEntry
         case policyVersion
+        case sourceDraft
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,7 +116,8 @@ public struct TransactionCandidate: Codable, Equatable, Sendable {
             status: values.decode(CandidateStatus.self, forKey: .status),
             issues: values.decode([CandidateIssue].self, forKey: .issues),
             proposedEntry: values.decodeIfPresent(LedgerEntry.self, forKey: .proposedEntry),
-            policyVersion: values.decode(String.self, forKey: .policyVersion)
+            policyVersion: values.decode(String.self, forKey: .policyVersion),
+            sourceDraft: values.decodeIfPresent(TransactionCandidateDraft.self, forKey: .sourceDraft)
         )
     }
 }

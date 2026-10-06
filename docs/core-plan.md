@@ -25,7 +25,7 @@ Tests/
 
 언어를 정하면 해당 언어의 package 관례로 디렉터리를 조정한다. Runtime Core에 fixture runner/파일 I/O를 끌어들이지 않는다.
 
-현재 Swift Package에서 Core는 `Sources/NEOBudgetCore`, 테스트용 Infrastructure는 별도 `Sources/NEOBudgetInMemoryStorage` target으로 분리했다. 정규화와 중립 RawNotification/Repository에 더해 Money, Account, CreditInstrument, LedgerEntry, Posting, LiabilityChange, BudgetImpact, AdjustmentLink, TransactionCandidate를 구현했다. 원장 in-memory adapter는 revision 조건부 원자 커밋, projection, 강한 ID 멱등성, 증거 단일 소비와 환불 불변식을 검증한다. `CandidateProcessingRepository`는 candidate 저장과 ready candidate ledger 승격의 단일 transaction/CAS 계약을 정의하며 in-memory adapter가 copy-validate-commit으로 rollback 의미를 검증한다. `TransactionCandidateParser`와 한국어 baseline 구현은 저장소 없이 `RawNotification -> TransactionCandidate`만 수행한다. provider별 익명화 fixture/profile과 durable 저장소 등 나머지는 이 문서의 설계 초안이다. Platform/iOS와 Platform/Android는 경계 문서만 둔다. 상세 결과는 platform-boundary-review.md 참조.
+현재 Swift Package에서 Core는 `Sources/NEOBudgetCore`, 테스트용 Infrastructure는 별도 `Sources/NEOBudgetInMemoryStorage` target으로 분리했다. 정규화와 중립 RawNotification/Repository에 더해 Money, Account, CreditInstrument, LedgerEntry, Posting, LiabilityChange, BudgetImpact, AdjustmentLink, TransactionCandidate를 구현했다. 원장 in-memory adapter는 revision 조건부 원자 커밋, projection, 강한 ID 멱등성, 증거 단일 소비와 환불 불변식을 검증한다. `CandidateProcessingRepository`는 candidate 저장과 ready candidate ledger 승격의 단일 transaction/CAS 계약을 정의하며 in-memory adapter가 copy-validate-commit으로 rollback 의미를 검증한다. Parser는 저장소 없이 `RawNotification -> TransactionCandidateDraft`만 수행하고 resolver/assembler가 계좌 바인딩과 candidate/entry 생성을 담당한다. dedup은 strong identity 없는 유사 후보 충돌을 review로 전환한다. provider별 상세 fixture/profile과 durable 저장소 등 나머지는 이 문서의 설계 초안이다. Platform/iOS와 Platform/Android는 경계 문서만 둔다. 상세 결과는 platform-boundary-review.md 참조.
 
 ## 핵심 모델 제안
 

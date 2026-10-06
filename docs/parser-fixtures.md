@@ -1,6 +1,6 @@
-# Parser Fixture Matrix — 설계 초안
+# Parser Fixture Matrix — 후속 executable fixture 기준
 
-상태: **초안. 코드 변경 없음.** 계약은 [parser-contract.md](parser-contract.md). 이 문서의 각 `PF-*` fixture는 그대로 `Tests/NEOBudgetCoreTests/Fixtures/parser/*.json`(계약 §10.1 스키마)로 옮길 수 있게 쓰였다.
+상태: **계약 채택, 상세 fixture 구현 대기.** 계약은 [parser-contract.md](parser-contract.md). 현재 Core 경계와 합성 26개 형식 smoke는 구현됐으며, 이 문서의 각 `PF-*` fixture는 `Tests/NEOBudgetCoreTests/Fixtures/parser/*.json`(계약 §10.1 스키마)으로 옮겨 provider별 동작을 확장한다.
 
 ## 0. 읽는 법
 
