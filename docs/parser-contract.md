@@ -292,7 +292,7 @@ ML 확률이 아니라 규칙 기반 등급이다. 시작 1.0에서 감점하고
 - **Q4 `approval-no` 강도.** scoped evidence이며 전역 strong ID로 보지 않는다.
 - **Q5 시각 fallback.** notification/capture timestamp fallback을 허용하고 provenance와 soft issue를 보존한다.
 - **Q6 통화 `$` 기본값 금지.** 구현상 편의와 정확성의 절충(§4.2). 사용자의 실제 해외 결제 알림 샘플로 재검토.
-- **Q7 candidate ID 생성.** rawNotificationID + parserVersion + eventIndex를 길이 구분해 결정적으로 만든다. 승인번호를 ID로 쓰지 않는다.
+- **Q7 candidate ID 생성.** rawNotificationID + eventIndex를 길이 구분해 결정적으로 만든다. parser version과 승인번호를 ID로 쓰지 않는다.
 
 ## 10. 테스트 규약
 

@@ -1,11 +1,24 @@
 public struct StoredTransactionCandidate: Codable, Equatable, Sendable {
     public let candidate: TransactionCandidate
     public let promotedEntryID: LedgerEntryID?
+    public let promotionRejection: CandidatePromotionRejection?
 
-    public init(candidate: TransactionCandidate, promotedEntryID: LedgerEntryID? = nil) {
+    public init(
+        candidate: TransactionCandidate,
+        promotedEntryID: LedgerEntryID? = nil,
+        promotionRejection: CandidatePromotionRejection? = nil
+    ) {
         self.candidate = candidate
         self.promotedEntryID = promotedEntryID
+        self.promotionRejection = promotionRejection
     }
+}
+
+public enum CandidatePromotionRejection: String, Codable, Equatable, Sendable {
+    case conflictingEntry
+    case revisionOverflow
+    case invalidConfiguration
+    case invalidEntry
 }
 
 public struct CandidateProcessingSnapshot: Codable, Equatable, Sendable {
@@ -29,6 +42,12 @@ public enum CandidateProcessingResult: Equatable, Sendable {
     case promoted(candidateRevision: UInt64, ledgerRevision: UInt64)
     case alreadyStored(candidateRevision: UInt64)
     case alreadyPromoted(candidateRevision: UInt64, ledgerRevision: UInt64)
+    case duplicate(existingCandidateID: TransactionCandidateID, candidateRevision: UInt64, ledgerRevision: UInt64)
+    case rejectedByLedger(
+        candidateRevision: UInt64,
+        ledgerRevision: UInt64,
+        reason: CandidatePromotionRejection
+    )
 }
 
 public enum CandidateProcessingError: Error, Equatable, Sendable {

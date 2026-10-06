@@ -22,12 +22,15 @@ public enum NotificationParserContractError: Error, Equatable, Sendable {
 }
 
 public enum NotTransactionReason: String, Codable, Sendable {
-    case promotion, authentication, declined, pending, balanceInquiry, unrecognized
+    case promotion, authentication, declined, pending, request, configurationChange
+    case balanceInquiry, unrecognized
 }
 
 public enum NotificationParseFailure: Error, Equatable, Sendable {
     case amountMissing
     case amountUnparseable
+    case amountAmbiguous
+    case unsupportedCurrency
     case multipleTransactions
 }
 

@@ -74,6 +74,8 @@ Swift Core를 유지하고 Apple framework/OS 객체/구체 DB 호출을 분리�
 
 in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 뒤 한 commit point에서 교체한다. 미래 SwiftData/SQLite adapter는 `process` 전체를 단일 DB transaction/CAS로 구현해야 하며 중간 candidate row만 남기거나 ledger만 반영해서는 안 된다.
 
+영구적인 ledger validation 거부는 더 이상 예외로 candidate를 유실하지 않는다. Ledger는 전혀 변경하지 않은 채 candidate/review 상태와 typed rejection reason을 한 candidate transaction으로 저장한다. Stale revision 같은 일시적 동시성 오류만 throw하며, 같은 실패의 재시도는 같은 typed 결과를 반환한다.
+
 ## D008 — 금융 알림 ingestion 경계: 사용자 선택 및 Core 계약 구현 완료
 
 선택: parser는 `RawNotification -> TransactionCandidateDraft`까지만 담당하며 repository나 ledger port를 받지 않는다. Draft에는 계좌/카드/ledger ID가 없다. `TransactionAccountResolver`가 계좌/카드를 바인딩하고 `TransactionCandidateAssembler`가 예산 월·이체 상대·환불 원거래를 적용해 candidate를 만든다. 시스템 시각·locale·DB 조회로 누락 정보를 추정하지 않는다.

@@ -17,7 +17,7 @@ import NEOBudgetInMemoryStorage
         confidence: .high
     )
     let context = try CandidateAssemblyContext(
-        currentBudgetMonth: BudgetMonth(year: 2026, month: 10),
+        timeZoneIdentifier: "Asia/Seoul",
         policyVersion: "assembly-v1"
     )
     let candidate = try DefaultTransactionCandidateAssembler().assemble(

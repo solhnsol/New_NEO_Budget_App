@@ -24,21 +24,24 @@ public struct AdjustmentOriginal: Codable, Equatable, Sendable {
 }
 
 public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
-    public let currentBudgetMonth: BudgetMonth
+    public let timeZoneIdentifier: String
     public let transferCounterpartAccountID: AccountID?
     public let cardPaymentInstrumentID: CreditInstrumentID?
     public let adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal]
     public let policyVersion: String
 
     public init(
-        currentBudgetMonth: BudgetMonth,
+        timeZoneIdentifier: String,
         transferCounterpartAccountID: AccountID? = nil,
         cardPaymentInstrumentID: CreditInstrumentID? = nil,
         adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal] = [:],
         policyVersion: String
     ) throws {
         guard !policyVersion.isEmpty else { throw CandidateValidationError.emptyPolicyVersion }
-        self.currentBudgetMonth = currentBudgetMonth
+        guard TimeZone(identifier: timeZoneIdentifier) != nil else {
+            throw CandidateAssemblyError.invalidTimeZone(timeZoneIdentifier)
+        }
+        self.timeZoneIdentifier = timeZoneIdentifier
         self.transferCounterpartAccountID = transferCounterpartAccountID
         self.cardPaymentInstrumentID = cardPaymentInstrumentID
         self.adjustmentOriginalsByEvidenceValue = adjustmentOriginalsByEvidenceValue
@@ -52,6 +55,10 @@ public protocol TransactionCandidateAssembler {
         resolution: AccountResolution,
         context: CandidateAssemblyContext
     ) throws -> TransactionCandidate
+}
+
+public enum CandidateAssemblyError: Error, Equatable, Sendable {
+    case invalidTimeZone(String)
 }
 
 /// Binds identities and constructs a proposed entry, but does not persist it.
@@ -160,7 +167,11 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
             occurredAtUnixMilliseconds: draft.occurredAt.unixMilliseconds,
             postings: postings,
             liabilityChanges: liabilities,
-            budgetImpact: BudgetImpact(kind: .expense, amount: draft.amount, attributedMonth: context.currentBudgetMonth),
+            budgetImpact: BudgetImpact(
+                kind: .expense,
+                amount: draft.amount,
+                attributedMonth: try budgetMonth(for: draft.occurredAt, timeZoneIdentifier: context.timeZoneIdentifier)
+            ),
             evidenceIDs: evidenceIDs
         )
     }
@@ -221,9 +232,24 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
         )
     }
 
+    private func budgetMonth(
+        for timestamp: ObservedTimestamp,
+        timeZoneIdentifier: String
+    ) throws -> BudgetMonth {
+        guard let timeZone = TimeZone(identifier: timeZoneIdentifier) else {
+            throw CandidateAssemblyError.invalidTimeZone(timeZoneIdentifier)
+        }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        let date = Date(timeIntervalSince1970: Double(timestamp.unixMilliseconds) / 1_000)
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return try BudgetMonth(year: components.year ?? 0, month: components.month ?? 0)
+    }
+
     private func identity(_ prefix: String, _ draft: TransactionCandidateDraft) -> String {
-        [prefix, lengthPrefixed(draft.rawNotificationID), draft.parserVersion, String(draft.eventIndex)].joined(separator: "/")
+        [prefix, lengthPrefixed(draft.rawNotificationID), String(draft.eventIndex)].joined(separator: "/")
     }
 
     private func lengthPrefixed(_ value: String) -> String { "\(value.utf8.count):\(value)" }
 }
+import Foundation

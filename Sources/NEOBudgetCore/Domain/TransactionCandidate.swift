@@ -24,6 +24,7 @@ public enum CandidateIssue: String, Codable, Hashable, Sendable {
     case incompleteTransfer
     case parserUncertain
     case unsupportedEvent
+    case promotionRejected
 }
 
 public enum CandidateValidationError: Error, Equatable, Sendable {

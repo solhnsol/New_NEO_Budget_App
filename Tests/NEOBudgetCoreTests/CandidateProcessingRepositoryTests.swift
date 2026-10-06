@@ -105,19 +105,17 @@ private func reviewCandidate(
     let unknown = AccountID(rawValue: "unknown")
     let invalid = try readyCashExpenseCandidate(accountID: unknown)
 
-    #expect(throws: CandidateProcessingError.ledger(
-        .invalidEntry(.unknownAccount(unknown))
-    )) {
-        try repository.process(
-            invalid,
-            expectedCandidateRevision: 0,
-            expectedLedgerRevision: 0
-        )
-    }
+    #expect(try repository.process(
+        invalid,
+        expectedCandidateRevision: 0,
+        expectedLedgerRevision: 0
+    ) == .rejectedByLedger(candidateRevision: 1, ledgerRevision: 0, reason: .invalidEntry))
 
     let snapshot = try repository.processingSnapshot()
-    #expect(snapshot.candidateRevision == 0)
-    #expect(snapshot.candidates.isEmpty)
+    #expect(snapshot.candidateRevision == 1)
+    #expect(snapshot.candidates[invalid.id]?.candidate.status == .needsReview)
+    #expect(snapshot.candidates[invalid.id]?.candidate.issues == [.promotionRejected])
+    #expect(snapshot.candidates[invalid.id]?.promotionRejection == .invalidEntry)
     #expect(snapshot.ledger.revision == 0)
     #expect(snapshot.ledger.entries.isEmpty)
 }
@@ -329,18 +327,17 @@ private func reviewCandidate(
         evidenceIDs: review.evidenceIDs,
         accountID: unknown
     )
-    #expect(throws: CandidateProcessingError.ledger(.invalidEntry(.unknownAccount(unknown)))) {
-        try repository.process(
-            invalidReady,
-            expectedCandidateRevision: 1,
-            expectedLedgerRevision: 0
-        )
-    }
+    #expect(try repository.process(
+        invalidReady,
+        expectedCandidateRevision: 1,
+        expectedLedgerRevision: 0
+    ) == .rejectedByLedger(candidateRevision: 2, ledgerRevision: 0, reason: .invalidEntry))
 
     let snapshot = try repository.processingSnapshot()
-    #expect(snapshot.candidateRevision == 1)
+    #expect(snapshot.candidateRevision == 2)
     #expect(snapshot.candidates[review.id]?.candidate == review)
     #expect(snapshot.candidates[review.id]?.promotedEntryID == nil)
+    #expect(snapshot.candidates[review.id]?.promotionRejection == .invalidEntry)
     #expect(snapshot.ledger.entries.isEmpty)
 }
 

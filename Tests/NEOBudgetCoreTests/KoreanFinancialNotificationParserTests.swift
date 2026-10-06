@@ -22,7 +22,7 @@ private func assemblyContext(
     originals: [String: AdjustmentOriginal] = [:]
 ) throws -> CandidateAssemblyContext {
     try CandidateAssemblyContext(
-        currentBudgetMonth: parserMonth(),
+        timeZoneIdentifier: "Asia/Seoul",
         transferCounterpartAccountID: counterpart,
         cardPaymentInstrumentID: card,
         adjustmentOriginalsByEvidenceValue: originals,
@@ -226,11 +226,9 @@ private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateD
 }
 
 @Test func parserRejectsOverflowAndInvalidContext() throws {
-    #expect(throws: NotificationParserContractError.amountOverflow) {
-        try KoreanFinancialNotificationParser().parse(
-            rawNotification(title: "승인", body: "99,999,999,999,999,999,999원"), context: parserContext()
-        )
-    }
+    #expect(try KoreanFinancialNotificationParser().parse(
+        rawNotification(title: "승인", body: "99,999,999,999,999,999,999원"), context: parserContext()
+    ) == .failed(.amountUnparseable))
     #expect(throws: NotificationParserContractError.emptyContextValue) {
         try NotificationParsingContext(
             timeZoneIdentifier: "", referenceTimeUnixMilliseconds: 0, parserID: "parser", parserVersion: "1"
