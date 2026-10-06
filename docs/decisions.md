@@ -65,3 +65,11 @@ Swift Core를 유지하고 Apple framework/OS 객체/구체 DB 호출을 분리�
 최소 변경: 정규화는 Parsing에 배치, RawNotification은 순수 값, 원본 저장은 protocol, in-memory adapter는 별도 target. Foundation의 NFC 기능은 Linux 검증을 유지하고 불필요하게 다시 만들지 않는다. raw ID 동일 기록 재삽입/충돌 계약만 정의하며 금융 dedup 정책은 D003의 선택을 그대로 남긴다.
 
 같은 Swift 엔진의 Android 재사용 후보는 공식 Android SDK/Java 연동 경로다. OS 중립 구조가 Android 실행·패키징 검증을 대신하지 않으며 해당 결정/검증은 추후 진행한다.
+
+## D007 — candidate 저장과 ledger 승격: 사용자 선택 및 Core 계약 구현 완료
+
+선택: parser는 `RawNotification -> TransactionCandidate`까지만 책임지고 ledger를 직접 수정하지 않는다. `CandidateProcessingRepository.process`가 candidate 저장과 ready candidate의 ledger 반영, 승격 연결 기록을 하나의 원자 작업으로 수행한다.
+
+동일 candidate의 재처리는 revision이 오래됐더라도 멱등 결과를 반환한다. `needsReview`, `waitingForEvidence`, `rejected`는 저장만 하며 자동 승격하지 않는다. 새 입력이나 candidate 갱신에는 candidate revision을, ready 승격에는 ledger revision도 함께 확인한다. candidate 충돌, 중복 증거, stale revision, ledger 불변식 실패 시 전체 상태를 보존한다.
+
+in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 뒤 한 commit point에서 교체한다. 미래 SwiftData/SQLite adapter는 `process` 전체를 단일 DB transaction/CAS로 구현해야 하며 중간 candidate row만 남기거나 ledger만 반영해서는 안 된다.

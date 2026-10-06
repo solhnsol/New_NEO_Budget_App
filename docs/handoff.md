@@ -1,6 +1,6 @@
 # Windows 세션 인계
 
-현재 작업 브랜치: `feat/core-domain-storage`. 원격 `refactor/platform-neutral-boundaries`의 `5e6ce91`에서 분기해 첫 금융 원장 Core를 구현 중이다. 아직 커밋·push하지 않은 작업 트리 변경이다. 기반 브랜치까지는 2026-10-06 GitHub 업로드 및 원격 커밋 일치 확인을 완료했다.
+현재 작업 브랜치: `feat/candidate-promotion`. 첫 금융 원장 Core는 `c81e730`으로 `origin/feat/core-domain-storage`에 push했다. 이 브랜치는 해당 커밋에서 분기해 candidate 원자 승격 계약을 구현한다.
 
 ## 확정된 방향
 
@@ -14,11 +14,11 @@
 
 ## 코드 상태
 
-Swift Package, 중립 RawNotification, Parsing의 Foundation 기반 알림 텍스트 정규화, 원본 저장 protocol/별도 in-memory adapter에 더해 첫 원장 모델과 저장 계약이 있다. `Posting`, `LiabilityChange`, `BudgetImpact`를 분리하며 revision 조건부 원자 커밋, projection, 증거 단일 소비를 제공한다. 모호한 결과를 원장과 분리하는 `TransactionCandidate.needsReview` 상태 계약도 있다. Swift Testing 총 26개가 Windows에서 통과한다. 실제 iOS/Android 코드와 durable 저장소는 없다. `docs/core-plan.md`, `docs/legacy-analysis.md`, `docs/decisions.md`, `docs/platform-boundary-review.md`를 먼저 읽는다.
+Swift Package, 중립 RawNotification, Parsing의 Foundation 기반 알림 텍스트 정규화, 원본 저장 protocol/별도 in-memory adapter에 더해 첫 원장 모델과 저장 계약이 있다. `Posting`, `LiabilityChange`, `BudgetImpact`를 분리하며 revision 조건부 원자 커밋, projection, 증거 단일 소비를 제공한다. `CandidateProcessingRepository`가 candidate 저장과 ready ledger 승격을 원자 처리하고 non-ready 상태의 자동 승격을 막는다. Swift Testing 총 35개가 Windows에서 통과한다. 실제 iOS/Android 코드와 durable 저장소는 없다. `docs/core-plan.md`, `docs/legacy-analysis.md`, `docs/decisions.md`, `docs/platform-boundary-review.md`를 먼저 읽는다.
 
 ## 다음 논의
 
-1. candidate 저장과 `ready` candidate의 원장 승격을 하나의 원자 작업으로 만드는 오케스트레이션 계약.
+1. 실제 금융 알림 provider parser: `RawNotification -> TransactionCandidate`까지만 수행하며 ledger 직접 수정 금지.
 2. SQLite 등 durable 저장 adapter 선택과 migration/원자성 계약.
 3. 취소 통지와 실제 환급 입금 통지가 같은 반환일 때 중복 상쇄하지 않는 상태 연결.
 4. Windows 검증은 2026-10-06 완료했다. 다음 구현에서도 같은 환경에서 빌드/테스트를 유지한다.
@@ -27,7 +27,7 @@ Swift Package, 중립 RawNotification, Parsing의 Foundation 기반 알림 텍�
 
 기존 Linux JS 알림 테스트: 48개 중 46개 통과, SQLite 관련 2개 skipped. 새로운 Swift Core의 Windows 검증을 뜻하지 않는다.
 
-기존 플랫폼 경계 테스트 12개는 Swift 6.4/Debian 13/aarch64와 Swift 6.4/Windows x86_64에서 통과했다. 새 원장·후보 상태 테스트 14개를 포함한 총 26개는 Windows x86_64에서 통과했다. Linux 격리 도구 환경에서는 native build system을 사용했으며 상세 명령은 development.md에 기록했다. Android 실행은 별도 검증 필요.
+기존 플랫폼 경계 테스트 12개는 Swift 6.4/Debian 13/aarch64와 Swift 6.4/Windows x86_64에서 통과했다. 원장·후보 상태 14개와 원자 처리 9개를 포함한 총 35개는 Windows x86_64에서 통과했다. Developer Mode 활성화 뒤 SwiftPM 심볼릭 링크 경고도 사라졌다. Linux 격리 도구 환경에서는 native build system을 사용했으며 상세 명령은 development.md에 기록했다. Android 실행은 별도 검증 필요.
 
 Linux 테스트 도구는 `.tooling/`에 격리돼 있으며 Git에서 제외된다. Windows로 가져갈 대상은 소스/테스트/문서이며 이 Linux 도구 폴더는 필요 없다.
 

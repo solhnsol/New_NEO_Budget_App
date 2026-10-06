@@ -20,7 +20,7 @@ swift test
 
 2026-10-06 GitHub 인증 후 `main`, `plan/local-first-core`, `refactor/platform-neutral-boundaries` 업로드와 원격 커밋 일치 확인을 완료했다. Windows에서는 `refactor/platform-neutral-boundaries`를 clone해 이어서 작업한다. 명령은 `docs/handoff.md`를 참고한다.
 
-2026-10-06 실제 Windows x86_64에서 Swift 6.4, Visual Studio Build Tools 2022 17.14, Windows 11 SDK 환경으로 `swift build` 성공을 확인했다. 플랫폼 경계 단계의 12개 테스트와 원장·후보 상태 단계에서 추가한 14개 테스트, 총 26개가 통과했다. 새 PowerShell이 설치 환경을 아직 반영하지 않은 경우 Visual Studio Developer Command Prompt를 로드하고 `SDKROOT`를 Swift의 `Windows.sdk` 경로로 지정해야 한다. Developer Mode가 꺼진 환경에서는 `.build/debug` 심볼릭 링크 생성 경고가 나왔지만 빌드와 테스트 결과에는 영향을 주지 않았다.
+2026-10-06 실제 Windows x86_64에서 Swift 6.4, Visual Studio Build Tools 2022 17.14, Windows 11 SDK 환경으로 `swift build` 성공을 확인했다. 원자적 candidate 처리 테스트 9개를 추가해 총 35개가 통과했다. Developer Mode 활성화 후 `.build/debug` 심볼릭 링크 경고도 더 이상 발생하지 않았다. 새 PowerShell이 설치 환경을 아직 반영하지 않은 경우 Visual Studio Developer Command Prompt를 로드하고 `SDKROOT`를 Swift의 `Windows.sdk` 경로로 지정해야 한다.
 
 통과 기준: build 성공, 테스트 발견/실행, 실패 0개. Windows CI 도구/버전/공개는 별도 결정한다.
 
@@ -53,6 +53,7 @@ native 옵션은 사용한 도구에서 deprecated 안내가 있으므로 Window
 - 중립 RawNotification과 원본 저장 protocol, 별도 in-memory adapter.
 - 실제 계좌 `Posting`, 카드 `LiabilityChange`, 소비 귀속 `BudgetImpact`를 분리한 원장 값 모델.
 - revision 조건부 원자 커밋, 강한 원장 ID 멱등성, 이체/카드 납부/환불/금액 보존 불변식과 projection을 제공하는 저장 protocol 및 in-memory adapter.
-- 정규화·입력·원본 저장 12개와 원장·후보 상태 계약 14개, 총 테스트 26개.
+- candidate 저장과 ready candidate ledger 승격을 한 commit point로 묶는 Core protocol 및 in-memory adapter.
+- 정규화·입력·원본 저장 12개, 원장·후보 상태 14개, 원자 처리 9개로 총 테스트 35개.
 
-실제 provider parser, candidate 저장과 원장 승격의 원자적 orchestration, 같은 반환 알림의 상태 연결, durable 저장소는 다음 단계다. 현재 테스트가 milestone 전체의 correctness를 검증하는 것은 아니다.
+실제 provider parser, 같은 반환 알림의 상태 연결, durable 저장소는 다음 단계다. parser는 ledger를 직접 변경하지 않고 `RawNotification -> TransactionCandidate`까지만 담당한다. 현재 테스트가 milestone 전체의 correctness를 검증하는 것은 아니다.

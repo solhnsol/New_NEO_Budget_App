@@ -25,7 +25,7 @@ Tests/
 
 언어를 정하면 해당 언어의 package 관례로 디렉터리를 조정한다. Runtime Core에 fixture runner/파일 I/O를 끌어들이지 않는다.
 
-현재 Swift Package에서 Core는 `Sources/NEOBudgetCore`, 테스트용 Infrastructure는 별도 `Sources/NEOBudgetInMemoryStorage` target으로 분리했다. 정규화와 중립 RawNotification/Repository에 더해 Money, Account, CreditInstrument, LedgerEntry, Posting, LiabilityChange, BudgetImpact, AdjustmentLink, TransactionCandidate를 구현했다. 원장 in-memory adapter는 revision 조건부 원자 커밋, projection, 강한 ID 멱등성, 증거 단일 소비와 환불 불변식을 검증한다. provider parser, candidate 저장/승격 orchestration, durable 저장소 등 나머지는 이 문서의 설계 초안이다. Platform/iOS와 Platform/Android는 경계 문서만 둔다. 상세 결과는 platform-boundary-review.md 참조.
+현재 Swift Package에서 Core는 `Sources/NEOBudgetCore`, 테스트용 Infrastructure는 별도 `Sources/NEOBudgetInMemoryStorage` target으로 분리했다. 정규화와 중립 RawNotification/Repository에 더해 Money, Account, CreditInstrument, LedgerEntry, Posting, LiabilityChange, BudgetImpact, AdjustmentLink, TransactionCandidate를 구현했다. 원장 in-memory adapter는 revision 조건부 원자 커밋, projection, 강한 ID 멱등성, 증거 단일 소비와 환불 불변식을 검증한다. `CandidateProcessingRepository`는 candidate 저장과 ready candidate ledger 승격의 단일 transaction/CAS 계약을 정의하며 in-memory adapter가 copy-validate-commit으로 rollback 의미를 검증한다. provider parser와 durable 저장소 등 나머지는 이 문서의 설계 초안이다. Platform/iOS와 Platform/Android는 경계 문서만 둔다. 상세 결과는 platform-boundary-review.md 참조.
 
 ## 핵심 모델 제안
 
@@ -76,7 +76,7 @@ Tests/
 
 원본 저장/조회, provider reference 및 근거 조회, 계좌 binding, 원장 snapshot, 버전 조건부 수정, candidate 상태 변경, atomic-write를 제공한다. 메서드 인자/결과는 Domain 값이며 SQL/SwiftData 객체를 노출하지 않는다.
 
-원장 반영과 이미 반영한 근거의 기록은 하나의 commit 단위. 한쪽 이체만 저장하거나 원장만 쓰고 처리 상태가 빠지는 것을 금지한다. in-memory 구현도 rollback/중복 제약/revision 검사를 수행해 실제 DB와 같은 계약으로 테스트한다.
+원장 반영과 이미 반영한 근거의 기록은 하나의 commit 단위다. 구현된 `CandidateProcessingRepository.process`는 candidate revision과 ledger revision을 입력받고, ready candidate 저장·ledger entry 반영·승격 연결 기록을 모두 성공한 뒤에만 상태를 공개한다. non-ready candidate는 저장만 하고 ledger를 변경하지 않는다. 미래 SwiftData/SQLite adapter는 이 호출 전체를 하나의 DB transaction과 revision 조건부 write로 구현해야 한다. 한쪽 이체만 저장하거나 원장만 쓰고 처리 상태가 빠지는 것을 금지한다. in-memory 구현도 rollback/중복 제약/revision 검사를 수행해 같은 계약으로 테스트한다.
 
 앱 UI와 미래 단축어 adapter는 같은 application use case를 호출한다. 플랫폼은 시각/저장/알림/캘린더 입력을 제공하고, 분류/집계/매칭 정책을 갖지 않는다.
 
