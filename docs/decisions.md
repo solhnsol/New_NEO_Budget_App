@@ -73,3 +73,11 @@ Swift Core를 유지하고 Apple framework/OS 객체/구체 DB 호출을 분리�
 동일 candidate의 재처리는 revision이 오래됐더라도 멱등 결과를 반환한다. `needsReview`, `waitingForEvidence`, `rejected`는 저장만 하며 자동 승격하지 않는다. 새 입력이나 candidate 갱신에는 candidate revision을, ready 승격에는 ledger revision도 함께 확인한다. candidate 충돌, 중복 증거, stale revision, ledger 불변식 실패 시 전체 상태를 보존한다.
 
 in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 뒤 한 commit point에서 교체한다. 미래 SwiftData/SQLite adapter는 `process` 전체를 단일 DB transaction/CAS로 구현해야 하며 중간 candidate row만 남기거나 ledger만 반영해서는 안 된다.
+
+## D008 — 금융 알림 parser 경계: 사용자 선택 및 baseline 구현 완료
+
+선택: parser는 `RawNotification -> TransactionCandidate`까지만 담당하며 repository나 ledger port를 받지 않는다. 계좌/카드 binding, 예산 월, 환불 원거래 연결은 application이 만든 `NotificationParsingContext`로 명시적으로 주입한다. 시스템 시각·locale·DB 조회로 누락 정보를 추정하지 않는다.
+
+한국어 baseline parser는 승인/사용/결제, 입금, 이체/송금, 취소/환불, 카드대금/결제대금과 원 단위 금액, 거래번호/승인번호처럼 문구에 명시된 사실만 읽는다. 강한 금융 거래 ID가 없거나 시간·binding·이체 상대·환불 원거래가 부족하면 `needsReview`이며 자동 승격되지 않는다. 광고/지원하지 않는 알림은 `rejected`다.
+
+현재 작업공간에는 과거 실거래 원문 fixture가 없고 개인정보가 포함된 원문은 공개 저장소에 그대로 복사하지 않는다. 특정 은행/카드/페이 provider profile은 익명화된 실제 샘플을 확보한 뒤 같은 protocol 아래 추가한다. baseline 키워드를 provider 전체 형식 검증으로 과장하지 않는다.

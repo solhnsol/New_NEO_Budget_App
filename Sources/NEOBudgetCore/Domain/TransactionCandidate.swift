@@ -16,6 +16,10 @@ public enum CandidateIssue: String, Codable, Hashable, Sendable {
     case ambiguousWithoutStrongIdentity
     case conflictingStrongIdentity
     case unknownAccount
+    case unboundSource
+    case missingAmount
+    case invalidAmount
+    case missingTransactionTime
     case missingOriginalEntry
     case incompleteTransfer
     case parserUncertain

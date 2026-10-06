@@ -6,14 +6,15 @@ iPhone 내부에서 원본 금융 알림과 거래 원장을 보관하고, 서�
 
 - [기존 코드 분석](docs/legacy-analysis.md)
 - [Core 설계와 구현 계획](docs/core-plan.md)
+- [금융 알림 parser 계약](docs/notification-parser.md)
 - [공동 의사결정 기록](docs/decisions.md)
 - [Windows 개발 및 검증 안내](docs/development.md)
 - [플랫폼 경계 점검 결과](docs/platform-boundary-review.md)
 
 구현 언어는 순수 Swift Package로 합의했다. 실제 현금 흐름과 소비 예산 귀속을 분리하는 첫 원장 규약까지 합의·구현했다. Windows Swift 6.4 x64에서 빌드와 테스트를 통과했다.
 
-현재 구현은 중립 `RawNotification`, 알림 텍스트 정규화, 원본 저장 protocol에 더해 `Posting`/`LiabilityChange`/`BudgetImpact` 원장 모델과 in-memory 참조 adapter를 포함한다. `CandidateProcessingRepository`는 candidate 저장과 ready candidate의 ledger 반영을 하나의 원자 작업으로 정의한다. `swift build`, `swift test`로 실행한다. 실제 parser와 durable 저장소는 아직 구현하지 않았다.
+현재 구현은 중립 `RawNotification`, 한국어 금융 알림의 엄격한 baseline parser, `Posting`/`LiabilityChange`/`BudgetImpact` 원장 모델과 in-memory 참조 adapter를 포함한다. Parser는 `RawNotification -> TransactionCandidate`만 수행하고, `CandidateProcessingRepository`가 candidate 저장과 ready candidate의 ledger 반영을 하나의 원자 작업으로 정의한다. `swift build`, `swift test`로 실행한다. 실제 provider별 익명화 fixture와 durable 저장소는 아직 구현하지 않았다.
 
-현재 검증: 기존 26개 테스트와 원자적 candidate 처리 테스트 9개, 총 35개가 Windows x86_64에서 통과했다. 기존 플랫폼 경계 12개는 Swift 6.4/Linux에서도 통과했다. Android/iOS의 실제 실행은 별도 확인 필요.
+현재 검증: 기존 35개 테스트와 parser 테스트 11개, 총 46개가 Windows x86_64에서 통과했다. 기존 플랫폼 경계 12개는 Swift 6.4/Linux에서도 통과했다. Android/iOS의 실제 실행은 별도 확인 필요.
 
 `NEOBudgetCore`는 Platform/Infrastructure를 의존하지 않는다. `NEOBudgetInMemoryStorage` target이 Core protocol을 구현한다. `Platform/iOS`, `Platform/Android`는 향후 adapter 경계 문서만 있으며 빌드 target이나 실제 플랫폼 코드가 아니다.
