@@ -8,7 +8,9 @@ public enum ResidualDirection: String, Codable, Hashable, Sendable {
     /// More money moved than the obligations account for (20,000 received against 18,000 owed).
     case surplus
     /// Less money moved than an obligation asked for (17,000 received against 18,000 owed). The obligation
-    /// keeps its open remainder; this record is the question "what is that remainder?".
+    /// keeps its open remainder; this record is only the question "what is that remainder?" and a pointer at
+    /// that remainder. It is metadata, not a second money bucket: the 1,000 is counted once, as
+    /// `ObligationBalance.remainingMinorUnits`.
     case shortfall
 }
 
@@ -103,26 +105,48 @@ public struct SettlementResidual: Codable, Hashable, Sendable {
 }
 
 /// Plain totals of what is still unexplained, kept out of spending analysis on purpose.
+///
+/// Only a **surplus** is independent money: it moved beyond every obligation. A shortfall is a reference to
+/// the open remainder of an obligation, which `ObligationBalance.remainingMinorUnits` already counts, so it is
+/// reported separately and must never be added to the surplus or to an outstanding balance.
 public struct ResidualSummary: Hashable, Sendable {
     public let currency: String
+    /// Money received or sent beyond the obligations that nobody has explained yet. The only unexplained money.
     public let unresolvedSurplusMinorUnits: Int64
-    public let unresolvedShortfallMinorUnits: Int64
-    public let byClassification: [ResidualClassification: Int64]
+    /// Remainder still open on obligations whose shortfall question nobody has answered. **Not additive**:
+    /// it is part of `ObligationBalance.remainingMinorUnits`, not on top of it.
+    public let openShortfallReferenceMinorUnits: Int64
+    /// What users said each surplus was (every classification, resolved or not).
+    public let surplusByClassification: [ResidualClassification: Int64]
+    public let shortfallByClassification: [ResidualClassification: Int64]
+    /// Both directions together; kept for readers who only care how the user classified differences.
+    public var byClassification: [ResidualClassification: Int64] {
+        surplusByClassification.merging(shortfallByClassification, uniquingKeysWith: +)
+    }
 
-    public static func summarize(_ residuals: [SettlementResidual]) -> [ResidualSummary] {
+    /// `remaining` of an obligation limits how much of a shortfall record is still open, so a shortfall whose
+    /// remainder was paid later no longer counts.
+    public static func summarize(_ residuals: [SettlementResidual], in life: LifeState) -> [ResidualSummary] {
         var byCurrency: [String: [SettlementResidual]] = [:]
         for residual in residuals { byCurrency[residual.amount.currency, default: []].append(residual) }
         return byCurrency.keys.sorted().map { currency in
-            let items = byCurrency[currency] ?? []
-            var surplus: Int64 = 0, shortfall: Int64 = 0
-            var buckets: [ResidualClassification: Int64] = [:]
-            for item in items {
-                buckets[item.classification.value, default: 0] += item.amount.minorUnits
-                guard !item.isResolved else { continue }
-                if item.direction == .surplus { surplus += item.amount.minorUnits } else { shortfall += item.amount.minorUnits }
+            var surplus: Int64 = 0, reference: Int64 = 0
+            var surplusBuckets: [ResidualClassification: Int64] = [:]
+            var shortfallBuckets: [ResidualClassification: Int64] = [:]
+            for item in byCurrency[currency] ?? [] {
+                if item.direction == .surplus {
+                    surplusBuckets[item.classification.value, default: 0] += item.amount.minorUnits
+                    if !item.isResolved { surplus += item.amount.minorUnits }
+                } else {
+                    shortfallBuckets[item.classification.value, default: 0] += item.amount.minorUnits
+                    guard !item.isResolved, let target = item.obligationID,
+                          let remaining = life.balance(of: target)?.remainingMinorUnits else { continue }
+                    reference += min(item.amount.minorUnits, remaining)
+                }
             }
             return ResidualSummary(
-                currency: currency, unresolvedSurplusMinorUnits: surplus, unresolvedShortfallMinorUnits: shortfall, byClassification: buckets
+                currency: currency, unresolvedSurplusMinorUnits: surplus, openShortfallReferenceMinorUnits: reference,
+                surplusByClassification: surplusBuckets, shortfallByClassification: shortfallBuckets
             )
         }
     }

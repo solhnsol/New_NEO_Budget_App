@@ -218,7 +218,7 @@ private func ids(_ values: [ObligationID]) -> [String] { values.map(\.rawValue).
     #expect(SettlementMatcher.match(transfer("t", .incoming, 18_000), in: inside).proposal?.inferences == [ProposedInference(obligationID: oid("pay"), minorUnits: 12_000)])
     // 12,000 is outside 1,000...5,000, so that unknown cannot explain the transfer; nothing is forced.
     let outside = world([obligation("recv", .receivable, .exact(30_000)), obligation("pay", .payable, amountRange(1_000, 5_000))])
-    #expect(SettlementMatcher.match(transfer("t", .incoming, 18_000), in: outside) == .insufficientEvidence(.possiblePartialSettlement([oid("recv")])))
+    #expect(SettlementMatcher.match(transfer("t", .incoming, 18_000), in: outside) == .insufficientEvidence(.unknownAmountsMayExplainDifference([oid("pay")])))
 }
 
 @Test func scenarioC_severalUnknownsOnlyYieldAConstraintNeverAnAutomaticSplit() throws {

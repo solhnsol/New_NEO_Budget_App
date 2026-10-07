@@ -127,19 +127,33 @@ public enum PolicyTarget: Codable, Hashable, Sendable {
 }
 
 /// What an obligation remembers about how its amount came to be, so the raw cost is never lost.
+///
+/// The pipeline is `raw economic share → policy adjustment (rounding) → requested amount`. The raw share and
+/// the total keep the **same level of knowledge** as the expense they come from, so an uncertain total
+/// (range, estimated, unknown) yields an uncertain share rather than a refusal or a guess. The adjustment is
+/// the outcome of a rounding habit the user chose; it is never an unexplained residual.
 public struct ShareBreakdown: Codable, Hashable, Sendable {
     /// The person's real part of the expense, before any rounding.
-    public let rawShareMinorUnits: Int64
+    public let rawShare: AmountKnowledge
     /// The rounding that produced the requested amount.
     public let rounding: RoundingRule
     /// The expense this share belongs to (a component of an activity).
-    public let totalMinorUnits: Int64
+    public let total: AmountKnowledge
 
-    public init(rawShareMinorUnits: Int64, rounding: RoundingRule, totalMinorUnits: Int64) {
-        self.rawShareMinorUnits = rawShareMinorUnits
+    public init(rawShare: AmountKnowledge, rounding: RoundingRule, total: AmountKnowledge) {
+        self.rawShare = rawShare
         self.rounding = rounding
-        self.totalMinorUnits = totalMinorUnits
+        self.total = total
     }
+
+    /// A share of a settled total (the common case).
+    public init(rawShareMinorUnits: Int64, rounding: RoundingRule, totalMinorUnits: Int64) {
+        self.init(rawShare: .exact(rawShareMinorUnits), rounding: rounding, total: .exact(totalMinorUnits))
+    }
+
+    /// The raw share as one number, only when it is settled knowledge (exact or inferred).
+    public var rawShareMinorUnits: Int64? { rawShare.knownValue }
+    public var totalMinorUnits: Int64? { total.knownValue }
 }
 
 public struct PersonShare: Hashable, Sendable {
@@ -240,6 +254,55 @@ public enum SplitCalculator {
         for (person, _) in fractions where leftover > 0 {
             result[person, default: 0] += 1
             leftover -= 1
+        }
+        return result
+    }
+
+    /// The lowest and highest raw share each person can have while the total is anywhere in
+    /// `totalMin...totalMax`. Equal and fixed splits are monotone in the total, so their bounds are the shares
+    /// at both ends. A weighted split uses the largest-remainder method, which is not monotone, so its bounds
+    /// are the proportional share rounded down at the low end and up at the high end.
+    public static func rawShareBounds(
+        totalMin: Int64, totalMax: Int64, participants: [PersonID], rule: SplitRule
+    ) throws -> [PersonID: (min: Int64, max: Int64)] {
+        let people = Array(Set(participants)).sorted()
+        guard !people.isEmpty else { throw SettlementPolicyError.noParticipants }
+        var low = totalMin
+        var high = totalMax
+        if case let .fixedAmounts(fixed) = rule {
+            // A total below what is already fixed is impossible, so it narrows the range instead of failing.
+            var fixedTotal: Int64 = 0
+            for (_, amount) in fixed {
+                let (sum, overflow) = fixedTotal.addingReportingOverflow(amount)
+                guard !overflow else { throw SettlementPolicyError.amountOverflow }
+                fixedTotal = sum
+            }
+            guard fixedTotal <= high else { throw SettlementPolicyError.fixedAmountsExceedTotal }
+            low = max(low, fixedTotal)
+            if people.allSatisfy({ fixed[$0] != nil }) {
+                guard low == fixedTotal else { throw SettlementPolicyError.fixedAmountsDoNotCoverTotal }
+                high = fixedTotal
+            }
+        }
+        var result: [PersonID: (min: Int64, max: Int64)] = [:]
+        if case let .weights(weights) = rule {
+            // Validates weights exactly like an ordinary split.
+            _ = try rawShares(total: low, participants: people, rule: rule)
+            let weightSum = people.reduce(Int64(0)) { $0 + (weights[$1] ?? 0) }
+            for person in people {
+                let weight = weights[person] ?? 0
+                let (lowProduct, o1) = low.multipliedReportingOverflow(by: weight)
+                let (highProduct, o2) = high.multipliedReportingOverflow(by: weight)
+                guard !o1, !o2 else { throw SettlementPolicyError.amountOverflow }
+                result[person] = (lowProduct / weightSum, (highProduct + weightSum - 1) / weightSum)
+            }
+            return result
+        }
+        let atLow = try rawShares(total: low, participants: people, rule: rule)
+        let atHigh = try rawShares(total: high, participants: people, rule: rule)
+        for person in people {
+            let a = atLow[person] ?? 0, b = atHigh[person] ?? 0
+            result[person] = (min(a, b), max(a, b))
         }
         return result
     }

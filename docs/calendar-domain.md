@@ -18,6 +18,10 @@
 > **Category와 Budget Nature는 별도 축이다. 무엇을 샀는지와 예산상 어떤 성격의 소비인지는 다르다.**
 >
 > **기타는 taxonomy의 한계이고, 모름은 정보의 한계다.**
+>
+> **차액은 먼저 미확정 금액을 설명하는 evidence로 사용하고, 설명할 미확정 정보가 더 이상 없을 때만 residual로 승격한다.**
+>
+> **하나의 경제적 금액은 한 분석 경로에서 두 번 집계되어서는 안 된다.** (§20)
 
 여기에 앞선 원칙이 그대로 이어진다: 반복적·공통적인 것은 자동화하고 개인적 의미가 강할수록 사용자 결정을 우선한다. 잘못된 자동 분류보다 미분류가 낫다. 외부 캘린더가 이벤트 필드의 원본이고, 원장은 불변이며(이 계층은 읽기만 한다), 영구 실패는 예외가 아니라 typed 결과다.
 
@@ -39,7 +43,7 @@ NEOBudgetInMemoryCalendar    테스트용 in-memory provider·저장소·거래 
 
 | 개념 | 질문 | 소유 | 자동화 정책 | 타입 |
 |---|---|---|---|---|
-| **Category** | 무엇에 돈을 썼는가 | canonical taxonomy | 흔하고 공통적 → 자동화 가능. **classified / other / unknown / unclassified** 4상태(§12) | `CanonicalCategoryID`, `CategoryAssignment` |
+| **Category** | 무엇에 돈을 썼는가 | canonical taxonomy | 흔하고 공통적 → 자동화 가능. **classified / other / unresolved / confirmedUnknown / unclassified** 4상태(§12) | `CanonicalCategoryID`, `CategoryAssignment` |
 | **Spending Nature** | 예산 관점에서 어떤 소비인가 | **사용자**(기본값은 시스템 신호) | Category와 **독립**. 사용자 결정은 자동이 못 덮음(§12) | `SpendingNature`, `NatureTarget` |
 | **Activity** | 무엇을 했나 | **OnAll** | 개인 의미가 강함 → 사용자 결정 우선 | `Activity`, `ActivityTypeDefinition` |
 | **Tag** | 어떤 맥락인가 | **사용자** | 기존 태그 **선택만**, 생성 불가 | `Tag`, `TagAssignment` |
@@ -175,14 +179,15 @@ Transaction ── TransactionAllocation(id, transactionID, activityID?, amount:
 - **surplus**: 정산 대상 obligation은 모두 정산되고 남은 금액이 surplus가 된다. net 불변식은 `Σ 적용 + surplus = 송금액`. 초과 지급에서 20,000 전체를 정산으로 처리하지도, 정산 실패로 보지도 않는다(시나리오 H).
 - **shortfall**: 부족분을 가진 obligation이 **하나로 특정될 때만** 제안한다(정산 대상이 한 건). 17,000은 부분 정산으로 적용되고 obligation은 `partiallySettled`로 남으며 1,000은 unresolved shortfall이다(시나리오 I). 어느 obligation이 부족한지 알 수 없으면(여러 건) `insufficientEvidence`.
 - **효과**: 사용자가 shortfall을 `waived`/`roundingAdjustment`로 분류하면 그 금액이 obligation에서 **닫힌 것**으로 취급되어(`closedMinorUnits = 적용 + 닫힌 shortfall`) obligation이 `settled`가 되고 요청이 `fulfilled`된다. 다시 `unresolved`로 열면 되돌아온다. 다른 분류(`other` 등)는 닫지 않는다. 나중에 남은 1,000이 별도로 입금되면 정확히 매치되고 shortfall 질문은 사라진다(`unresolvedResiduals`에서 빠지고 기록은 남음).
-- **분석에서 residual은 소비 증감으로 반영하지 않는다.** `ResidualSummary`가 별도로 집계하며(unresolved surplus/shortfall, 분류별 합계) 지출 분석(`SpendingAnalytics`)에는 들어가지 않는다.
+- **분석에서 residual은 소비 증감으로 반영하지 않는다.** `ResidualSummary`가 별도로 집계하며 지출 분석(`SpendingAnalytics`)에는 들어가지 않는다. 독립적인 미설명 금액은 **surplus뿐**이다(`unresolvedSurplusMinorUnits`). shortfall은 obligation의 남은 금액을 가리키는 **참조**(`openShortfallReferenceMinorUnits`)이며 더하면 안 된다(§20.4).
+- **residual은 마지막 수단이다.** 미확정(unknown/range/estimated) obligation이 하나라도 열려 있으면 차액은 그쪽의 evidence가 되고 residual도 residual 질문도 만들지 않는다(§20.1).
 - settlement를 제거하면 그 residual도 함께 제거된다. residual ID는 settlement ID에서 결정적으로 만든다.
 
 ## 11. 정산 정책과 공유 지출 (`SettlementPolicy`, `ExpenseComponent`)
 
 ### raw share와 requested share
 
-`ShareBreakdown`은 두 값을 모두 보존한다: **raw share**(그 사람의 실제 부담, 총액의 정확한 분할)와 **requested share**(관계의 반올림 습관을 적용해 실제로 요청한 금액 = obligation 금액). 차이는 `roundingAdjustment`(요청 − raw)다. raw를 잃으면 분석이 왜곡되므로 obligation이 `share.rawShareMinorUnits`를 기억한다(시나리오 J: raw 23,700 → 요청 23,000, 조정 -700).
+`ShareBreakdown`은 두 값을 모두 보존한다: **raw share**(그 사람의 실제 부담, 총액의 정확한 분할, 총액과 같은 지식 수준)와 **requested share**(관계의 반올림 습관을 적용해 실제로 요청한 금액 = obligation 금액). 차이는 정책 조정(요청 − raw)이며 **residual이 아니다**(§20.5). raw를 잃으면 분석이 왜곡되므로 obligation이 `share.rawShare`(settled이면 `rawShareMinorUnits`)를 기억한다(시나리오 J: raw 23,700 → 요청 23,000, 조정 -700).
 
 - 반올림: `RoundingRule(mode: exact/floor/ceil/nearest, unit ≥ 1)`. `nearest`는 절반을 올림. 요청이 반올림된 사람 몫의 차이는 **지불자가 흡수**한다(`roundingAbsorbedByPayerMinorUnits`). 지불자 본인 몫은 반올림하지 않는다(자기에게 청구하지 않는다).
 - 요청 금액이 0이 되면 obligation을 만들지 않고 `roundedToZero`로 보고한다(raw 몫은 그대로 보임).
@@ -203,8 +208,8 @@ Transaction ── TransactionAllocation(id, transactionID, activityID?, amount:
 
 `ExpenseComponent`(activityID, amount: `AmountEntry`, payerID, participants?, excludedParticipants, policy?, category, originTransactionID?)는 Activity의 한 번에 정산되는 지출 조각이다(1차, 2차, 술).
 - 참여자: `participants == nil`이면 Activity 참여자 **+ 나**, 목록이 있으면 그 목록을 대체, 그 뒤 `excludedParticipants`를 뺀다. (늦참: 2차는 `participants`로 A B C만 → D에게는 obligation이 생기지 않는다. 술 미참여: 술 component는 A B만 → C 없음. 또는 `fixedAmounts`로 C는 20,000 고정.)
-- **obligation 생성** (`deriveObligations`/`generateObligations`): **나와 관련된 것만** 만든다. 내가 지불자면 각 참여자에 대한 받을 돈, 다른 사람이 지불했고 내가 참여자면 그 사람에 대한 줄 돈 하나, 나와 무관한 지출(남들끼리)은 없다. 금액이 **settled**(exact/inferred)일 때만 가능하며 unknown/range/estimated는 `totalNotKnown`으로 거부된다(추측 금지). inferred 총액의 몫은 inferred로 만든다. obligation은 `componentID`와 `share`로 출처를 추적한다.
-- 한 component당 상대별 live obligation은 하나다(`duplicateComponentObligation`). obligation이 있는 동안 지불자·금액·참여자·정책을 바꿀 수 없다(`componentHasObligations`: label/category는 가능). obligation을 취소하면 다시 바꿀 수 있다. 활동을 지우려면 component와 obligation이 없어야 한다.
+- **obligation 생성** (`deriveObligations`/`generateObligations`): **나와 관련된 것만** 만든다. 내가 지불자면 각 참여자에 대한 받을 돈, 다른 사람이 지불했고 내가 참여자면 그 사람에 대한 줄 돈 하나, 나와 무관한 지출(남들끼리)은 없다. 총액의 불확실성은 **거부하지 않고 몫에 그대로 전파**한다: exact→exact, inferred→inferred, range→range(25,000~30,000), estimated→estimated, unknown→unknown(§20.2). 자동 정산 강도만 다르다. obligation은 `componentID`와 `share`로 출처를 추적한다.
+- 한 component당 상대별 live obligation은 하나다(`duplicateComponentObligation`). 같은 총액으로 다시 생성하면 아무것도 바꾸지 않고, 더 정밀한 총액이면 기존 obligation을 갱신한다. obligation이 있는 동안 지불자·참여자·정책과 **확정된** 금액은 바꿀 수 없다(`componentHasObligations`: label/category는 가능). 아직 불확실한 총액(unknown/range/estimated)을 더 정밀하게 만드는 것은 허용된다. obligation을 취소하면 다시 바꿀 수 있다. 활동을 지우려면 component와 obligation이 없어야 한다.
 
 ## 12. Spending Nature와 Category 상태
 
@@ -220,7 +225,7 @@ Transaction ── TransactionAllocation(id, transactionID, activityID?, amount:
 - 같은 활동의 태그가 서로 다른 성격을 진술하면 태그 단계는 진술 없음으로 보고 다음 단계로 간다.
 - 사용자 진술은 자동이 덮어쓰거나 지우지 못한다(`userAssignmentProtected`). 자동은 자기 이전 값만 바꿀 수 있다.
 - 시나리오 M: Category = 식비 > 외식(기본 living), Activity = 제주 여행(irregular) → 그 식사는 **카테고리는 그대로** irregular로 집계되고, 평소 점심은 living으로 집계된다.
-- 집계(`SpendingAnalytics`): `byNature`(생활/선택/비정기/미지정 각각 `AmountAggregate`, 불확실성 보존), 환불은 별도 flow로 섞지 않는다. 예: 총 1,500,000 = 생활 700,000 + 비정기 700,000 + 선택 100,000. component 기반 항목(`items(fromComponentsIn:)`)과 allocation 기반 항목은 이중 집계를 피하려고 **둘 중 하나만** 쓴다.
+- 집계(`SpendingAnalytics`): `byNature`(생활/선택/비정기/미지정 각각 `AmountAggregate`, 불확실성 보존), 환불은 별도 flow로 섞지 않는다. 예: 총 1,500,000 = 생활 700,000 + 비정기 700,000 + 선택 100,000. component 기반 항목(`items(fromComponentsIn:)`)과 allocation 기반 항목을 한 분석에서 함께 쓸 때는 같은 비용을 두 번 세지 않도록 `items(unifiedIn:)`을 쓴다(§20.6).
 
 ### Category 상태 (`CategoryAssignment`)
 
@@ -228,13 +233,17 @@ Transaction ── TransactionAllocation(id, transactionID, activityID?, amount:
 |---|---|---|---|
 | `classified(id, provenance)` | 무엇인지 알고 taxonomy에 맞는 category가 있음 | — | 식비 > 외식 |
 | `other(provenance)` | 무엇인지 알지만 taxonomy에 맞는 category가 없음 | **taxonomy의 한계** | 매우 특이한 서비스 |
-| `unknown(provenance)` | 무엇이었는지 정보 자체가 부족 | **정보의 한계** | 가계부 차액 13,000, "김철수 18,000" 이유 모름 |
+| `unresolved` | 정보가 부족해 아직 모름. **사용자에게 아직 묻지 않음** | **정보의 한계(아직)** | "김철수 18,000" 이유 모름 |
+| `confirmedUnknown(provenance)` | 사용자에게 물었고 사용자가 "나도 모름"이라고 **확인함** | **사용자의 결정** | 가계부 차액 13,000, 영수증 없음 |
 | `unclassified(reason)` | 정보는 충분하지만 시스템이 아직 정하지 못함 | **처리 대기** | merchant는 확실한데 분류 전 (`notYetEvaluated`/`ambiguous`) |
 
-- 기타와 모름을 합치지 않는다. 동등성·직렬화·집계(`CategoryStateBreakdown`)에서 서로 섞이지 않는다(시나리오 N). 분석은 네 상태를 따로 보고, `reviewQueue`는 사용자만 답할 수 있는 `unknown`을 먼저, 그다음 분류기가 충돌한 `unclassified(.ambiguous)`, 단순 대기 순으로 정렬한다(`other`/`classified`는 검토 불필요).
-- 사용자 결정(어떤 상태든)은 자동이 덮어쓰지 못한다. 자동의 `unclassified`는 시스템 상태라 사용자 결정을 대체할 수 없다(`CategoryAssignment.canReplace`).
-- **분류기는 충분한 evidence 없이 unknown을 classified로 강제하지 않는다**: `AssignmentPolicy.classification(…newEvidence:)`는 자동 `unknown`에 대해 새 evidence 없이는 신뢰도가 높아도 그대로 둔다.
-- **금액 불확실성과 category 불확실성은 별도 축**이다. `amount = exact, category = unknown`도, `amount = unknown, category = classified(식비 > 카페)`도 표현된다. 카테고리는 `TransactionAllocation.category`와 `ExpenseComponent.category`에 있다.
+- 기타와 모름을 합치지 않는다. 동등성·직렬화·집계(`CategoryStateBreakdown`)에서 서로 섞이지 않는다(시나리오 N). 분석은 다섯 상태를 따로 본다.
+- **누가 무엇을 하는가**: `unresolved`는 **사용자에게 질문할 가치**가 있다(`needsUserQuestion`). `unclassified`는 질문이 아니라 classifier/merchant resolution이 다시 처리할 일이다(`needsAutomatedRetry`, `classifierBacklog`). `confirmedUnknown`은 기본 review에서 **제외**되고 같은 evidence로 다시 묻지 않는다. `other`/`classified`는 완료다.
+- `reviewQueue`는 `unresolved`를 먼저, 그다음 분류기가 충돌한 `unclassified(.ambiguous)`, 단순 대기 순으로 정렬한다. `confirmedUnknown`은 `evidenceVersions[item.id]`가 사용자가 확인한 evidence보다 **새로울 때만** 다시 나타난다. `userQuestions`는 큐 중 사용자에게 묻는 부분만 보여 준다.
+- **confirmedUnknown의 provenance**: 사용자만 만들 수 있다(`confirmedUnknownRequiresUser`). 사용자가 본 evidence의 버전(`AssignmentProvenance.evidenceVersion`, 없으면 응답 시각)을 보존한다. 자동 classifier가 **같은 evidence로** 이를 `classified`로 덮어쓸 수 없고(`userAssignmentProtected`), 더 새로운 `evidenceVersion`을 명시한 제안만 재평가된다(영수증 발견 등). 사용자는 언제나 바꿀 수 있다. `confirmedUnknown`은 영구 불변이 아니라 "같은 질문을 다시 하지 않는 상태"다.
+- 사용자 결정(어떤 상태든)은 자동이 덮어쓰지 못한다(위 `confirmedUnknown`의 새 evidence 경로 제외). 자동의 `unclassified`/`unresolved`는 시스템 상태라 사용자 결정을 대체할 수 없다(`CategoryAssignment.canReplace`).
+- 분류기는 충분한 evidence 없이 `confirmedUnknown`을 `classified`로 강제하지 않는다: `AssignmentPolicy.classification(proposing:provenance:replacing:)`는 제안 provenance의 `evidenceVersion`이 확인 시점보다 새롭지 않으면 신뢰도가 높아도 그대로 둔다. 신뢰도가 임계값 미만이면 evidence가 새로워도 category가 되지 않는다.
+- **금액 불확실성과 category 불확실성은 별도 축**이다. `amount = exact, category = confirmedUnknown`도, `amount = unknown, category = classified(식비 > 카페)`도 표현된다. 카테고리는 `TransactionAllocation.category`와 `ExpenseComponent.category`에 있다.
 
 ## 13. 타임라인 read model 변경
 
@@ -276,12 +285,22 @@ Transaction ── TransactionAllocation(id, transactionID, activityID?, amount:
 | 정책 우선순위(global→person→activity→component), 사용자만 설정 | `policiesResolveFromGlobalThroughPersonAndActivityToTheComponent`, `aPersonPolicyCarriesRoundingOnlyAndEverythingElseIsTheUsersDecision` |
 | **K** 늦참 → 2차 obligation 없음 | `scenarioKTheLateComerOwesNothingForTheSecondRound`, `theParticipantListIsInheritedUntilTheComponentStatesItsOwn` |
 | **L** 술 미참여 → alcohol obligation 없음 / 고정 20,000 | `scenarioLTheNonDrinkerHasNoAlcoholObligation`, `scenarioLAlternativeAFixedAmountForTheOneWhoDidNotDrink` |
-| component → obligation 규칙(나와 관련된 것만, 금액이 settled일 때만, 중복 금지) | `whenSomeoneElsePaidIOweThemMyShareOnly`, `expensesBetweenOtherPeopleCreateNothingForMe`, `anAmountThatIsNotSettledNeverBecomesObligations`, `sharesOfAnInferredTotalAreInferredNotExact`, `obligationsAreCreatedOncePerComponentAndCounterparty` |
+| component → obligation 규칙(나와 관련된 것만, 총액의 불확실성은 몫에 전파, 중복 금지) | `whenSomeoneElsePaidIOweThemMyShareOnly`, `expensesBetweenOtherPeopleCreateNothingForMe`, `anUnsettledTotalIsCarriedIntoObligationsNeverGuessedAsExact`, `sharesOfAnInferredTotalAreInferredNotExact`, `obligationsAreCreatedOncePerComponentAndCounterparty` |
 | **M** 여행 식사는 irregular, 카테고리는 그대로 | `scenarioMATripMealKeepsItsCategoryButCountsAsIrregular`, `theLivingBudgetIsNotDistortedByOneBigPurchase`, `natureIsResolvedFromTheMostSpecificStatement` |
 | 성격 미진술은 unspecified, 사용자 성격은 자동이 못 덮음 | `nothingStatedMeansUnspecifiedNeverLiving`, `aUserNatureIsNeverOverwrittenByAutomation`, `tagsThatDisagreeCountAsNoStatement` |
-| **N** category 4상태가 섞이지 않음(동등성·직렬화·집계) | `scenarioNTheFourCategoryStatesAreDistinct`, `scenarioNAnalyticsReportTheFourStatesSeparately`, `complexIsNotACategory` |
+| **N** category 5상태가 섞이지 않음(동등성·직렬화·집계) | `scenarioNTheFiveCategoryStatesAreDistinct`, `scenarioNAnalyticsReportTheFiveStatesSeparately`, `complexIsNotACategory` |
 | 금액 불확실성과 category 불확실성은 독립 | `amountUncertaintyAndCategoryUncertaintyAreIndependentAxes`, `uncertainAmountsStayUncertainInTheNatureBreakdown` |
 | category 덮어쓰기 보호, unknown을 근거 없이 classified로 강제하지 않음 | `aUserCategoryDecisionOfAnyKindIsNeverOverwrittenByAutomation`, `aClassifierCannotTurnLackOfInformationIntoACategoryByBeingConfident`, `allocationUpsertsCannotSneakPastACategoryProtection` |
+| **O** unknown이 차액을 소비하면 residual 없음 | `scenarioOUnknownObligationConsumesTheDifferenceAndLeavesNoResidual` |
+| **P** unknown 여럿은 constraint만 남기고 residual·질문 없음 | `scenarioPSeveralUnknownsKeepAConstraintAndNeverCreateAResidualQuestion`, `anOpenUnknownNeverLetsADifferenceBecomeAResidualEvenWithARequest`, `theStateRefusesAnAutomatedResidualWhileAnUncertainObligationIsOpen` |
+| **Q** range 총액 → range 몫, 불확실성 전파, 자동 강도 | `scenarioQARangeTotalGivesARangeObligation`, `uncertaintyIsPropagatedFromTheTotalToTheShareAtTheSameLevel`, `aRangeShareBoundsHoldForWeightedAndFixedSplitsAndRounding`, `aRangeObligationIsOnlyEverInferredNeverExactBySettlement`, `anEstimateIsASoftHintNeverAHardBoundOrAnExactMatch`, `aSharperTotalRefinesRangeObligationsInsteadOfDuplicatingThem` |
+| **R** shortfall은 이중 집계되지 않음(남은 금액의 참조) | `scenarioRExactShortfallIsSettledPlusRemainingAndNotCountedTwice`, `aLaterPaymentRetiresTheShortfallReferenceInsteadOfLeavingStaleMoney`, `originalEqualsSettledPlusWaivedPlusRemainingAndSurplusIsNotSymmetricWithShortfall`, `aCancelledObligationKeepsItsAmountAccountedFor` |
+| **S/T** raw → 조정 → 요청 → 실제 → residual 단계 분리 | `scenarioSRoundingPolicyNeverBecomesAResidual`, `scenarioTRoundingPlusAnActualShortfallLeavesOnlyTheUnexplainedThousand`, `anActualAboveTheRequestedAmountIsASurplusOfOnlyTheExcess`, `nettingWithPerPersonRoundingLeavesNoResidualEvenThoughRawSharesDiffer`, `componentRoundingAndDifferentPersonPoliciesEachKeepTheirOwnAdjustment` |
+| **U** 요청 30,000에 50,000 입금: 정산 30,000 + surplus 20,000 | `scenarioUParentOverpaymentSplitsIntoSettlementAndUnresolvedSurplus` |
+| 한 거래는 한 경제적 역할(정산 송금 ↔ 소비) | `aSettlementTransferCannotAlsoBeAllocatedAsSpendingOrARefund`, `aCorrectedRawTransferCannotBeAllocatedAsSpendingEither`, `aComponentThatMirrorsAnAllocatedTransactionIsCountedOnlyOnce`, `reimbursementObligationsNeverReduceTheOriginalSpending` |
+| 돈 보존: 정정 effective = raw 부호 합, settlement·obligation 장부 균형 | `aCorrectionsEffectiveAmountIsTheSignedSumOfItsRawMembersAndConservesMoney`, `everySettlementKeepsTheTransferAndTheObligationBooksBalancedAcrossManyShapes` |
+| **V** unresolved → confirmedUnknown, 기본 review 제외 | `scenarioVUnresolvedBecomesConfirmedUnknownAndLeavesTheDefaultReview`, `unresolvedAndConfirmedUnknownAreDistinctFromUnclassifiedAndOther` |
+| **W** confirmedUnknown은 새 evidence로만 재평가 | `scenarioWConfirmedUnknownIsReopenedOnlyByNewEvidence`, `aClassifierCannotTurnLackOfInformationIntoACategoryByBeingConfident` |
 | 이전 불변식(캘린더·활동·provenance·일관성)은 유지 | 기존 테스트(새 모델로 이전·통과) |
 
 ## 15. 일관성 (구현된 것)
@@ -318,7 +337,7 @@ command ID 멱등성, 앱 재시작 후 복구용 의도 로그, 일괄 undo(정
 - **반올림과 상계의 상호작용**: 반올림은 obligation 단위로 적용되므로 여러 obligation의 합을 한 번에 반올림한 값과 다를 수 있다. 상계 정산(양방향 net)은 반올림된 요청 금액을 기준으로 맞춘다. 사람이 net을 따로 반올림해 보내면 shortfall/surplus residual이 된다.
 - **component override 복잡도**: 정책 4단계(global/person/activity/component)와 참여자 상속·제외·고정액이 겹치면 사용자가 결과를 예측하기 어렵다. 도메인은 계산 결과(`ComponentShares`, `previewObligations`)를 먼저 보여 줄 수 있게 했지만, 편집 UI에서의 이해 가능성은 검증이 필요하다. obligation이 생성된 뒤 component를 바꾸려면 obligation을 먼저 취소해야 한다.
 - **예산 성격(SpendingNature) 기본값**: 카테고리별·활동 유형별 기본 성격은 아직 데이터가 없다(맵과 우선순위만 있음). `living/discretionary/irregular` 세 값이 충분한지, 월 단위 `irregular` 상각 같은 예산 엔진 요구가 모델을 바꾸는지는 예산 기능을 만들며 확인해야 한다.
-- **레거시 거래 마이그레이션**: 이미 저장된 거래/링크/카테고리에는 성격·카테고리 4상태·정정이 없다. 모든 기존 분류는 `unclassified(.notYetEvaluated)`로 시작하고 성격은 `unspecified`다. 기존 `CategoryClassification.unclassified(.insufficientInformation)`이 있었다면 의미가 이제 `unknown`에 해당하므로 데이터가 생기기 전에 매핑 규칙(사용자 확인 후 `unknown`)이 필요하다. 영속 저장소가 없어 실제 마이그레이션 코드는 없다.
+- **레거시 거래 마이그레이션**: 이미 저장된 거래/링크/카테고리에는 성격·카테고리 5상태·정정이 없다. 모든 기존 분류는 `unclassified(.notYetEvaluated)`로 시작하고 성격은 `unspecified`다. 기존 `CategoryClassification.unclassified(.insufficientInformation)`이 있었다면 의미가 이제 `unknown`에 해당하므로 데이터가 생기기 전에 매핑 규칙(사용자 확인 후 `unknown`)이 필요하다. 영속 저장소가 없어 실제 마이그레이션 코드는 없다.
 - **다중 통화**: 매처는 같은 통화의 obligation만 후보로 삼는다. 환율 개입 정산은 모델링하지 않았다.
 - **공유 OnAll 사용자 identity**: `Person`은 OnAll 계정과 독립이고 `ExternalIdentity`는 불투명하다. 양쪽이 OnAll을 쓸 때 obligation을 서로 대조하는 모델(상호 확인·충돌)은 없다.
 - **여러 unknown 배분**: 합계 제약과 narrowing, 사용자의 수동 결정까지만 있다. 여러 unknown 사이의 자동 분배(예: 비율 가정)는 의도적으로 없다.
@@ -327,3 +346,95 @@ command ID 멱등성, 앱 재시작 후 복구용 의도 로그, 일괄 undo(정
 - 매처는 **엄격한 유일성**을 쓴다(모든 부분집합이 후보). 실제 데이터에서는 모호 판정이 자주 나올 수 있고, 활동 단위 범위 지정이나 요청 같은 추가 evidence가 필요하다. 임계값(known 12·unknown 6)은 성능과 신뢰성을 위한 초기 값이다.
 - 정산용 송금/입금이 가계부에서 소비·이체·수입 중 무엇으로 계산되어야 하는지(정산 입금은 지출의 반환인가)는 제품 결정이 필요하며 이 계층은 중립이다.
 - `InMemoryCalendarProvider`는 계약 정의용이며 실제 캘린더와 같다고 주장하지 않는다.
+
+## 20. 머니 플로우 일관성 (uncertainty semantics와 보존 법칙)
+
+이 절은 구현된 모델 사이의 돈 흐름(거래 → 정정 → 정산 → obligation → residual → 지출 분석)에서 같은 1원이 두 곳에 잡히거나, 불확실한 금액이 residual로 잘못 굳는 일을 막는 규칙이다.
+
+### 20.1 차액은 evidence가 먼저, residual은 마지막
+
+> **차액은 먼저 미확정 금액을 설명하는 evidence로 사용하고, 설명할 미확정 정보가 더 이상 없을 때만 residual로 승격한다.**
+
+매처의 처리 순서(`SettlementMatcher`):
+
+1. exact / inferred obligation을 적용한다(확정 금액).
+2. unknown / range / estimated obligation에 transfer 차액을 evidence로 적용한다(모든 부분집합을 열거).
+3. 해가 **유일**하면 그 금액을 `inferred`로 승격한다(`inferredUniqueSolution`, 시나리오 O: payable 12,000).
+4. 해가 **여럿**이면 constraint(`X + Y = 12,000`)·범위만 남기고 모호함을 그대로 보고한다(`ambiguous`, 시나리오 P). 아무것도 확정하지 않는다.
+5. 열린 미확정 obligation이 하나라도 있는데 정확한 설명이 없으면 `insufficientEvidence(.unknownAmountsMayExplainDifference)`를 돌려준다. **residual도, "이 차액이 무엇인가요?"라는 질문도 만들지 않는다.** 요청(request)이 확정 obligation만 지목해도 같다.
+6. 관련된 금액이 모두 확정되었는데도 설명되지 않는 금액이 남을 때만 `matchWithResidual`(surplus, 또는 대상이 하나로 특정될 때 shortfall)을 제안한다.
+
+상태 수준의 가드: 자동 provenance의 settlement가 residual을 기록하려는데 같은 상대·통화에 미확정 obligation이 열려 있으면 `residualWhileUncertainObligationsOpen`으로 거부한다. 사용자는 알고 기록할 수 있다.
+
+### 20.2 불확실성 전파와 자동화 강도
+
+`ExpenseComponent` 총액의 지식 수준은 obligation 몫(그리고 `ShareBreakdown`의 raw share/total)에 그대로 전파된다.
+
+| 총액 | 몫 | 자동 정산 강도 |
+|---|---|---|
+| exact | exact | 강함: `exactMatch`/`netMatch` |
+| inferred | inferred | 강함 |
+| range 50,000~60,000 (2인 균등) | range 25,000~30,000 | 후보/호환성만: 범위 안의 송금은 `inferred` 후보. **exact로 정산되지 않는다** |
+| estimated 50,000 | estimated 25,000 | 후보만: 추정값은 hard bound도 매칭 근거도 아니다 |
+| unknown | unknown | 금액 일치의 근거가 될 수 없다. 다른 금액이 확정될 때 유일해일 때만 forced inference |
+
+range 몫의 경계는 equal/fixed는 구간 양 끝의 분할, weights(최대 잔여 방식은 총액에 단조가 아니다)는 비례 몫의 내림/올림으로 잡아 항상 가능한 모든 총액을 포함한다. 반올림은 양 끝에 같은 습관을 적용한다. 요청 상한이 0이면 obligation을 만들지 않는다. 총액이 나중에 정밀해지면(영수증) component 금액을 갱신한 뒤 `generateObligations`를 다시 호출해 기존 obligation을 갱신한다(중복 생성하지 않음). `shares(ofComponent:)`는 단일 분할이 있을 때만(exact/inferred/estimated) 값을 주고 range/unknown은 `totalNotKnown`이다.
+
+### 20.3 raw → 조정 → 요청 → 실제 → residual
+
+다섯 단계를 섞지 않는다. `ObligationBalance`가 obligation 하나의 모든 단계를 한 곳에 보여 준다.
+
+| 단계 | 예 | 어디에 |
+|---|---|---|
+| raw economic share | 23,700 | `ShareBreakdown.rawShare` / `ObligationBalance.rawShareMinorUnits` |
+| policy adjustment | −700 (floor 1,000) | `policyAdjustmentMinorUnits`. 사용자가 고른 정책의 결과이며 **residual이 아니다** |
+| requested(original) | 23,000 | obligation 금액 |
+| actual | 23,000 / 22,000 / 25,000 | `settledMinorUnits`(적용), surplus는 settlement |
+| unexplained | 0 / 1,000 shortfall / 2,000 surplus | residual (요청 ≠ 실제일 때만, 20.1 이후) |
+
+시나리오 S: raw 23,700 → 요청 23,000 → 실제 23,000 → residual 0. 시나리오 T: 실제 22,000 → 정책 조정 −700, 설명되지 않는 차이는 **1,000뿐**(1,700이 아니다). 실제 25,000이면 surplus 2,000(1,300이 아니다). 상계(양방향 net)는 반올림된 요청 금액을 기준으로 맞춘다. 사용자가 shortfall에 `roundingAdjustment`를 분류하는 것은 "그 차이를 사용자가 닫는다"는 사용자 결정(`waived`와 같은 효과)일 뿐 정책 조정이 아니다.
+
+### 20.4 shortfall은 독립 금액이 아니라 obligation 잔액의 참조
+
+```
+Obligation   original 18,000   settled 17,000   remaining 1,000
+Settlement   actual 17,000     shortfall reference = 1,000   (메타데이터)
+```
+
+- 항등식(금액이 확정된 obligation): `original = settled + waived + cancelled + remaining` (`ObligationBalance.isConserved`). `waived`는 사용자가 닫은 shortfall이다.
+- shortfall 레코드는 위 식의 어느 항도 아니다. `ObligationBalance.openShortfallReferenceMinorUnits`와 `ResidualSummary.openShortfallReferenceMinorUnits`는 **remaining의 일부를 가리키는 참조**이며 remaining/outstanding에 더하지 않는다. 나머지가 나중에 입금되거나 닫히면 참조는 0이 된다(남은 금액을 넘지 않도록 잘린다). 이전 구현은 이미 갚은 shortfall을 요약에 계속 세었다(발견한 이중 집계).
+- surplus는 대칭이 아니다. surplus는 어떤 obligation의 일부도 아닌 **실제로 더 움직인 돈**이라 독립 residual이며(`unresolvedSurplusMinorUnits`) transfer 보존식에 들어간다. shortfall은 움직이지 않은 돈이라 transfer 보존식에 들어가지 않는다.
+- `LifeState.outstanding()`이 "얼마가 남았나"의 유일한 답이다: 통화별 받을/줄 remaining 합(금액을 모르는 obligation은 숫자 없이 개수로만 보고).
+
+### 20.5 시나리오 U — 요청 30,000에 50,000 입금
+
+구매액 30,000(요청도 exact)에 엄마가 50,000을 보내면 정산 30,000 + unresolved surplus 20,000이다. 사용자에게 의미를 물을 수 있다(후속 분류는 이번에 확장하지 않는다: `gift`/`otherObligation`/`other` 등). **50,000 전체를 그 구매의 환급으로 처리해 구매 지출을 −20,000으로 만들지 않는다.** 경제적 사실(돈이 움직임)과 분석 귀속(무엇의 환급인가)을 분리하며, residual은 지출 분석에 들어가지 않는다.
+
+### 20.6 한 원은 한 경제적 역할 (회계 포함 규칙)
+
+| 대상 | 역할 | 소비 분석 | 정산 |
+|---|---|---|---|
+| 원장 거래 + `TransactionAllocation` | 소비(또는 환불 flow) | 포함 | 제외 |
+| 정산 송금(`Settlement.transfer`, 정정 effective의 source) | obligation 적용 + surplus | **제외** | 포함 |
+| `Obligation` (component에서 유도 포함) | 받을/줄 돈 | 제외 (원래 지출을 줄이지 않는다) | 대상 |
+| `SettlementResidual` surplus | 설명되지 않은 실제 금액 | 제외 | 별도 집계 |
+| `SettlementResidual` shortfall | obligation 잔액의 참조 | 제외 | 잔액에 이미 포함 |
+| 정책 조정(반올림) | raw와 요청의 차 | 제외(`RoundingSummary`로 별도) | obligation 금액에 이미 반영 |
+| `ExpenseComponent` | 비용 조각 | 같은 거래의 allocation이 있으면 한 번만 | — |
+
+강제하는 곳:
+- 정산에 쓰인 거래(또는 정정 그룹에 묶인 raw 거래)를 소비로 allocation하면 `allocationOnSettlementTransfer`, 이미 allocation된 거래를 정산 송금으로 쓰면 `settlementTransferIsAllocated`.
+- `SpendingAnalytics.items(unifiedIn:)`은 allocation 항목과 component 항목을 합치되, 같은 `originTransactionID`·같은 Activity의 allocation이 있는 component를 뺀다.
+- 정정은 돈을 만들거나 없애지 않는다: effective = 원 거래 부호 있는 합(`effectiveSignedMinorUnits`).
+
+### 20.7 보존 불변식과 점검 도구
+
+```
+raw transfer 합(부호) = effective transfer 합
+effective transfer    = settlement에 적용된 합(받을 +, 줄 −) + surplus + 아직 정산되지 않은 합
+transfer(settlement)  = Σ(부호 적용액) + surplus            (shortfall은 불포함)
+obligation original   = settled + waived + cancelled + remaining
+requested             = raw share + policy adjustment
+```
+
+`MoneyFlowAudit.audit(rawTransfers:in:)`는 첫 세 줄을, `ObligationBalance.isConserved`는 넷째 줄을 계산하며, `LifeState.conservationViolations()`는 모든 settlement·obligation·정정 그룹·거래 역할을 한 번에 점검해 위반을 문자열로 돌려준다(빈 배열이면 일관). 테스트는 결정론적 property-style sweep으로 300개의 무작위 obligation 조합에서 이 식들과 "미확정 obligation이 열려 있으면 residual 없음"을 검증한다.

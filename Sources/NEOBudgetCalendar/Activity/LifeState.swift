@@ -77,6 +77,13 @@ public enum LifeValidationError: Error, Hashable, Sendable {
     case residualClassificationNotApplicable(ResidualID)
     case automatedResidualClassification(ResidualID)
     case residualMismatch(ResidualID)
+    /// An automated settlement tried to call a difference unexplained while an obligation with the same
+    /// person still has an amount that is not settled knowledge and could be what the difference is.
+    case residualWhileUncertainObligationsOpen(ResidualID)
+
+    // Money-flow roles: one transaction is either a settlement transfer or spending, never both
+    case settlementTransferIsAllocated(LedgerEntryID)
+    case allocationOnSettlementTransfer(LedgerEntryID)
 
     // Policies and shared expenses
     case policyRequiresUser
@@ -91,6 +98,9 @@ public enum LifeValidationError: Error, Hashable, Sendable {
 
     // Spending nature
     case unknownNatureTarget(NatureTarget)
+
+    // Category uncertainty
+    case confirmedUnknownRequiresUser
 }
 
 /// A single validated mutation of life state. Removals and clears carry who is asking so that automation
@@ -744,8 +754,12 @@ public struct LifeState: Codable, Equatable, Sendable {
             if component.category != existing.category, !component.category.canReplace(existing.category) {
                 throw LifeValidationError.userAssignmentProtected
             }
-            // Once obligations were derived, changing who pays what would silently contradict them.
-            let changesShares = existing.payerID != component.payerID || existing.amount != component.amount
+            // Once obligations were derived, changing who pays what would silently contradict them. The one
+            // exception is sharpening a total that was still uncertain (unknown, range, estimate): the
+            // obligations were created at that same uncertainty, and generating them again refines them.
+            let sharpensUncertainTotal = !existing.amount.knowledge.isKnown && existing.amount.currency == component.amount.currency
+            let changesShares = existing.payerID != component.payerID
+                || (existing.amount != component.amount && !sharpensUncertainTotal)
                 || existing.participants != component.participants
                 || existing.excludedParticipants != component.excludedParticipants
                 || existing.policy != component.policy
@@ -772,6 +786,10 @@ public struct LifeState: Codable, Equatable, Sendable {
 
     private func requireValidCategory(_ category: CategoryAssignment) throws {
         if let provenance = category.provenance { try requireValid(provenance) }
+        // "I do not know" is something only the user can confirm.
+        if case let .confirmedUnknown(provenance) = category, provenance.source != .user {
+            throw LifeValidationError.confirmedUnknownRequiresUser
+        }
     }
 
     // MARK: Allocation
@@ -786,6 +804,12 @@ public struct LifeState: Codable, Equatable, Sendable {
             throw LifeValidationError.allocationCurrencyMismatch(allocation.id)
         }
 
+        // Money that moved to settle an obligation, or that the user folded into a correction group, is not
+        // consumption: allocating it as spending would count the same won as settlement and as spending.
+        guard !settlements.values.contains(where: { $0.transfer.coveredTransactionIDs.contains(allocation.transactionID) }),
+              correctionGroup(containing: allocation.transactionID) == nil else {
+            throw LifeValidationError.allocationOnSettlementTransfer(allocation.transactionID)
+        }
         var set = allocationSets[allocation.transactionID] ?? TransactionAllocationSet(transactionTotal: total, flow: flow)
         guard set.transactionTotal == total, set.flow == flow else {
             throw LifeValidationError.transactionTotalMismatch(allocation.transactionID)
@@ -874,6 +898,10 @@ public struct LifeState: Codable, Equatable, Sendable {
         where settlements.values.contains(where: { $0.transfer.coveredTransactionIDs.contains(covered) }) {
             throw LifeValidationError.transferAlreadySettled(covered)
         }
+        // A transaction has one economic role. Money that settles an obligation is not also consumption.
+        for covered in transfer.coveredTransactionIDs where allocationSets[covered] != nil {
+            throw LifeValidationError.settlementTransferIsAllocated(covered)
+        }
         if let requestID = settlement.requestID {
             guard let request = settlementRequests[requestID] else { throw LifeValidationError.unknownSettlementRequest(requestID) }
             guard request.counterpartyID == settlement.transfer.counterpartyID else {
@@ -917,6 +945,10 @@ public struct LifeState: Codable, Equatable, Sendable {
         guard signedNet + surplus == settlement.transfer.signedMinorUnits else { throw LifeValidationError.settlementNetMismatch }
 
         for residual in settlement.residuals {
+            if settlement.provenance.source == .automated,
+               hasUncertainObligation(with: settlement.transfer.counterpartyID, currency: settlement.transfer.amount.currency) {
+                throw LifeValidationError.residualWhileUncertainObligationsOpen(residual.id)
+            }
             guard residuals[residual.id] == nil else {
                 throw LifeValidationError.duplicateIdentifier(entity: "residual", id: residual.id.rawValue)
             }
@@ -941,6 +973,14 @@ public struct LifeState: Codable, Equatable, Sendable {
         for allocation in settlement.allocations { refreshStatus(of: allocation.obligationID) }
         try ensureGroupsConsistent(touching: settlement.promotions.map { .obligation($0.obligationID) })
         refreshRequests(affecting: settlement.allocations.map(\.obligationID), also: settlement.requestID)
+    }
+
+    /// Whether an obligation with `counterpartyID` is open and its amount is not settled knowledge (unknown,
+    /// range or estimated). Such an obligation may be what a difference really is.
+    private func hasUncertainObligation(with counterpartyID: PersonID, currency: String) -> Bool {
+        settleableObligations(with: counterpartyID).contains {
+            $0.currency == currency && !$0.amount.knowledge.isKnown
+        }
     }
 
     private mutating func removeSettlement(_ id: SettlementID, by: AssignmentProvenance) throws {

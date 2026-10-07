@@ -38,8 +38,10 @@ public struct CategoryStateBreakdown: Hashable, Sendable {
     public let classified: AmountAggregate?
     /// Known what it was, no category in the taxonomy fits (기타).
     public let other: AmountAggregate?
-    /// Not enough information to say what it was (모름).
-    public let unknown: AmountAggregate?
+    /// Not enough information yet and the user has not been asked (모름, 아직).
+    public let unresolved: AmountAggregate?
+    /// The user was asked and confirmed they do not know (모른다고 확인함).
+    public let confirmedUnknown: AmountAggregate?
     /// The system has not decided yet (미분류).
     public let unclassified: AmountAggregate?
     public let total: AmountAggregate
@@ -61,8 +63,8 @@ public enum SpendingAnalytics {
             }
     }
 
-    /// Spending items from shared-expense components. Use this *or* `items(in:)` for one analysis: a
-    /// component that mirrors an allocated transaction would otherwise be counted twice.
+    /// Spending items from shared-expense components. Use this *or* `items(in:)` for one analysis, or use
+    /// `items(unifiedIn:)`, which drops the component that mirrors an allocated transaction.
     public static func items(fromComponentsIn life: LifeState) -> [SpendingItem] {
         life.components.values.sorted { $0.id < $1.id }.map { component in
             SpendingItem(
@@ -70,6 +72,21 @@ public enum SpendingAnalytics {
                 nature: SpendingNatureResolver.resolve(component: component, in: life), activityID: component.activityID
             )
         }
+    }
+
+    /// Allocation-backed spending plus the shared-expense components that are **not** already one of those
+    /// allocations. A component that names an `originTransactionID` and an Activity for which that
+    /// transaction already has an allocation describes the same cost, so it is left out: one won is one item.
+    /// Settlement transfers and surplus residuals are never spending and are not in either source.
+    public static func items(unifiedIn life: LifeState) -> [SpendingItem] {
+        let allocated = items(in: life)
+        let extra = items(fromComponentsIn: life).filter { item in
+            guard let component = life.components[ExpenseComponentID(rawValue: item.id)],
+                  let origin = component.originTransactionID,
+                  let set = life.allocationSet(for: origin), set.flow == .spend else { return true }
+            return !set.allocations.contains { $0.activityID == component.activityID }
+        }
+        return allocated + extra
     }
 
     public static func byNature(_ items: [SpendingItem]) -> [NatureBreakdown] {
@@ -96,21 +113,43 @@ public enum SpendingAnalytics {
                 return subset.isEmpty ? nil : summarize(subset)
             }
             return CategoryStateBreakdown(
-                currency: currency, classified: pick(.classified), other: pick(.other), unknown: pick(.unknown),
-                unclassified: pick(.unclassified), total: summarize(mine)
+                currency: currency, classified: pick(.classified), other: pick(.other), unresolved: pick(.unresolved),
+                confirmedUnknown: pick(.confirmedUnknown), unclassified: pick(.unclassified), total: summarize(mine)
             )
         }
     }
 
     /// Items to look at first, most urgent first (see `CategoryAssignment.reviewPriority`). Items that need no
-    /// review are left out.
-    public static func reviewQueue(_ items: [SpendingItem]) -> [SpendingItem] {
+    /// review are left out. A `confirmedUnknown` item returns only when `evidenceVersions[item.id]` is newer
+    /// than the evidence the user confirmed against, so the same question is never asked twice on the same
+    /// evidence.
+    public static func reviewQueue(_ items: [SpendingItem], evidenceVersions: [String: Int64] = [:]) -> [SpendingItem] {
         items
-            .filter { $0.category.reviewPriority > 0 }
+            .filter { item in
+                if item.category.kind == .confirmedUnknown {
+                    return item.category.isWorthAskingAbout(latestEvidenceVersion: evidenceVersions[item.id])
+                }
+                return item.category.reviewPriority > 0
+            }
             .sorted { lhs, rhs in
-                if lhs.category.reviewPriority != rhs.category.reviewPriority { return lhs.category.reviewPriority > rhs.category.reviewPriority }
+                let l = lhs.category.kind == .confirmedUnknown ? 3 : lhs.category.reviewPriority
+                let r = rhs.category.kind == .confirmedUnknown ? 3 : rhs.category.reviewPriority
+                if l != r { return l > r }
                 return lhs.id < rhs.id
             }
+    }
+
+    /// The part of the review queue that is a question for the user (`unresolved`, or a reopened
+    /// `confirmedUnknown`). The rest of the queue is the classifier's own work.
+    public static func userQuestions(_ items: [SpendingItem], evidenceVersions: [String: Int64] = [:]) -> [SpendingItem] {
+        reviewQueue(items, evidenceVersions: evidenceVersions).filter {
+            $0.category.kind == .unresolved || $0.category.kind == .confirmedUnknown
+        }
+    }
+
+    /// The part of the review queue that needs the classifier or merchant resolution to run again.
+    public static func classifierBacklog(_ items: [SpendingItem]) -> [SpendingItem] {
+        items.filter { $0.category.needsAutomatedRetry }.sorted { $0.id < $1.id }
     }
 
     private static func summarize(_ items: [SpendingItem]) -> AmountAggregate {
@@ -131,8 +170,8 @@ public struct RoundingSummary: Hashable, Sendable {
         var raw: [String: Int64] = [:]
         var requested: [String: Int64] = [:]
         for obligation in obligations where obligation.status != .cancelled && (direction == nil || obligation.direction == direction) {
-            guard let share = obligation.share, let value = obligation.amount.knowledge.knownValue else { continue }
-            raw[obligation.currency, default: 0] += share.rawShareMinorUnits
+            guard let rawShare = obligation.share?.rawShareMinorUnits, let value = obligation.amount.knowledge.knownValue else { continue }
+            raw[obligation.currency, default: 0] += rawShare
             requested[obligation.currency, default: 0] += value
         }
         return raw.keys.sorted().map { RoundingSummary(currency: $0, rawShareMinorUnits: raw[$0] ?? 0, requestedMinorUnits: requested[$0] ?? 0) }
@@ -146,6 +185,6 @@ extension LifeState {
     }
 
     public func residualSummary() -> [ResidualSummary] {
-        ResidualSummary.summarize(Array(residuals.values))
+        ResidualSummary.summarize(Array(residuals.values), in: self)
     }
 }

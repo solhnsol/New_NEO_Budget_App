@@ -769,8 +769,9 @@ public actor CalendarCommandService {
         return applyLocal([.removeExpenseComponent(input.componentID, by: input.by)], activityID: nil, componentID: input.componentID)
     }
 
-    /// Creates my obligations from a component's computed shares. Nothing is created from an amount that is
-    /// not settled, and nothing is created twice for the same counterparty.
+    /// Creates my obligations from a component's computed shares, at the level of knowledge the total has (a
+    /// range total gives a range obligation). Nothing is created twice for the same counterparty; a sharper
+    /// total refines the existing obligation under the normal amount-knowledge rules.
     private func generateObligations(_ input: GenerateObligationsInput) -> CalendarCommandOutcome {
         guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
         guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
@@ -791,8 +792,20 @@ public actor CalendarCommandService {
         var ids: [ObligationID] = []
         for draft in derivation.drafts {
             do {
-                let id = ObligationID(rawValue: makeID(.obligation))
                 let amount = try AmountEntry(currency: draft.currency, knowledge: draft.amount, provenance: input.provenance)
+                // A later, sharper total refines the obligation that already exists for this person instead of
+                // being refused as a duplicate. Equal knowledge is left alone; anything the knowledge rules
+                // would not accept falls through to the duplicate check.
+                if let existing = state.obligations.values.first(where: {
+                    $0.componentID == component.id && $0.counterpartyID == draft.counterpartyID && $0.status != .cancelled
+                }), AmountUpdatePolicy.evaluate(old: existing.amount, new: amount) == .accept {
+                    if existing.amount.knowledge != amount.knowledge {
+                        changes.append(.setObligationAmount(existing.id, amount))
+                        ids.append(existing.id)
+                    }
+                    continue
+                }
+                let id = ObligationID(rawValue: makeID(.obligation))
                 changes.append(.createObligation(Obligation(
                     id: id, counterpartyID: draft.counterpartyID, activityID: component.activityID, direction: draft.direction,
                     amount: amount, provenance: input.provenance, createdAtUnixMilliseconds: now(),

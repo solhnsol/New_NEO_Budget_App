@@ -8,6 +8,10 @@ import NEOBudgetCore
 // 2. An unknown amount is promoted to `inferred` only when the data explain the transfer in exactly one way.
 // 3. If there is more than one explanation, or an unknown cannot be isolated, the result says so and nothing
 //    is decided automatically.
+// 4. A difference is **evidence first**: it is spent on unknown, range and estimated obligations before anything
+//    else. It becomes a residual only when no such obligation is open and the settled amounts still do not
+//    add up. Order: exact/inferred obligations → unknown/range/estimated obligations (forced value becomes
+//    `inferred`, several unknowns keep a constraint, several explanations stay ambiguous) → residual last.
 
 public struct ProposedApplication: Hashable, Sendable {
     public let obligationID: ObligationID
@@ -163,6 +167,10 @@ public enum InsufficientEvidenceReason: Hashable, Sendable {
     /// confirms that.
     case possiblePartialSettlement([ObligationID])
     case tooManyOpenObligations(Int)
+    /// No exact explanation, but obligations whose amount is not settled knowledge are still open with this
+    /// person, so they may be what the difference is. Nothing is promoted and **no residual is created**:
+    /// the difference narrows what those obligations can be before it may ever be called unexplained.
+    case unknownAmountsMayExplainDifference([ObligationID])
 }
 
 public enum NoMatchReason: Hashable, Sendable {
@@ -294,10 +302,10 @@ public enum SettlementMatcher {
             return resolve(chosen[0], transfer: transfer, request: request, narrowed: narrowed)
         default:
             let alternatives = chosen.prefix(maxReportedAlternatives).map(alternative)
-            let constraint = chosen.compactMap { constraint(of: $0, target: target, currency: transfer.amount.currency) }.first
+            let firstConstraint = chosen.compactMap { constraint(of: $0, target: target, currency: transfer.amount.currency) }.first
             return .ambiguous(AmbiguityReport(
                 reason: .multipleExplanations, alternatives: Array(alternatives), alternativeCount: chosen.count,
-                constraint: constraint, narrowedByRequest: narrowed
+                constraint: firstConstraint, narrowedByRequest: narrowed
             ))
         }
     }
@@ -404,16 +412,22 @@ public enum SettlementMatcher {
             ))
         }
 
-        // No explanation fits exactly. Rather than call that a failure, name the obligations the transfer is
-        // *about* (what the request lists, otherwise everything open with this person) and keep the
-        // difference as an unresolved residual. This is only done when the subject is unambiguous.
+        // No explanation fits exactly. A difference becomes a residual only as the last step: when every open
+        // amount with this person is settled knowledge and the transfer still does not fit. While an unknown,
+        // a range or an estimated obligation is open, it is the first suspect for the difference (the
+        // enumeration above already tried every way it could absorb it), so no residual and no question
+        // about "what is this difference?" is created.
+        guard unknown.isEmpty else {
+            return .insufficientEvidence(.unknownAmountsMayExplainDifference(unknown.map(\.id).sorted()))
+        }
+        // Rather than call that a failure, name the obligations the transfer is *about* (what the request
+        // lists, otherwise everything open with this person) and keep the difference as an unresolved
+        // residual. This is only done when the subject is unambiguous.
         let subject: [Candidate]
         if let request {
             let named = Set(request.obligationIDs)
-            guard unknown.allSatisfy({ !named.contains($0.id) }) else { return insufficient(known: known, sign: sign, amount: amount) }
             subject = known.filter { named.contains($0.id) }
         } else {
-            guard unknown.isEmpty else { return insufficient(known: known, sign: sign, amount: amount) }
             subject = known
         }
         guard !subject.isEmpty else { return insufficient(known: known, sign: sign, amount: amount) }

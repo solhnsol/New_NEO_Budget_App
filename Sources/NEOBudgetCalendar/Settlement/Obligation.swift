@@ -72,8 +72,8 @@ public struct Obligation: Codable, Hashable, Sendable {
 
     /// Requested minus raw share, once both are known. `-700` for "23,700 asked as 23,000".
     public var roundingAdjustmentMinorUnits: Int64? {
-        guard let share, let requested = amount.knowledge.knownValue else { return nil }
-        return requested - share.rawShareMinorUnits
+        guard let raw = share?.rawShareMinorUnits, let requested = amount.knowledge.knownValue else { return nil }
+        return requested - raw
     }
     public var isSettleable: Bool { status == .open || status == .partiallySettled }
 }

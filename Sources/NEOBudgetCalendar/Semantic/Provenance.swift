@@ -11,20 +11,31 @@ public struct AssignmentProvenance: Codable, Hashable, Sendable {
     /// 0...1. Meaningful for automated sources; a user decision needs none.
     public let confidence: Double?
     public let assignedAtUnixMilliseconds: Int64
+    /// How recent the newest evidence was that this decision looked at (a version counter or the time the
+    /// evidence was observed). A user's "I do not know" is only reopened by evidence newer than this; an
+    /// automated reclassification must state the evidence it used. `nil` means not stated.
+    public let evidenceVersion: Int64?
 
-    public init(source: AssignmentSource, origin: String? = nil, confidence: Double? = nil, assignedAtUnixMilliseconds: Int64) {
+    public init(
+        source: AssignmentSource, origin: String? = nil, confidence: Double? = nil, assignedAtUnixMilliseconds: Int64,
+        evidenceVersion: Int64? = nil
+    ) {
         self.source = source
         self.origin = origin
         self.confidence = confidence
         self.assignedAtUnixMilliseconds = assignedAtUnixMilliseconds
+        self.evidenceVersion = evidenceVersion
     }
 
-    public static func user(at unixMilliseconds: Int64) -> AssignmentProvenance {
-        AssignmentProvenance(source: .user, assignedAtUnixMilliseconds: unixMilliseconds)
+    public static func user(at unixMilliseconds: Int64, evidenceVersion: Int64? = nil) -> AssignmentProvenance {
+        AssignmentProvenance(source: .user, assignedAtUnixMilliseconds: unixMilliseconds, evidenceVersion: evidenceVersion)
     }
 
-    public static func automated(origin: String, confidence: Double?, at unixMilliseconds: Int64) -> AssignmentProvenance {
-        AssignmentProvenance(source: .automated, origin: origin, confidence: confidence, assignedAtUnixMilliseconds: unixMilliseconds)
+    public static func automated(origin: String, confidence: Double?, at unixMilliseconds: Int64, evidenceVersion: Int64? = nil) -> AssignmentProvenance {
+        AssignmentProvenance(
+            source: .automated, origin: origin, confidence: confidence, assignedAtUnixMilliseconds: unixMilliseconds,
+            evidenceVersion: evidenceVersion
+        )
     }
 
     public var hasValidConfidence: Bool {

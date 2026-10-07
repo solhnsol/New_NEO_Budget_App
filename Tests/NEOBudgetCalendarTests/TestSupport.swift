@@ -156,7 +156,7 @@ struct Harness {
     }
 }
 
-func userProvenance(_ time: Int64 = 1) -> AssignmentProvenance { .user(at: time) }
+func userProvenance(_ time: Int64 = 1, evidenceVersion: Int64? = nil) -> AssignmentProvenance { .user(at: time, evidenceVersion: evidenceVersion) }
 func autoProvenance(_ confidence: Double?, _ time: Int64 = 1) -> AssignmentProvenance {
     .automated(origin: "test-rule", confidence: confidence, at: time)
 }

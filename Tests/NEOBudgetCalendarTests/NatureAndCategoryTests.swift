@@ -226,25 +226,26 @@ private func resolved(_ life: LifeState, _ transaction: String) throws -> Resolv
     #expect(try #require(SpendingAnalytics.byNature(items).first).irregular?.exactMinorUnits == 90_000)
 }
 
-// MARK: Scenario N — four different category states
+// MARK: Scenario N — five different category states
 
-private let userUnknown = CategoryAssignment.unknown(userProvenance())
+private let userUnknown = CategoryAssignment.confirmedUnknown(userProvenance())
 
-@Test func scenarioNTheFourCategoryStatesAreDistinct() throws {
+@Test func scenarioNTheFiveCategoryStatesAreDistinct() throws {
     let states: [CategoryAssignment] = [
         .classified(foodDining, userProvenance()),
         .other(userProvenance()),
-        .unknown(userProvenance()),
+        .unresolved,
+        .confirmedUnknown(userProvenance()),
         .unclassified(.notYetEvaluated)
     ]
     // Equality: no two are the same.
     for (i, lhs) in states.enumerated() {
         for (j, rhs) in states.enumerated() where i != j { #expect(lhs != rhs) }
     }
-    #expect(Set(states).count == 4)
-    #expect(states.map(\.kind) == [.classified, .other, .unknown, .unclassified])
+    #expect(Set(states).count == 5)
+    #expect(states.map(\.kind) == [.classified, .other, .unresolved, .confirmedUnknown, .unclassified])
     // Same words, different meaning: 모름 and 기타 by the same person at the same time are still not equal.
-    #expect(CategoryAssignment.other(userProvenance(5)) != CategoryAssignment.unknown(userProvenance(5)))
+    #expect(CategoryAssignment.other(userProvenance(5)) != CategoryAssignment.confirmedUnknown(userProvenance(5)))
     #expect(CategoryAssignment.unclassified(.ambiguous) != CategoryAssignment.unclassified(.notYetEvaluated))
 
     // Serialization keeps them apart.
@@ -253,28 +254,31 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
         #expect(try decoder.decode(CategoryAssignment.self, from: try encoder.encode(state)) == state)
     }
     let encoded = Set(try states.map { String(decoding: try encoder.encode($0), as: UTF8.self) })
-    #expect(encoded.count == 4)
+    #expect(encoded.count == 5)
 }
 
-@Test func scenarioNAnalyticsReportTheFourStatesSeparately() throws {
+@Test func scenarioNAnalyticsReportTheFiveStatesSeparately() throws {
     let life = try tripLife(extra: [
         spend("a", to: nil, .exact(10_000), category: classified(foodDining)),
         spend("b", to: nil, .exact(20_000), category: .other(userProvenance())),
-        spend("c", to: nil, .exact(30_000), category: .unknown(userProvenance())),
+        spend("c", to: nil, .exact(30_000), category: .confirmedUnknown(userProvenance())),
         spend("d", to: nil, .exact(40_000), category: .unclassified(.notYetEvaluated)),
-        spend("e", to: nil, .exact(50_000), category: .unclassified(.ambiguous))
+        spend("e", to: nil, .exact(50_000), category: .unclassified(.ambiguous)),
+        spend("f", to: nil, .exact(60_000), category: .unresolved)
     ])
     let breakdown = try #require(SpendingAnalytics.byCategoryState(SpendingAnalytics.items(in: life)).first)
     #expect(breakdown.classified?.exactMinorUnits == 10_000)
     #expect(breakdown.other?.exactMinorUnits == 20_000)
-    #expect(breakdown.unknown?.exactMinorUnits == 30_000)
+    #expect(breakdown.confirmedUnknown?.exactMinorUnits == 30_000)
+    #expect(breakdown.unresolved?.exactMinorUnits == 60_000)
     #expect(breakdown.unclassified?.exactMinorUnits == 90_000)          // both pending reasons
-    #expect(breakdown.total.exactMinorUnits == 150_000)
+    #expect(breakdown.total.exactMinorUnits == 210_000)
 
-    // Review order: what only the user can answer first, then conflicts, then plain pending; nothing else.
+    // Review order: what only the user can answer first, then conflicts, then plain pending. A confirmed
+    // unknown is not asked again on the same evidence.
     let queue = SpendingAnalytics.reviewQueue(SpendingAnalytics.items(in: life)).map(\.id)
-    #expect(queue == ["alloc-c", "alloc-e", "alloc-d"])
-    #expect(CategoryAssignment.unknown(userProvenance()).reviewPriority > CategoryAssignment.unclassified(.ambiguous).reviewPriority)
+    #expect(queue == ["alloc-f", "alloc-e", "alloc-d"])
+    #expect(CategoryAssignment.unresolved.reviewPriority > CategoryAssignment.unclassified(.ambiguous).reviewPriority)
     #expect(CategoryAssignment.unclassified(.ambiguous).reviewPriority > CategoryAssignment.unclassified(.notYetEvaluated).reviewPriority)
     #expect(CategoryAssignment.other(userProvenance()).reviewPriority == 0 && classified(foodDining).reviewPriority == 0)
 }
@@ -282,23 +286,23 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
 @Test func amountUncertaintyAndCategoryUncertaintyAreIndependentAxes() throws {
     // 정산 총액 31,000 is exact; its parts have unknown amounts and different category knowledge.
     let life = try tripLife(extra: [
-        spend("settle", to: nil, .exact(10_000), total: 31_000, category: .unknown(userProvenance()), id: "exact-unknown"),
+        spend("settle", to: nil, .exact(10_000), total: 31_000, category: .confirmedUnknown(userProvenance()), id: "exact-unknown"),
         spend("settle", to: lunch, .unknown, total: 31_000, category: classified(foodDining), id: "unknown-classified"),
-        spend("settle", to: jeju, .unknown, total: 31_000, category: .unknown(userProvenance()), id: "unknown-unknown")
+        spend("settle", to: jeju, .unknown, total: 31_000, category: .confirmedUnknown(userProvenance()), id: "unknown-unknown")
     ])
     let items = SpendingAnalytics.items(in: life)
     func item(_ id: String) throws -> SpendingItem { try #require(items.first { $0.id == id }) }
-    #expect(try item("exact-unknown").amount.knowledge == .exact(10_000) && (try item("exact-unknown").category.kind == .unknown))
+    #expect(try item("exact-unknown").amount.knowledge == .exact(10_000) && (try item("exact-unknown").category.kind == .confirmedUnknown))
     #expect(try item("unknown-classified").amount.knowledge == .unknown && (try item("unknown-classified").category.kind == .classified))
-    #expect(try item("unknown-unknown").amount.knowledge == .unknown && (try item("unknown-unknown").category.kind == .unknown))
+    #expect(try item("unknown-unknown").amount.knowledge == .unknown && (try item("unknown-unknown").category.kind == .confirmedUnknown))
     // The remainder of the 31,000 is a statement about amounts, not about categories.
     #expect(life.allocationSet(for: txID("settle"))?.remainder == AmountBounds(lower: 0, upper: 21_000))
 }
 
 @Test func complexIsNotACategory() {
     // There is no 'complex' value to choose: an amount known only as a sum is an AmountGroup, not a category.
-    let all: [CategoryAssignmentKind] = [.classified, .other, .unknown, .unclassified]
-    #expect(Set(all.map(\.rawValue)) == ["classified", "other", "unknown", "unclassified"])
+    let all: [CategoryAssignmentKind] = [.classified, .other, .unresolved, .confirmedUnknown, .unclassified]
+    #expect(Set(all.map(\.rawValue)) == ["classified", "other", "unresolved", "confirmedUnknown", "unclassified"])
 }
 
 // MARK: Provenance and overwrite rules for categories
@@ -306,11 +310,11 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
 @Test func aUserCategoryDecisionOfAnyKindIsNeverOverwrittenByAutomation() throws {
     let policy = AssignmentPolicy()
     let confident = autoProvenance(0.99)
-    for existing in [classified(foodDining), .other(userProvenance()), .unknown(userProvenance())] as [CategoryAssignment] {
-        #expect(policy.classification(proposing: phone, provenance: confident, replacing: existing, newEvidence: true) == existing)
+    for existing in [classified(foodDining), .other(userProvenance()), .confirmedUnknown(userProvenance())] as [CategoryAssignment] {
+        #expect(policy.classification(proposing: phone, provenance: confident, replacing: existing) == existing)
     }
     // And through the state: setting a category is protected the same way.
-    let life = try tripLife(extra: [spend("a", to: nil, .exact(1_000), category: .unknown(userProvenance()))])
+    let life = try tripLife(extra: [spend("a", to: nil, .exact(1_000), category: .confirmedUnknown(userProvenance()))])
     let id = allocationID("a")
     #expect(failure { _ = try life.applying([.setAllocationCategory(id, .classified(foodDining, confident))]) } == .userAssignmentProtected)
     #expect(failure { _ = try life.applying([.setAllocationCategory(id, .unclassified(.ambiguous))]) } == .userAssignmentProtected)
@@ -319,19 +323,21 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
 
 @Test func aClassifierCannotTurnLackOfInformationIntoACategoryByBeingConfident() {
     let policy = AssignmentPolicy()
-    let automatedUnknown = CategoryAssignment.unknown(autoProvenance(1.0))
-    // Confident, but nothing new was learned: it stays unknown.
-    #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.99), replacing: automatedUnknown) == automatedUnknown)
-    // With new evidence (a merchant arrived, a receipt was read) it may be classified.
-    #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.99), replacing: automatedUnknown, newEvidence: true).categoryID == foodDining)
+    let confirmed = CategoryAssignment.confirmedUnknown(userProvenance(10, evidenceVersion: 100))
+    // Confident, but it looked at the same evidence (or did not say which): the user's "I do not know" stays.
+    #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.99), replacing: confirmed) == confirmed)
+    #expect(policy.classification(proposing: foodDining, provenance: .automated(origin: "r", confidence: 0.99, at: 20, evidenceVersion: 100), replacing: confirmed) == confirmed)
+    // With newer evidence (a merchant arrived, a receipt was read) it may be classified.
+    #expect(policy.classification(proposing: foodDining, provenance: .automated(origin: "r", confidence: 0.99, at: 20, evidenceVersion: 101), replacing: confirmed).categoryID == foodDining)
     // Even then, a weak proposal does not become a category.
-    #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.4), replacing: automatedUnknown, newEvidence: true) == automatedUnknown)
+    #expect(policy.classification(proposing: foodDining, provenance: .automated(origin: "r", confidence: 0.4, at: 20, evidenceVersion: 101), replacing: confirmed) == confirmed)
     // The user needs no evidence: they can say what it was.
-    #expect(policy.classification(proposing: foodDining, provenance: userProvenance(), replacing: automatedUnknown).categoryID == foodDining)
-    // 'Pending' is different from 'unknown': a classifier can fill it, or leave it ambiguous.
+    #expect(policy.classification(proposing: foodDining, provenance: userProvenance(), replacing: confirmed).categoryID == foodDining)
+    // 'Pending' is different from 'confirmed unknown': a classifier can fill it, or leave it ambiguous.
     #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.99)).categoryID == foodDining)
     #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.4)) == .unclassified(.ambiguous))
-    // A low-confidence proposal never erases a recorded 'unknown' or 'other' either.
+    #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.4), replacing: .unresolved) == .unresolved)
+    // A low-confidence proposal never erases a recorded 'other' either.
     let other = CategoryAssignment.other(autoProvenance(1.0))
     #expect(policy.classification(proposing: foodDining, provenance: autoProvenance(0.4), replacing: other) == other)
 }
@@ -349,7 +355,7 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
     #expect((await h.life()).allocation(allocationID("a"))?.category == .other(userProvenance()))
     #expect(await h.service.perform(.setCategory(SetCategoryInput(target: target, assignment: .classified(foodDining, autoProvenance(0.99)))))
         == .rejected(.userAssignmentProtected))
-    #expect(await h.service.perform(.setCategory(SetCategoryInput(target: .component(ExpenseComponentID(rawValue: "ghost")), assignment: .unknown(userProvenance()))))
+    #expect(await h.service.perform(.setCategory(SetCategoryInput(target: .component(ExpenseComponentID(rawValue: "ghost")), assignment: .confirmedUnknown(userProvenance()))))
         == .rejected(.lifeValidation(.unknownComponent(ExpenseComponentID(rawValue: "ghost")))))
 }
 
@@ -385,12 +391,12 @@ private let userUnknown = CategoryAssignment.unknown(userProvenance())
     let life = tripLife(extra: [
         .setSpendingNature(.category(foodDining), nature(.living, by: autoProvenance(1.0))),
         spend("a", to: nil, .exact(8_000), category: classified(foodDining)),
-        spend("b", to: nil, .exact(2_000), category: .unknown(userProvenance()))
+        spend("b", to: nil, .exact(2_000), category: .confirmedUnknown(userProvenance()))
     ])
     let h = Harness.make(life: life)
     let breakdown = try await h.service.spendingBreakdown()
     #expect(breakdown.nature.first?.living?.exactMinorUnits == 8_000)
     #expect(breakdown.nature.first?.unspecified?.exactMinorUnits == 2_000)
-    #expect(breakdown.category.first?.unknown?.exactMinorUnits == 2_000)
+    #expect(breakdown.category.first?.confirmedUnknown?.exactMinorUnits == 2_000)
     #expect(try await h.service.residualSummary().isEmpty)
 }

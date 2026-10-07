@@ -55,6 +55,10 @@ native 옵션은 사용한 도구에서 deprecated 안내가 있으므로 Window
 - revision 조건부 원자 커밋, 강한 원장 ID 멱등성, 이체/카드 납부/환불/금액 보존 불변식과 projection을 제공하는 저장 protocol 및 in-memory adapter.
 - candidate 저장과 ready candidate ledger 승격을 한 commit point로 묶는 Core protocol 및 in-memory adapter.
 - repository/ledger 의존성 없이 `TransactionCandidateDraft`만 만드는 parser와 account resolver/assembler, dedup 계약.
-- 합성 알림 26개 형식의 결정론/provenance 및 의미 검증을 포함한 Swift 테스트 423개(Core 60 + Calendar 363)와 test-data Python 테스트 7개.
+- 합성 알림 26개 형식의 결정론/provenance 및 의미 검증을 포함한 Swift 테스트 452개(Core 60 + Calendar 392)와 test-data Python 테스트 7개. D012의 머니 플로우 일관성 테스트(시나리오 O~W, 보존 불변식 sweep)는 `MoneyFlowConsistencyTests.swift`.
 
 provider별 상세 fixture/profile, provider 간 같은 거래 evidence 결합, 같은 반환 알림의 상태 연결, durable 저장소는 다음 단계다. parser는 ledger를 직접 변경하지 않고 `RawNotification -> TransactionCandidateDraft`까지만 담당한다. 현재 테스트가 milestone 전체의 correctness를 검증하는 것은 아니다.
+
+## 머니 플로우 red-team 검증 (D012)
+
+Linux x86_64 에이전트 환경에서는 `download.swift.org`가 막혀 Docker Hub의 공식 `swift:6.0-noble` 이미지 레이어에서 Swift 6.0.3 툴체인을 풀어 사용했다(저장소 밖). 이 환경의 결과: `swift build --build-tests`, `swift test` 452개 통과, test-data Python 테스트 7개 통과, `git diff --check` 깨끗함, Sources/Package에서 Apple 전용 API(`UIKit`/`SwiftUI`/`EventKit`/`CoreData` 등 import, `UserDefaults`, `EKEventStore`) 검색 결과 없음. Swift 6.0.3은 6.4보다 지역 변수 이름 가림(shadowing)에 엄격해 `SettlementMatcher`의 지역 변수 한 개를 개명했다(동작 변화 없음). Windows 재검증은 별도로 필요하다.

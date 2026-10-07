@@ -109,12 +109,12 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
         .upsertExpenseComponent(component("meal", .exact(47_400)))
     ])
     let derivation = try life.deriveObligations(forComponent: cid("meal"))
-    let share = try #require(derivation.shares.share(of: pid("b")))
+    let share = try #require(derivation.shares?.share(of: pid("b")))
     #expect(share.rawMinorUnits == 23_700 && share.requestedMinorUnits == 23_000)
     #expect(share.roundingAdjustmentMinorUnits == -700)
-    #expect(derivation.shares.roundingAbsorbedByPayerMinorUnits == 700)    // I bear the 700
+    #expect(derivation.shares?.roundingAbsorbedByPayerMinorUnits == 700)    // I bear the 700
     // My own share is never rounded: I do not ask myself for money.
-    #expect(derivation.shares.share(of: myself)?.rawMinorUnits == 23_700 && derivation.shares.share(of: myself)?.requestedMinorUnits == 23_700)
+    #expect(derivation.shares?.share(of: myself)?.rawMinorUnits == 23_700 && derivation.shares?.share(of: myself)?.requestedMinorUnits == 23_700)
 
     let draft = try #require(derivation.drafts.first)
     #expect(derivation.drafts.count == 1 && draft.direction == .receivable && draft.counterpartyID == pid("b"))
@@ -171,7 +171,7 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
     ])
     let derivation = try life.deriveObligations(forComponent: cid("gum"))
     #expect(derivation.drafts.isEmpty && derivation.roundedToZero == [pid("b")])
-    #expect(derivation.shares.share(of: pid("b"))?.rawMinorUnits == 600)
+    #expect(derivation.shares?.share(of: pid("b"))?.rawMinorUnits == 600)
 }
 
 // MARK: Policy precedence
@@ -232,7 +232,7 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
     #expect(owed(first) == ["b": 30_000, "c": 30_000, "d": 30_000])
     let second = try life.deriveObligations(forComponent: cid("round2"))
     #expect(owed(second) == ["b": 20_000, "c": 20_000])                    // D has no second-round obligation
-    #expect(second.shares.share(of: pid("d")) == nil)
+    #expect(second.shares?.share(of: pid("d")) == nil)
 
     // Through the service, one obligation per counterparty per component is created and traced back.
     let h = Harness.make(events: [dinnerEvent], life: life)
@@ -278,7 +278,7 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
     #expect(owed(try life.deriveObligations(forComponent: cid("food"))) == ["b": 20_000, "c": 20_000])
     let alcohol = try life.deriveObligations(forComponent: cid("alcohol"))
     #expect(owed(alcohol) == ["b": 20_000])
-    #expect(alcohol.shares.share(of: pid("c")) == nil)
+    #expect(alcohol.shares?.share(of: pid("c")) == nil)
     #expect(alcohol.drafts.allSatisfy { $0.counterpartyID != pid("c") })
 }
 
@@ -289,8 +289,8 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
     ])
     let derivation = try life.deriveObligations(forComponent: cid("round2"))
     #expect(owed(derivation) == ["b": 40_000, "c": 20_000])
-    #expect(derivation.shares.share(of: myself)?.rawMinorUnits == 40_000)
-    #expect(derivation.shares.shares.reduce(Int64(0)) { $0 + $1.rawMinorUnits } == 100_000)   // the parts add up
+    #expect(derivation.shares?.share(of: myself)?.rawMinorUnits == 40_000)
+    #expect(derivation.shares?.shares.reduce(Int64(0)) { $0 + $1.rawMinorUnits } == 100_000)   // the parts add up
 }
 
 @Test func anInvalidFixedAmountIsReportedWhenSharesAreComputedNotGuessed() throws {
@@ -315,16 +315,21 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
     let life = dinnerLife(extra: [.upsertExpenseComponent(component("theirs", .exact(60_000), payer: "d", participants: ["b", "c", "d"]))])
     let derivation = try life.deriveObligations(forComponent: cid("theirs"))
     #expect(derivation.drafts.isEmpty)
-    #expect(derivation.shares.shares.count == 3)                           // the split itself is still computed
+    #expect(derivation.shares?.shares.count == 3)                           // the split itself is still computed
 }
 
-@Test func anAmountThatIsNotSettledNeverBecomesObligations() throws {
-    let unknown = dinnerLife(extra: [.upsertExpenseComponent(component("a", .unknown))])
-    #expect(throws: SettlementPolicyError.totalNotKnown) { _ = try unknown.deriveObligations(forComponent: cid("a")) }
-    let range = dinnerLife(extra: [.upsertExpenseComponent(component("a", amountRange(50_000, 60_000)))])
-    #expect(throws: SettlementPolicyError.totalNotKnown) { _ = try range.deriveObligations(forComponent: cid("a")) }
-    let estimated = dinnerLife(extra: [.upsertExpenseComponent(component("a", .estimated(55_000)))])
-    #expect(throws: SettlementPolicyError.totalNotKnown) { _ = try estimated.deriveObligations(forComponent: cid("a")) }
+@Test func anUnsettledTotalIsCarriedIntoObligationsNeverGuessedAsExact() throws {
+    let unknown = dinnerLife(participants: ["b"], extra: [.upsertExpenseComponent(component("a", .unknown))])
+    let unknownDerivation = try unknown.deriveObligations(forComponent: cid("a"))
+    #expect(unknownDerivation.shares == nil && unknownDerivation.drafts.map(\.amount) == [.unknown])
+    #expect(throws: SettlementPolicyError.totalNotKnown) { _ = try unknown.shares(ofComponent: cid("a")) }
+
+    let range = dinnerLife(participants: ["b"], extra: [.upsertExpenseComponent(component("a", amountRange(50_000, 60_000)))])
+    #expect(try range.deriveObligations(forComponent: cid("a")).drafts.map(\.amount) == [amountRange(25_000, 30_000)])
+    #expect(throws: SettlementPolicyError.totalNotKnown) { _ = try range.shares(ofComponent: cid("a")) }
+
+    let estimated = dinnerLife(participants: ["b"], extra: [.upsertExpenseComponent(component("a", .estimated(55_000)))])
+    #expect(try estimated.deriveObligations(forComponent: cid("a")).drafts.map(\.amount) == [.estimated(27_500)])
 }
 
 @Test func sharesOfAnInferredTotalAreInferredNotExact() throws {
@@ -345,7 +350,13 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
         Issue.record("expected applied")
         return
     }
-    #expect(await h.service.perform(generate) == .rejected(.lifeValidation(.duplicateComponentObligation(cid("meal"), pid("b")))))
+    // Asking again changes nothing (no second obligation); it does not duplicate.
+    guard case let .applied(again) = await h.service.perform(generate) else {
+        Issue.record("expected a harmless repeat")
+        return
+    }
+    let afterRepeat = await h.life()
+    #expect(again.obligationIDs.isEmpty && afterRepeat.obligations.count == 1)
 
     // While obligations exist, who pays what cannot change underneath them; a label or category still can.
     let state = await h.life()
@@ -386,11 +397,15 @@ private func userPolicy(_ policy: SettlementPolicyOverride) -> Assigned<Settleme
         == .rejected(.lifeValidation(.unknownComponent(cid("ghost")))))
 }
 
-@Test func generatingObligationsWithoutAnAmountOrWithoutMeIsRefusedNotGuessed() async throws {
-    let unknownLife = dinnerLife(extra: [.upsertExpenseComponent(component("a", .unknown))])
+@Test func generatingObligationsFromAnUnknownTotalCreatesUnknownObligationsAndWithoutMeIsRefused() async throws {
+    let unknownLife = dinnerLife(participants: ["b"], extra: [.upsertExpenseComponent(component("a", .unknown))])
     let h = Harness.make(events: [dinnerEvent], life: unknownLife)
-    #expect(await h.service.perform(.generateObligations(GenerateObligationsInput(componentID: cid("a"), provenance: userProvenance())))
-        == .rejected(.invalidPolicy(.totalNotKnown)))
+    guard case let .applied(applied) = await h.service.perform(.generateObligations(GenerateObligationsInput(componentID: cid("a"), provenance: userProvenance()))) else {
+        Issue.record("an unknown total still yields unknown obligations")
+        return
+    }
+    let state = await h.life()
+    #expect(try applied.obligationIDs.map { try #require(state.obligations[$0]).amount.knowledge } == [.unknown])
 
     let selfless = try LifeState.empty.applying([
         .upsertPerson(person("b")), .createActivity(Activity.materialized(from: dinnerEvent, id: dinner, at: 1)),

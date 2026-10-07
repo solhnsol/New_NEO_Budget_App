@@ -4,7 +4,7 @@
 > - `CalendarEventRef`·`EventSnapshot`·`ActivityMetadata` 대신 `CalendarEventKey`(불투명 `CalendarEventID` 포함)와 `CalendarEventAssociation`(last-known 요약 + 상태)을 사용한다. 이벤트 식별자 안정성·fingerprint 재바인딩은 구현하지 않았다(Mac spike 필요).
 > - 새 개념 **Tag / Area / Category 훅 / provenance 기반 자동 배정 보호**가 추가되었다(이 초안에 없음). ActivityType은 단일 값이며 Calendar와 별개 축이다.
 > - **1거래:1활동 링크(`TransactionActivityLink`)는 폐기되었다.** 거래 분할·부분 금액·금액 지식(unknown/range/estimated/inferred/exact)·Obligation·Settlement·Participant가 추가되었다(`decisions.md` D010).
-> - D011: Category는 `classified/other/unknown/unclassified` 4상태(`CategoryAssignment`)로 확장되었고, Spending Nature·정정·residual·정산 정책이 추가되었다.
+> - D011: Category는 `classified/other/unknown/unclassified` 4상태(`CategoryAssignment`)로 확장되었다가 D012에서 `unknown`이 `unresolved`/`confirmedUnknown`으로 나뉘어 5상태가 되었고, Spending Nature·정정·residual·정산 정책이 추가되었다.
 > - 구현하지 않은 것: `PendingOperation` 의도 로그, command ID 멱등성, undo, `RecurrenceScope`의 EventKit 매핑, EventKit adapter 전체. 구현된 쓰기 순서는 "캘린더 먼저, 로컬 나중, 실패는 typed 결과(`partiallyApplied` 포함)"이다.
 > - `visibleCalendarIDs`는 인자만 있고 캘린더 표시 선택 UI는 없다.
 

@@ -128,6 +128,22 @@ in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 �
 - **정산 정책**: `RoundingRule`(exact/floor/ceil/nearest, unit)과 `SplitRule`(equal/weights/fixedAmounts). 우선순위 global → person(반올림만) → activity → component, 필드별 상속, 설정은 사용자만. obligation은 `ShareBreakdown`으로 raw share를 보존한다(요청 − raw = 조정). 반올림 차이는 지불자가 흡수한다.
 - **공유 지출**: `ExpenseComponent`가 Activity 기본 설정을 상속하고 participants/excluded/fixed로 override한다. 나와 관련된 obligation만, 금액이 settled일 때만 만든다(추측 금지, inferred 총액은 inferred 몫). obligation이 `componentID`로 출처를 가리킨다.
 - **SpendingNature**: living/discretionary/irregular. Category와 별개 축이며 `allocation → transaction → activity → tag → activityType → category` 순으로 가장 구체적인 진술이 이긴다. 진술이 없으면 `unspecified`(living으로 가정 안 함). 사용자 진술은 자동이 덮어쓰지 못한다.
-- **CategoryAssignment**: `classified / other / unknown / unclassified` 4상태. 기타(taxonomy 한계)와 모름(정보 한계)과 미분류(처리 대기)를 합치지 않는다. 분류기는 새 evidence 없이 unknown을 classified로 강제하지 않는다. 기존 `CategoryClassification`은 이 타입으로 대체했고 `unclassified(.insufficientInformation)`은 `unknown`으로 옮겼다. 금액 불확실성과 category 불확실성은 독립 축이다.
+- **CategoryAssignment**: `classified / other / unknown / unclassified` 4상태. 기타(taxonomy 한계)와 모름(정보 한계)과 미분류(처리 대기)를 합치지 않는다. 분류기는 새 evidence 없이 unknown을 classified로 강제하지 않는다. **(D012에서 `unresolved / confirmedUnknown`으로 분리되어 5상태가 되었다.)** 기존 `CategoryClassification`은 이 타입으로 대체했고 `unclassified(.insufficientInformation)`은 `unknown`으로 옮겼다. 금액 불확실성과 category 불확실성은 독립 축이다.
 
 보류(Mac/서버/외부 API 필요 또는 범위 밖): UI에서의 residual·정정·정책 편집 UX, 예산 엔진, 카테고리·유형별 성격 기본값 데이터, 정산 입금·선물의 원장 분류, 일괄 undo, durable 저장소와 레거시 데이터 마이그레이션, Contacts·메시지·은행·서버.
+
+## D012 — 머니 플로우 일관성: 차액은 evidence 먼저, 한 원은 한 역할 (Windows 범위)
+
+배경: D011까지의 모델을 red-team하니 (1) 요청이 확정 obligation만 지목하면 열린 unknown 옆에서도 차액이 residual이 되었고, (2) 총액이 range/estimated/unknown이면 obligation 자체를 만들 수 없어 불확실성이 모델 밖으로 밀려났으며, (3) shortfall residual이 이미 obligation의 남은 금액인 같은 1,000원을 요약에서 다시 세고 갚은 뒤에도 남았고, (4) 정산 송금을 소비로 allocation하거나 component와 allocation을 같이 합산하면 같은 돈이 두 번 집계될 수 있었고, (5) category `unknown`이 "아직 묻지 않음"과 "사용자가 모른다고 확인함"을 구분하지 못했다.
+
+원칙(아키텍처 원칙으로 명시): **차액은 먼저 미확정 금액을 설명하는 evidence로 사용하고, 설명할 미확정 정보가 더 이상 없을 때만 residual로 승격한다.** 불확실한 금액은 가능한 한 obligation과 allocation에 그대로 전파하고 자동화 강도만 낮춘다. **하나의 경제적 금액은 한 분석 경로에서 두 번 집계되어서는 안 된다.**
+
+결정 요약(상세·테스트 대응은 [calendar-domain.md](calendar-domain.md) §20):
+- **매처 순서**: exact/inferred → unknown/range/estimated에 차액 적용 → 유일하면 inferred → 여럿이면 constraint 보존 → 미확정이 남아 있으면 `unknownAmountsMayExplainDifference`(residual·질문 없음) → 모두 확정된 뒤에만 residual. 상태 수준에서도 자동 settlement의 residual은 미확정 obligation이 열려 있으면 거부한다. 결과적 거절 사유 추가는 `InsufficientEvidenceReason` 확장이므로 호출자는 새 case를 처리해야 한다.
+- **불확실성 전파**: `ExpenseComponent` 총액 exact/inferred/range/estimated/unknown이 몫에 같은 수준으로 전파된다(`ShareBreakdown`은 raw share와 total을 `AmountKnowledge`로 가진다). 기존 `totalNotKnown` 거부를 철회한다. 자동 강도: exact/inferred는 강한 매칭, range/estimated는 후보(inferred까지만, exact 금지), unknown은 금액 일치 근거가 못 된다. 총액이 정밀해지면 component를 갱신하고 `generateObligations`를 다시 호출해 obligation을 갱신한다.
+- **shortfall은 metadata**: shortfall은 obligation 잔액의 참조이지 독립 금액이 아니다. `ObligationBalance`(`original = settled + waived + cancelled + remaining`)와 `outstanding()`이 잔액의 유일한 출처이고, `ResidualSummary`는 surplus만 독립 미설명 금액으로 집계하며 shortfall은 `openShortfallReferenceMinorUnits`(비가산)로 분리한다. surplus와 shortfall은 일부러 비대칭이다.
+- **단계 분리**: raw share → 정책 조정 → 요청 → 실제 → residual. 정책 조정은 residual이 아니다(`policyAdjustmentMinorUnits`). 요청 30,000에 50,000이 들어오면 정산 30,000 + unresolved surplus 20,000이며 전체를 환급으로 해석해 지출을 줄이지 않는다.
+- **한 거래 한 역할**: 정산 송금(정정에 묶인 raw 포함)은 소비로 allocation할 수 없고 그 반대도 같다. `SpendingAnalytics.items(unifiedIn:)`가 component와 allocation의 같은 비용을 한 번만 센다. `MoneyFlowAudit`와 `LifeState.conservationViolations()`가 보존식을 점검한다.
+- **Category 5상태**: `unknown`을 `unresolved`(아직 묻지 않음, 질문할 가치)와 `confirmedUnknown`(사용자가 모른다고 확인, 사용자 전용, 기본 review 제외)으로 나눈다. 분류기가 같은 evidence로 덮어쓸 수 없고 더 새로운 `AssignmentProvenance.evidenceVersion`이 있어야 재평가된다. `unclassified`는 질문이 아니라 classifier 백로그(`classifierBacklog`)다. `AssignmentPolicy.classification`의 `newEvidence` 인자는 provenance의 `evidenceVersion`으로 대체되었다.
+
+보류: residual 후속 분류 확장(선물/보조금/기타 의무 등의 taxonomy), range obligation에 대한 매처의 활용(범위 안의 호환성 점수), 총액이 정밀해질 때 obligation을 자동 갱신하는 트리거(현재는 `generateObligations` 재호출), 정산 입금의 가계부상 분류.
