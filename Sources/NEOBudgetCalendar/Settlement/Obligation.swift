@@ -35,6 +35,10 @@ public struct Obligation: Codable, Hashable, Sendable {
     /// The transaction this obligation arose from, if any (for example the movie ticket I paid for both of us).
     public let originTransactionID: LedgerEntryID?
     public let label: String?
+    /// The shared expense this obligation was derived from, if any (see `ExpenseComponent`).
+    public let componentID: ExpenseComponentID?
+    /// The person's real part of that expense before rounding. The amount above is what was asked.
+    public let share: ShareBreakdown?
 
     public init(
         id: ObligationID,
@@ -46,7 +50,9 @@ public struct Obligation: Codable, Hashable, Sendable {
         provenance: AssignmentProvenance,
         createdAtUnixMilliseconds: Int64,
         originTransactionID: LedgerEntryID? = nil,
-        label: String? = nil
+        label: String? = nil,
+        componentID: ExpenseComponentID? = nil,
+        share: ShareBreakdown? = nil
     ) {
         self.id = id
         self.counterpartyID = counterpartyID
@@ -58,8 +64,16 @@ public struct Obligation: Codable, Hashable, Sendable {
         self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
         self.originTransactionID = originTransactionID
         self.label = label
+        self.componentID = componentID
+        self.share = share
     }
 
     public var currency: String { amount.currency }
+
+    /// Requested minus raw share, once both are known. `-700` for "23,700 asked as 23,000".
+    public var roundingAdjustmentMinorUnits: Int64? {
+        guard let share, let requested = amount.knowledge.knownValue else { return nil }
+        return requested - share.rawShareMinorUnits
+    }
     public var isSettleable: Bool { status == .open || status == .partiallySettled }
 }

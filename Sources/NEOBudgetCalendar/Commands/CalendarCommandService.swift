@@ -131,6 +131,30 @@ public actor CalendarCommandService {
         SettlementMatcher.match(transfer, in: try repository.snapshot().state, requestID: requestID)
     }
 
+    /// Explains the effective transfer of a user-made correction group. `nil` when the group does not exist or
+    /// its transfers cancel out (nothing is left to settle).
+    public func matchEffectiveTransfer(of groupID: CorrectionGroupID, requestID: SettlementRequestID? = nil) throws -> SettlementMatchResult? {
+        let state = try repository.snapshot().state
+        guard let transfer = state.correctionGroups[groupID]?.effectiveTransfer else { return nil }
+        return SettlementMatcher.match(transfer, in: state, requestID: requestID)
+    }
+
+    /// What a component asks of me, computed but not recorded.
+    public func previewObligations(forComponent id: ExpenseComponentID) throws -> ObligationDerivation {
+        try repository.snapshot().state.deriveObligations(forComponent: id)
+    }
+
+    /// Spending split by budget nature, and by how well its category is known (read-only).
+    public func spendingBreakdown(flow: TransactionFlow = .spend) throws -> (nature: [NatureBreakdown], category: [CategoryStateBreakdown]) {
+        let items = SpendingAnalytics.items(in: try repository.snapshot().state, flow: flow)
+        return (SpendingAnalytics.byNature(items), SpendingAnalytics.byCategoryState(items))
+    }
+
+    /// Unexplained settlement differences, kept out of spending (read-only).
+    public func residualSummary() throws -> [ResidualSummary] {
+        try repository.snapshot().state.residualSummary()
+    }
+
     /// People most likely to join an activity, given who is already on it.
     public func recommendParticipants(given chosen: [PersonID], limit: Int = 5) throws -> [ParticipantRecommendation] {
         ParticipantAffinityCalculator.recommend(given: chosen, in: try repository.snapshot().state, now: now(), limit: limit)
@@ -165,6 +189,15 @@ public actor CalendarCommandService {
         case let .applySettlement(input): return applySettlement(input)
         case let .recordManualSettlement(input): return recordManualSettlement(input)
         case let .removeSettlement(input): return removeSettlement(input)
+        case let .createCorrection(input): return createCorrection(input)
+        case let .removeCorrection(input): return removeCorrection(input)
+        case let .classifyResidual(input): return classifyResidual(input)
+        case let .setSettlementPolicy(input): return setSettlementPolicy(input)
+        case let .upsertExpenseComponent(input): return await upsertExpenseComponent(input)
+        case let .removeExpenseComponent(input): return removeExpenseComponent(input)
+        case let .generateObligations(input): return generateObligations(input)
+        case let .setSpendingNature(input): return setSpendingNature(input)
+        case let .setCategory(input): return setCategory(input)
         }
     }
 
@@ -668,6 +701,133 @@ public actor CalendarCommandService {
         return applyLocal([.removeSettlement(input.settlementID, by: input.by)], activityID: nil, settlementID: input.settlementID)
     }
 
+    // MARK: Corrections, residuals, policies, components, nature
+
+    private func createCorrection(_ input: CreateCorrectionInput) -> CalendarCommandOutcome {
+        do {
+            let id = CorrectionGroupID(rawValue: makeID(.correctionGroup))
+            let group = try TransactionCorrectionGroup(
+                id: id, sources: input.sources, provenance: input.provenance, createdAtUnixMilliseconds: now()
+            )
+            return applyLocal([.createCorrectionGroup(group)], activityID: nil, correctionGroupID: id)
+        } catch let error as CorrectionError {
+            return .rejected(.invalidCorrection(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+    }
+
+    private func removeCorrection(_ input: RemoveCorrectionInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.removeCorrectionGroup(input.groupID, by: input.by)], activityID: nil, correctionGroupID: input.groupID)
+    }
+
+    private func classifyResidual(_ input: ClassifyResidualInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.classifyResidual(input.residualID, input.classification, by: input.provenance)], activityID: nil)
+    }
+
+    private func setSettlementPolicy(_ input: SetSettlementPolicyInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        if let policy = input.policy {
+            return applyLocal([.setSettlementPolicy(input.target, Assigned(policy, provenance: input.provenance))], activityID: nil)
+        }
+        return applyLocal([.clearSettlementPolicy(input.target, by: input.provenance)], activityID: nil)
+    }
+
+    private func upsertExpenseComponent(_ input: UpsertExpenseComponentInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        if let provenance = input.category.provenance, !configuration.assignmentPolicy.accepts(provenance) {
+            return .rejected(.provenanceRejected)
+        }
+        let entry: AmountEntry
+        do {
+            entry = try AmountEntry(currency: input.currency, knowledge: input.amount, provenance: input.provenance)
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+        let resolved: ResolvedActivity
+        switch await resolveActivity(input.activity) {
+        case let .success(value): resolved = value
+        case let .failure(outcome): return outcome
+        }
+        let id = input.componentID ?? ExpenseComponentID(rawValue: makeID(.expenseComponent))
+        let existing = (try? repository.snapshot().state)?.components[id]
+        let component = ExpenseComponent(
+            id: id, activityID: resolved.id, label: input.label, amount: entry, payerID: input.payerID,
+            participants: input.participants, excludedParticipants: input.excludedParticipants, policy: input.policy,
+            category: input.category, originTransactionID: input.originTransactionID, provenance: input.provenance,
+            createdAtUnixMilliseconds: existing?.createdAtUnixMilliseconds ?? now()
+        )
+        return applyLocal(resolved.creation + [.upsertExpenseComponent(component)], activityID: resolved.id, componentID: id)
+    }
+
+    private func removeExpenseComponent(_ input: RemoveExpenseComponentInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.removeExpenseComponent(input.componentID, by: input.by)], activityID: nil, componentID: input.componentID)
+    }
+
+    /// Creates my obligations from a component's computed shares. Nothing is created from an amount that is
+    /// not settled, and nothing is created twice for the same counterparty.
+    private func generateObligations(_ input: GenerateObligationsInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        let derivation: ObligationDerivation
+        do {
+            derivation = try state.deriveObligations(forComponent: input.componentID)
+        } catch let error as SettlementPolicyError {
+            return .rejected(.invalidPolicy(error))
+        } catch let error as LifeValidationError {
+            return .rejected(.lifeValidation(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+        guard let component = state.components[input.componentID] else {
+            return .rejected(.lifeValidation(.unknownComponent(input.componentID)))
+        }
+        var changes: [LifeChange] = []
+        var ids: [ObligationID] = []
+        for draft in derivation.drafts {
+            do {
+                let id = ObligationID(rawValue: makeID(.obligation))
+                let amount = try AmountEntry(currency: draft.currency, knowledge: draft.amount, provenance: input.provenance)
+                changes.append(.createObligation(Obligation(
+                    id: id, counterpartyID: draft.counterpartyID, activityID: component.activityID, direction: draft.direction,
+                    amount: amount, provenance: input.provenance, createdAtUnixMilliseconds: now(),
+                    originTransactionID: component.originTransactionID, label: component.label,
+                    componentID: component.id, share: draft.share
+                )))
+                ids.append(id)
+            } catch let error as AmountValidationError {
+                return .rejected(.invalidAmount(error))
+            } catch {
+                return .rejected(.storageUnavailable)
+            }
+        }
+        guard !changes.isEmpty else { return .applied(AppliedCommand(componentID: component.id)) }
+        return applyLocal(changes, activityID: component.activityID, componentID: component.id, obligationIDs: ids)
+    }
+
+    private func setSpendingNature(_ input: SetSpendingNatureInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        if let nature = input.nature {
+            return applyLocal([.setSpendingNature(input.target, Assigned(nature, provenance: input.provenance))], activityID: nil)
+        }
+        return applyLocal([.clearSpendingNature(input.target, by: input.provenance)], activityID: nil)
+    }
+
+    private func setCategory(_ input: SetCategoryInput) -> CalendarCommandOutcome {
+        if let provenance = input.assignment.provenance, !configuration.assignmentPolicy.accepts(provenance) {
+            return .rejected(.provenanceRejected)
+        }
+        switch input.target {
+        case let .allocation(id): return applyLocal([.setAllocationCategory(id, input.assignment)], activityID: nil, allocationIDs: [id])
+        case let .component(id): return applyLocal([.setComponentCategory(id, input.assignment)], activityID: nil, componentID: id)
+        }
+    }
+
     // MARK: Shared helpers
 
     /// A step that either yields a value or ends the command with a final outcome.
@@ -805,13 +965,17 @@ public actor CalendarCommandService {
         obligationID: ObligationID? = nil,
         amountGroupID: AmountGroupID? = nil,
         settlementID: SettlementID? = nil,
-        settlementRequestID: SettlementRequestID? = nil
+        settlementRequestID: SettlementRequestID? = nil,
+        correctionGroupID: CorrectionGroupID? = nil,
+        componentID: ExpenseComponentID? = nil,
+        obligationIDs: [ObligationID] = []
     ) -> CalendarCommandOutcome {
         switch commit(changes) {
         case let .success(revision):
             return .applied(AppliedCommand(
                 activityID: activityID, lifeRevision: revision, allocationIDs: allocationIDs, obligationID: obligationID,
-                amountGroupID: amountGroupID, settlementID: settlementID, settlementRequestID: settlementRequestID
+                amountGroupID: amountGroupID, settlementID: settlementID, settlementRequestID: settlementRequestID,
+                correctionGroupID: correctionGroupID, componentID: componentID, obligationIDs: obligationIDs
             ))
         case let .failure(rejection):
             return .rejected(rejection)

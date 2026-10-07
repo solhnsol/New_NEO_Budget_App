@@ -61,6 +61,36 @@ public enum LifeValidationError: Error, Hashable, Sendable {
     case requestCounterpartyMismatch(SettlementRequestID)
     case staleAmountPromotion(ObligationID)
     case automatedPromotionMustBeInferred(ObligationID)
+
+    // Corrections
+    case unknownCorrectionGroup(CorrectionGroupID)
+    case correctionRequiresUser
+    case transactionAlreadyCorrected(LedgerEntryID)
+    case correctionSourceAlreadySettled(LedgerEntryID)
+    case correctionSourceNotRaw(LedgerEntryID)
+    case correctionHasSettlement(CorrectionGroupID)
+    case transferInCorrectionGroup(LedgerEntryID)
+    case correctionTransferMismatch(CorrectionGroupID)
+
+    // Residuals
+    case unknownResidual(ResidualID)
+    case residualClassificationNotApplicable(ResidualID)
+    case automatedResidualClassification(ResidualID)
+    case residualMismatch(ResidualID)
+
+    // Policies and shared expenses
+    case policyRequiresUser
+    case personPolicyCannotSetSplitRule(PersonID)
+    case invalidPolicy(SettlementPolicyError)
+    case unknownComponent(ExpenseComponentID)
+    case componentHasObligations(ExpenseComponentID)
+    case activityHasComponents(ActivityID)
+    case componentIdentityChanged(ExpenseComponentID)
+    case duplicateComponentObligation(ExpenseComponentID, PersonID)
+    case selfNotDefined
+
+    // Spending nature
+    case unknownNatureTarget(NatureTarget)
 }
 
 /// A single validated mutation of life state. Removals and clears carry who is asking so that automation
@@ -105,6 +135,25 @@ public enum LifeChange: Hashable, Sendable {
 
     case recordSettlement(Settlement)
     case removeSettlement(SettlementID, by: AssignmentProvenance)
+
+    /// Only the user can say that raw transfers belong together. The ledger is not touched.
+    case createCorrectionGroup(TransactionCorrectionGroup)
+    case removeCorrectionGroup(CorrectionGroupID, by: AssignmentProvenance)
+
+    /// Gives a residual its meaning. Automation can only leave it `unresolved`.
+    case classifyResidual(ResidualID, ResidualClassification, by: AssignmentProvenance)
+
+    /// Settlement habits. Preferences are the user's: automation cannot set or clear them.
+    case setSettlementPolicy(PolicyTarget, Assigned<SettlementPolicyOverride>)
+    case clearSettlementPolicy(PolicyTarget, by: AssignmentProvenance)
+
+    case upsertExpenseComponent(ExpenseComponent)
+    case removeExpenseComponent(ExpenseComponentID, by: AssignmentProvenance)
+    case setComponentCategory(ExpenseComponentID, CategoryAssignment)
+    case setAllocationCategory(AllocationID, CategoryAssignment)
+
+    case setSpendingNature(NatureTarget, Assigned<SpendingNature>)
+    case clearSpendingNature(NatureTarget, by: AssignmentProvenance)
 }
 
 /// All OnAll-owned meaning around calendar events, transactions, people, and money still to be settled, as
@@ -122,13 +171,19 @@ public struct LifeState: Codable, Equatable, Sendable {
     public private(set) var obligations: [ObligationID: Obligation]
     public private(set) var settlements: [SettlementID: Settlement]
     public private(set) var settlementRequests: [SettlementRequestID: SettlementRequest]
+    public private(set) var correctionGroups: [CorrectionGroupID: TransactionCorrectionGroup]
+    public private(set) var residuals: [ResidualID: SettlementResidual]
+    public private(set) var components: [ExpenseComponentID: ExpenseComponent]
+    public private(set) var policyOverrides: [PolicyTarget: Assigned<SettlementPolicyOverride>]
+    public private(set) var natureSignals: [NatureTarget: Assigned<SpendingNature>]
 
     /// Starts with the preset activity types and nothing else.
     public static var empty: LifeState {
         LifeState(
             activityTypes: Dictionary(uniqueKeysWithValues: ActivityTypeDefinition.presets.map { ($0.id, $0) }),
             tags: [:], areaCatalog: AreaCatalog(), persons: [:], activities: [:], allocationSets: [:],
-            transactionTags: [:], amountGroups: [:], obligations: [:], settlements: [:], settlementRequests: [:]
+            transactionTags: [:], amountGroups: [:], obligations: [:], settlements: [:], settlementRequests: [:],
+            correctionGroups: [:], residuals: [:], components: [:], policyOverrides: [:], natureSignals: [:]
         )
     }
 
@@ -175,6 +230,27 @@ public struct LifeState: Codable, Equatable, Sendable {
         settlements.values.reduce(0) { total, settlement in
             total + (settlement.allocations.first { $0.obligationID == id }?.appliedMinorUnits ?? 0)
         }
+    }
+
+    /// Applied settlements plus any shortfall the user has closed (waived or rounded away): everything that no
+    /// longer counts as owed on this obligation.
+    public func closedMinorUnits(for id: ObligationID) -> Int64 {
+        appliedMinorUnits(for: id) + residuals.values.reduce(0) { $0 + ($1.obligationID == id ? $1.closedMinorUnits : 0) }
+    }
+
+    public func correctionGroup(containing transactionID: LedgerEntryID) -> TransactionCorrectionGroup? {
+        correctionGroups.values.first { $0.sources.contains { $0.coveredTransactionIDs.contains(transactionID) } }
+    }
+
+    /// Residuals nobody has explained yet. A shortfall disappears from here once its obligation is settled.
+    public var unresolvedResiduals: [SettlementResidual] {
+        residuals.values
+            .filter { residual in
+                guard !residual.isResolved else { return false }
+                if let target = residual.obligationID { return obligations[target]?.status != .settled }
+                return true
+            }
+            .sorted { $0.id < $1.id }
     }
 
     /// Obligations with `counterpartyID` that can still be settled, in a stable order.
@@ -297,7 +373,12 @@ public struct LifeState: Codable, Equatable, Sendable {
             guard !obligations.values.contains(where: { $0.activityID == id }) else {
                 throw LifeValidationError.activityHasObligations(id)
             }
+            guard !components.values.contains(where: { $0.activityID == id }) else {
+                throw LifeValidationError.activityHasComponents(id)
+            }
             activities[id] = nil
+            policyOverrides[.activity(id)] = nil
+            natureSignals[.activity(id)] = nil
 
         case let .setActivityType(id, assigned):
             var activity = try existingActivity(id)
@@ -392,6 +473,7 @@ public struct LifeState: Codable, Equatable, Sendable {
             guard var set = allocationSets[existing.transactionID] else { return }
             set.replace(set.allocations.filter { $0.id != id })
             allocationSets[existing.transactionID] = set.isEmpty ? nil : set
+            natureSignals[.allocation(id)] = nil
 
         case let .setAllocationAmount(id, entry):
             guard let existing = allocation(id), var set = allocationSets[existing.transactionID] else {
@@ -442,6 +524,14 @@ public struct LifeState: Codable, Equatable, Sendable {
             try requireValid(obligation.provenance)
             try requireValid(obligation.amount.provenance)
             guard obligation.status == .open else { throw LifeValidationError.obligationMustStartOpen(obligation.id) }
+            if let componentID = obligation.componentID {
+                guard components[componentID] != nil else { throw LifeValidationError.unknownComponent(componentID) }
+                guard !obligations.values.contains(where: {
+                    $0.componentID == componentID && $0.counterpartyID == obligation.counterpartyID && $0.status != .cancelled
+                }) else {
+                    throw LifeValidationError.duplicateComponentObligation(componentID, obligation.counterpartyID)
+                }
+            }
             obligations[obligation.id] = obligation
 
         case let .setObligationAmount(id, entry):
@@ -493,7 +583,195 @@ public struct LifeState: Codable, Equatable, Sendable {
 
         case let .removeSettlement(id, by):
             try removeSettlement(id, by: by)
+
+        case let .createCorrectionGroup(group):
+            try createCorrectionGroup(group)
+
+        case let .removeCorrectionGroup(id, by):
+            try requireValid(by)
+            guard let group = correctionGroups[id] else { throw LifeValidationError.unknownCorrectionGroup(id) }
+            guard by.mayReplace(group.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            guard !settlements.values.contains(where: { $0.transfer.correctionGroupID == id }) else {
+                throw LifeValidationError.correctionHasSettlement(id)
+            }
+            correctionGroups[id] = nil
+
+        case let .classifyResidual(id, classification, by):
+            try classifyResidual(id, classification, by: by)
+
+        case let .setSettlementPolicy(target, assigned):
+            try setPolicy(target, assigned)
+
+        case let .clearSettlementPolicy(target, by):
+            try requireValid(by)
+            guard by.source == .user else { throw LifeValidationError.policyRequiresUser }
+            policyOverrides[target] = nil
+
+        case let .upsertExpenseComponent(component):
+            try upsertComponent(component)
+
+        case let .removeExpenseComponent(id, by):
+            try requireValid(by)
+            guard let existing = components[id] else { throw LifeValidationError.unknownComponent(id) }
+            guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            guard !hasLiveObligations(forComponent: id) else { throw LifeValidationError.componentHasObligations(id) }
+            components[id] = nil
+            natureSignals[.component(id)] = nil
+
+        case let .setComponentCategory(id, category):
+            guard var component = components[id] else { throw LifeValidationError.unknownComponent(id) }
+            try requireValidCategory(category)
+            guard category.canReplace(component.category) || category == component.category else {
+                throw LifeValidationError.userAssignmentProtected
+            }
+            component.category = category
+            components[id] = component
+
+        case let .setAllocationCategory(id, category):
+            guard let existing = allocation(id), var set = allocationSets[existing.transactionID] else {
+                throw LifeValidationError.unknownAllocation(id)
+            }
+            try requireValidCategory(category)
+            guard category == existing.category || category.canReplace(existing.category) else {
+                throw LifeValidationError.userAssignmentProtected
+            }
+            var updated = existing
+            updated.category = category
+            set.replace(set.allocations.map { $0.id == id ? updated : $0 })
+            allocationSets[existing.transactionID] = set
+
+        case let .setSpendingNature(target, assigned):
+            try validateNatureTarget(target)
+            try requireValid(assigned.provenance)
+            if let existing = natureSignals[target], !assigned.provenance.mayReplace(existing.provenance) {
+                throw LifeValidationError.userAssignmentProtected
+            }
+            natureSignals[target] = assigned
+
+        case let .clearSpendingNature(target, by):
+            try requireValid(by)
+            if let existing = natureSignals[target] {
+                guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+                natureSignals[target] = nil
+            }
         }
+    }
+
+    // MARK: Corrections, residuals, policies, components
+
+    private mutating func createCorrectionGroup(_ group: TransactionCorrectionGroup) throws {
+        guard !group.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "correctionGroup") }
+        guard correctionGroups[group.id] == nil else {
+            throw LifeValidationError.duplicateIdentifier(entity: "correctionGroup", id: group.id.rawValue)
+        }
+        // The user, and only the user, decides that transfers belong together.
+        guard group.provenance.source == .user else { throw LifeValidationError.correctionRequiresUser }
+        try requireValid(group.provenance)
+        try validateCounterparty(group.counterpartyID)
+        for source in group.sources {
+            guard source.coveredTransactionIDs == [source.transactionID], source.correctionGroupID == nil else {
+                throw LifeValidationError.correctionSourceNotRaw(source.transactionID)
+            }
+            guard correctionGroup(containing: source.transactionID) == nil else {
+                throw LifeValidationError.transactionAlreadyCorrected(source.transactionID)
+            }
+            guard !settlements.values.contains(where: { $0.transfer.coveredTransactionIDs.contains(source.transactionID) }) else {
+                throw LifeValidationError.correctionSourceAlreadySettled(source.transactionID)
+            }
+        }
+        correctionGroups[group.id] = group
+    }
+
+    private mutating func classifyResidual(_ id: ResidualID, _ classification: ResidualClassification, by: AssignmentProvenance) throws {
+        try requireValid(by)
+        guard var residual = residuals[id] else { throw LifeValidationError.unknownResidual(id) }
+        guard classification.isApplicable(to: residual.direction) else {
+            throw LifeValidationError.residualClassificationNotApplicable(id)
+        }
+        // What a difference means is the user's call; automation may only leave it unexplained.
+        if by.source == .automated, classification != .unresolved { throw LifeValidationError.automatedResidualClassification(id) }
+        guard by.mayReplace(residual.classification.provenance) else { throw LifeValidationError.userAssignmentProtected }
+        residual.classification = Assigned(classification, provenance: by)
+        residuals[id] = residual
+        if let target = residual.obligationID {
+            refreshStatus(of: target)
+            refreshRequests(affecting: [target], also: nil)
+        }
+    }
+
+    private mutating func setPolicy(_ target: PolicyTarget, _ assigned: Assigned<SettlementPolicyOverride>) throws {
+        try requireValid(assigned.provenance)
+        guard assigned.provenance.source == .user else { throw LifeValidationError.policyRequiresUser }
+        switch target {
+        case .global: break
+        case let .person(id):
+            guard persons[id] != nil else { throw LifeValidationError.unknownPerson(id) }
+            guard assigned.value.splitRule == nil else { throw LifeValidationError.personPolicyCannotSetSplitRule(id) }
+        case let .activity(id):
+            _ = try existingActivity(id)
+        }
+        do {
+            try ExpenseComponent.validate(rule: assigned.value.splitRule)
+        } catch let error as SettlementPolicyError {
+            throw LifeValidationError.invalidPolicy(error)
+        }
+        policyOverrides[target] = assigned
+    }
+
+    private func hasLiveObligations(forComponent id: ExpenseComponentID) -> Bool {
+        obligations.values.contains { $0.componentID == id && $0.status != .cancelled }
+    }
+
+    private mutating func upsertComponent(_ component: ExpenseComponent) throws {
+        guard !component.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "expenseComponent") }
+        _ = try existingActivity(component.activityID)
+        try requireValid(component.provenance)
+        try requireValid(component.amount.provenance)
+        guard persons[component.payerID] != nil else { throw LifeValidationError.unknownPerson(component.payerID) }
+        for person in (component.participants ?? []) + component.excludedParticipants {
+            guard persons[person] != nil else { throw LifeValidationError.unknownPerson(person) }
+        }
+        do {
+            try component.validateStructure()
+        } catch let error as SettlementPolicyError {
+            throw LifeValidationError.invalidPolicy(error)
+        }
+        try requireValidCategory(component.category)
+        if let existing = components[component.id] {
+            guard existing.activityID == component.activityID else { throw LifeValidationError.componentIdentityChanged(component.id) }
+            guard component.provenance.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            try requireAcceptable(old: existing.amount, new: component.amount)
+            if component.category != existing.category, !component.category.canReplace(existing.category) {
+                throw LifeValidationError.userAssignmentProtected
+            }
+            // Once obligations were derived, changing who pays what would silently contradict them.
+            let changesShares = existing.payerID != component.payerID || existing.amount != component.amount
+                || existing.participants != component.participants
+                || existing.excludedParticipants != component.excludedParticipants
+                || existing.policy != component.policy
+            if changesShares, hasLiveObligations(forComponent: component.id) {
+                throw LifeValidationError.componentHasObligations(component.id)
+            }
+        }
+        components[component.id] = component
+    }
+
+    private func validateNatureTarget(_ target: NatureTarget) throws {
+        let exists: Bool
+        switch target {
+        case let .allocation(id): exists = allocation(id) != nil
+        case let .transaction(id): exists = !id.rawValue.isEmpty
+        case let .component(id): exists = components[id] != nil
+        case let .activity(id): exists = activities[id] != nil
+        case let .tag(id): exists = tags[id] != nil
+        case let .activityType(id): exists = activityTypes[id] != nil
+        case let .category(id): exists = !id.rawValue.isEmpty
+        }
+        guard exists else { throw LifeValidationError.unknownNatureTarget(target) }
+    }
+
+    private func requireValidCategory(_ category: CategoryAssignment) throws {
+        if let provenance = category.provenance { try requireValid(provenance) }
     }
 
     // MARK: Allocation
@@ -520,7 +798,11 @@ public struct LifeState: Codable, Equatable, Sendable {
             }
             guard allocation.provenance.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
             try requireAcceptable(old: existing.amount, new: allocation.amount)
+            if allocation.category != existing.category, !allocation.category.canReplace(existing.category) {
+                throw LifeValidationError.userAssignmentProtected
+            }
         }
+        try requireValidCategory(allocation.category)
         guard !others.contains(where: { $0.activityID == allocation.activityID }) else {
             throw LifeValidationError.duplicateAllocationTarget(allocation.transactionID)
         }
@@ -577,8 +859,20 @@ public struct LifeState: Codable, Equatable, Sendable {
         }
         try requireValid(settlement.provenance)
         try validateCounterparty(settlement.transfer.counterpartyID)
-        guard !settlements.values.contains(where: { $0.transfer.transactionID == settlement.transfer.transactionID }) else {
-            throw LifeValidationError.transferAlreadySettled(settlement.transfer.transactionID)
+        // A raw transaction that the user folded into a correction group is only ever settled through the
+        // group's effective transfer; the effective transfer must be exactly what the group says.
+        let transfer = settlement.transfer
+        if let groupID = transfer.correctionGroupID {
+            guard let group = correctionGroups[groupID] else { throw LifeValidationError.unknownCorrectionGroup(groupID) }
+            guard group.effectiveTransfer == transfer else { throw LifeValidationError.correctionTransferMismatch(groupID) }
+        } else {
+            for covered in transfer.coveredTransactionIDs where correctionGroup(containing: covered) != nil {
+                throw LifeValidationError.transferInCorrectionGroup(covered)
+            }
+        }
+        for covered in transfer.coveredTransactionIDs
+        where settlements.values.contains(where: { $0.transfer.coveredTransactionIDs.contains(covered) }) {
+            throw LifeValidationError.transferAlreadySettled(covered)
         }
         if let requestID = settlement.requestID {
             guard let request = settlementRequests[requestID] else { throw LifeValidationError.unknownSettlementRequest(requestID) }
@@ -617,10 +911,33 @@ public struct LifeState: Codable, Equatable, Sendable {
             }
             signedNet += obligation.direction.sign * allocation.appliedMinorUnits
         }
-        // Net balance, not one-to-one: receivables count for me, payables against me.
-        guard signedNet == settlement.transfer.signedMinorUnits else { throw LifeValidationError.settlementNetMismatch }
+        // Net balance, not one-to-one: receivables count for me, payables against me. A surplus residual is
+        // money that moved beyond the obligations, and is accounted for explicitly rather than hidden.
+        let surplus = settlement.residuals.reduce(Int64(0)) { $0 + $1.signedSurplus(transferDirection: settlement.transfer.direction) }
+        guard signedNet + surplus == settlement.transfer.signedMinorUnits else { throw LifeValidationError.settlementNetMismatch }
+
+        for residual in settlement.residuals {
+            guard residuals[residual.id] == nil else {
+                throw LifeValidationError.duplicateIdentifier(entity: "residual", id: residual.id.rawValue)
+            }
+            if residual.classification.provenance.source == .automated, residual.classification.value != .unresolved {
+                throw LifeValidationError.automatedResidualClassification(residual.id)
+            }
+            try requireValid(residual.classification.provenance)
+            // A shortfall is exactly what the obligation still needs after this settlement; nothing else.
+            if residual.direction == .shortfall, let target = residual.obligationID,
+               let obligation = obligations[target], let value = obligation.amount.knowledge.knownValue,
+               let applied = settlement.allocations.first(where: { $0.obligationID == target })?.appliedMinorUnits {
+                guard value - closedMinorUnits(for: target) - applied == residual.amount.minorUnits else {
+                    throw LifeValidationError.residualMismatch(residual.id)
+                }
+            } else if residual.direction == .shortfall {
+                throw LifeValidationError.residualMismatch(residual.id)
+            }
+        }
 
         settlements[settlement.id] = settlement
+        for residual in settlement.residuals { residuals[residual.id] = residual }
         for allocation in settlement.allocations { refreshStatus(of: allocation.obligationID) }
         try ensureGroupsConsistent(touching: settlement.promotions.map { .obligation($0.obligationID) })
         refreshRequests(affecting: settlement.allocations.map(\.obligationID), also: settlement.requestID)
@@ -631,6 +948,7 @@ public struct LifeState: Codable, Equatable, Sendable {
         guard let settlement = settlements[id] else { throw LifeValidationError.unknownSettlement(id) }
         guard by.mayReplace(settlement.provenance) else { throw LifeValidationError.userAssignmentProtected }
         settlements[id] = nil
+        for residual in settlement.residuals { residuals[residual.id] = nil }
         // Inferences that rested on this settlement go away with it.
         for promotion in settlement.promotions {
             if var obligation = obligations[promotion.obligationID], obligation.amount == promotion.applied {
@@ -651,7 +969,7 @@ public struct LifeState: Codable, Equatable, Sendable {
         let status: ObligationStatus
         if applied == 0 {
             status = .open
-        } else if let known = obligation.amount.knowledge.knownValue, applied >= known {
+        } else if let known = obligation.amount.knowledge.knownValue, closedMinorUnits(for: id) >= known {
             status = .settled
         } else {
             status = .partiallySettled

@@ -95,3 +95,24 @@ public struct SettlementRequestID: RawRepresentable, Codable, Hashable, Comparab
     public init(rawValue: String) { self.rawValue = rawValue }
     public static func < (lhs: SettlementRequestID, rhs: SettlementRequestID) -> Bool { lhs.rawValue < rhs.rawValue }
 }
+
+/// Identifies a user-made grouping of raw transfers whose net is their real economic meaning.
+public struct CorrectionGroupID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: CorrectionGroupID, rhs: CorrectionGroupID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies an amount a settlement left unexplained (a surplus received, or a shortfall still open).
+public struct ResidualID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: ResidualID, rhs: ResidualID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies one separately shared piece of an Activity's spending (1차, 2차, 술 …).
+public struct ExpenseComponentID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: ExpenseComponentID, rhs: ExpenseComponentID) -> Bool { lhs.rawValue < rhs.rawValue }
+}

@@ -46,7 +46,7 @@ private func group(_ total: AmountEntry, _ members: [AmountMemberRef], id: Strin
     ])
     // The group keeps the member references so a UI can say "외식 · 카페 · 택시, 세부 금액 미확인"; there is no category involved.
     #expect(life.amountGroups[gid]?.members.count == 2)
-    #expect(CategoryClassification.initial == .unclassified(.notYetEvaluated))
+    #expect(CategoryAssignment.initial == .unclassified(.notYetEvaluated))
 }
 
 @Test func groupMembersAndTotalsAreValidatedWhenTheGroupIsDefined() throws {

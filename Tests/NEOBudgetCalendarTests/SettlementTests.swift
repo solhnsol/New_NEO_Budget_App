@@ -129,7 +129,14 @@ private func ids(_ values: [ObligationID]) -> [String] { values.map(\.rawValue).
 @Test func settledAndCancelledObligationsAreNotCandidates() throws {
     let base = world([obligation("a", .receivable, .exact(5_000)), obligation("b", .receivable, .exact(7_000))])
     let cancelled = try base.applying([.cancelObligation(oid("b"), by: userProvenance())])
-    #expect(SettlementMatcher.match(transfer("t", .incoming, 7_000), in: cancelled) == .noMatch(.noCombinationExplainsTransfer))
+    // The cancelled 7,000 is not a candidate: against the remaining 5,000 the transfer is a 2,000 surplus.
+    let result = SettlementMatcher.match(transfer("t", .incoming, 7_000), in: cancelled)
+    guard case let .matchWithResidual(proposal) = result else {
+        Issue.record("expected the cancelled obligation to be ignored")
+        return
+    }
+    #expect(proposal.applications.map(\.obligationID) == [oid("a")])
+    #expect(proposal.residuals == [ProposedResidual(direction: .surplus, minorUnits: 2_000)])
     let first = try settle(cancelled, try #require(SettlementMatcher.match(transfer("t1", .incoming, 5_000), in: cancelled).proposal), id: "s1")
     #expect(SettlementMatcher.match(transfer("t2", .incoming, 5_000), in: first) == .noMatch(.noOpenObligations))
 }
@@ -310,9 +317,23 @@ private func ids(_ values: [ObligationID]) -> [String] { values.map(\.rawValue).
 
 // MARK: Partial settlement and many-to-many
 
-@Test func aSmallerTransferIsPossiblyPartialButNotAssumedWithoutEvidence() {
+@Test func aSmallerTransferIsAPartialSettlementWithAnUnresolvedShortfallNeverAWaiver() throws {
     let life = world([obligation("recv", .receivable, .exact(30_000))])
-    #expect(SettlementMatcher.match(transfer("t", .incoming, 18_000), in: life) == .insufficientEvidence(.possiblePartialSettlement([oid("recv")])))
+    guard case let .matchWithResidual(proposal) = SettlementMatcher.match(transfer("t", .incoming, 18_000), in: life) else {
+        Issue.record("expected a partial settlement")
+        return
+    }
+    #expect(proposal.isPartial)
+    #expect(proposal.residuals == [ProposedResidual(direction: .shortfall, minorUnits: 12_000, obligationID: oid("recv"))])
+    let settled = try settle(life, proposal)
+    #expect(settleable(settled, "recv") == .partiallySettled)           // still owed: nothing was forgiven
+    #expect(settled.unresolvedResiduals.map(\.amount.minorUnits) == [12_000])
+}
+
+@Test func withSeveralOpenObligationsAShortTransferCannotSayWhichOneIsShort() {
+    let life = world([obligation("a", .receivable, .exact(30_000)), obligation("b", .receivable, .exact(40_000))])
+    #expect(SettlementMatcher.match(transfer("t", .incoming, 18_000), in: life)
+        == .insufficientEvidence(.possiblePartialSettlement([oid("a"), oid("b")])))
 }
 
 @Test func aRequestForThatAmountMakesAPartialSettlementTheEvidencedExplanation() throws {

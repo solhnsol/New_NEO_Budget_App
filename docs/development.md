@@ -20,7 +20,7 @@ swift test
 
 2026-10-06 GitHub 인증 후 `main`, `plan/local-first-core`, `refactor/platform-neutral-boundaries` 업로드와 원격 커밋 일치 확인을 완료했다. Windows에서는 `refactor/platform-neutral-boundaries`를 clone해 이어서 작업한다. 명령은 `docs/handoff.md`를 참고한다.
 
-2026-10-07 실제 Windows x86_64에서 Swift 6.4, Visual Studio Build Tools 2022 17.14, Windows 11 SDK 환경으로 `swift build`와 `swift test` 성공을 확인했다. ingestion 경계, red-team corpus, 합성 fixture, atomic promotion을 포함한 총 344개(Core 60 + Calendar 284)가 통과했다. Developer Mode 활성화 후 `.build/debug` 심볼릭 링크 경고도 더 이상 발생하지 않았다. 새 PowerShell이 설치 환경을 아직 반영하지 않은 경우 Visual Studio Developer Command Prompt를 로드하고 `SDKROOT`를 Swift의 `Windows.sdk` 경로로 지정해야 한다.
+2026-10-07 실제 Windows x86_64에서 Swift 6.4, Visual Studio Build Tools 2022 17.14, Windows 11 SDK 환경으로 `swift build`와 `swift test` 성공을 확인했다. ingestion 경계, red-team corpus, 합성 fixture, atomic promotion을 포함한 총 423개(Core 60 + Calendar 363)가 통과했다. Developer Mode 활성화 후 `.build/debug` 심볼릭 링크 경고도 더 이상 발생하지 않았다. 새 PowerShell이 설치 환경을 아직 반영하지 않은 경우 Visual Studio Developer Command Prompt를 로드하고 `SDKROOT`를 Swift의 `Windows.sdk` 경로로 지정해야 한다.
 
 통과 기준: build 성공, 테스트 발견/실행, 실패 0개. Windows CI 도구/버전/공개는 별도 결정한다.
 
@@ -55,6 +55,6 @@ native 옵션은 사용한 도구에서 deprecated 안내가 있으므로 Window
 - revision 조건부 원자 커밋, 강한 원장 ID 멱등성, 이체/카드 납부/환불/금액 보존 불변식과 projection을 제공하는 저장 protocol 및 in-memory adapter.
 - candidate 저장과 ready candidate ledger 승격을 한 commit point로 묶는 Core protocol 및 in-memory adapter.
 - repository/ledger 의존성 없이 `TransactionCandidateDraft`만 만드는 parser와 account resolver/assembler, dedup 계약.
-- 합성 알림 26개 형식의 결정론/provenance 및 의미 검증을 포함한 Swift 테스트 344개(Core 60 + Calendar 284)와 test-data Python 테스트 7개.
+- 합성 알림 26개 형식의 결정론/provenance 및 의미 검증을 포함한 Swift 테스트 423개(Core 60 + Calendar 363)와 test-data Python 테스트 7개.
 
 provider별 상세 fixture/profile, provider 간 같은 거래 evidence 결합, 같은 반환 알림의 상태 연결, durable 저장소는 다음 단계다. parser는 ledger를 직접 변경하지 않고 `RawNotification -> TransactionCandidateDraft`까지만 담당한다. 현재 테스트가 milestone 전체의 correctness를 검증하는 것은 아니다.

@@ -279,7 +279,7 @@ func settle(_ life: LifeState, _ proposal: SettlementProposal, id: String = "s1"
 extension SettlementMatchResult {
     var proposal: SettlementProposal? {
         switch self {
-        case let .exactMatch(p), let .netMatch(p), let .inferredUniqueSolution(p): return p
+        case let .exactMatch(p), let .netMatch(p), let .inferredUniqueSolution(p), let .matchWithResidual(p): return p
         default: return nil
         }
     }

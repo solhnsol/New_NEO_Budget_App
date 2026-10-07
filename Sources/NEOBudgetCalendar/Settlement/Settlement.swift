@@ -15,22 +15,36 @@ public enum SettlementValidationError: Error, Hashable, Sendable {
     case duplicateObligation(ObligationID)
     case nonPositiveApplied(ObligationID)
     case emptyObligationList
+    case nonPositiveResidual
+    case invalidResidualTarget
+    case residualClassificationNotApplicable
+    case duplicateResidual
+    case residualSettlementMismatch
 }
 
-/// A real movement of money between me and a counterparty, already recorded as a transaction.
+/// A real movement of money between me and a counterparty, already recorded as a transaction, or the
+/// **effective** transfer a user-made correction group stands for.
+///
+/// For a plain transfer `coveredTransactionIDs` is just `[transactionID]`. For the effective transfer of a
+/// correction group it lists every raw transaction the group folds together, and `transactionID` is only a
+/// stable representative (the latest of them).
 public struct ActualTransfer: Codable, Hashable, Sendable {
     public let transactionID: LedgerEntryID
     public let counterpartyID: PersonID
     public let direction: TransferDirection
     public let amount: Money
     public let occurredAtUnixMilliseconds: Int64
+    public let coveredTransactionIDs: [LedgerEntryID]
+    public let correctionGroupID: CorrectionGroupID?
 
     public init(
         transactionID: LedgerEntryID,
         counterpartyID: PersonID,
         direction: TransferDirection,
         amount: Money,
-        occurredAtUnixMilliseconds: Int64
+        occurredAtUnixMilliseconds: Int64,
+        coveredTransactionIDs: [LedgerEntryID]? = nil,
+        correctionGroupID: CorrectionGroupID? = nil
     ) throws {
         guard amount.minorUnits > 0 else { throw SettlementValidationError.nonPositiveAmount }
         self.transactionID = transactionID
@@ -38,6 +52,25 @@ public struct ActualTransfer: Codable, Hashable, Sendable {
         self.direction = direction
         self.amount = amount
         self.occurredAtUnixMilliseconds = occurredAtUnixMilliseconds
+        self.coveredTransactionIDs = Array(Set((coveredTransactionIDs ?? []) + [transactionID])).sorted { $0.rawValue < $1.rawValue }
+        self.correctionGroupID = correctionGroupID
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case transactionID, counterpartyID, direction, amount, occurredAtUnixMilliseconds, coveredTransactionIDs, correctionGroupID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            transactionID: values.decode(LedgerEntryID.self, forKey: .transactionID),
+            counterpartyID: values.decode(PersonID.self, forKey: .counterpartyID),
+            direction: values.decode(TransferDirection.self, forKey: .direction),
+            amount: values.decode(Money.self, forKey: .amount),
+            occurredAtUnixMilliseconds: values.decode(Int64.self, forKey: .occurredAtUnixMilliseconds),
+            coveredTransactionIDs: values.decodeIfPresent([LedgerEntryID].self, forKey: .coveredTransactionIDs),
+            correctionGroupID: values.decodeIfPresent(CorrectionGroupID.self, forKey: .correctionGroupID)
+        )
     }
 
     /// Positive when money came to me, negative when I sent it.
@@ -80,6 +113,9 @@ public struct Settlement: Codable, Hashable, Sendable {
     public let transfer: ActualTransfer
     public let allocations: [SettlementAllocation]
     public let promotions: [AppliedPromotion]
+    /// What this settlement left unexplained: a surplus, and/or a shortfall per obligation. Each keeps the
+    /// meaning the user later gives it; nothing is classified here.
+    public let residuals: [SettlementResidual]
     public let requestID: SettlementRequestID?
     public let provenance: AssignmentProvenance
     public let createdAtUnixMilliseconds: Int64
@@ -89,26 +125,44 @@ public struct Settlement: Codable, Hashable, Sendable {
         transfer: ActualTransfer,
         allocations: [SettlementAllocation],
         promotions: [AppliedPromotion] = [],
+        residuals: [SettlementResidual] = [],
         requestID: SettlementRequestID? = nil,
         provenance: AssignmentProvenance,
         createdAtUnixMilliseconds: Int64
     ) throws {
         guard !allocations.isEmpty else { throw SettlementValidationError.emptyAllocations }
-        var seen = Set<ObligationID>()
-        for allocation in allocations where !seen.insert(allocation.obligationID).inserted {
+        var seenIDs = Set<ObligationID>()
+        for allocation in allocations where !seenIDs.insert(allocation.obligationID).inserted {
             throw SettlementValidationError.duplicateObligation(allocation.obligationID)
+        }
+        var seenResiduals = Set<ResidualID>()
+        var surplusCount = 0
+        var shortfallTargets = Set<ObligationID>()
+        for residual in residuals {
+            guard residual.settlementID == id else { throw SettlementValidationError.residualSettlementMismatch }
+            guard seenResiduals.insert(residual.id).inserted else { throw SettlementValidationError.duplicateResidual }
+            switch residual.direction {
+            case .surplus:
+                surplusCount += 1
+                guard surplusCount == 1 else { throw SettlementValidationError.duplicateResidual }
+            case .shortfall:
+                guard let target = residual.obligationID, seenIDs.contains(target), shortfallTargets.insert(target).inserted else {
+                    throw SettlementValidationError.invalidResidualTarget
+                }
+            }
         }
         self.id = id
         self.transfer = transfer
         self.allocations = allocations.sorted { $0.obligationID < $1.obligationID }
         self.promotions = promotions.sorted { $0.obligationID < $1.obligationID }
+        self.residuals = residuals.sorted { $0.id < $1.id }
         self.requestID = requestID
         self.provenance = provenance
         self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, transfer, allocations, promotions, requestID, provenance, createdAtUnixMilliseconds
+        case id, transfer, allocations, promotions, residuals, requestID, provenance, createdAtUnixMilliseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -118,6 +172,7 @@ public struct Settlement: Codable, Hashable, Sendable {
             transfer: values.decode(ActualTransfer.self, forKey: .transfer),
             allocations: values.decode([SettlementAllocation].self, forKey: .allocations),
             promotions: values.decode([AppliedPromotion].self, forKey: .promotions),
+            residuals: values.decodeIfPresent([SettlementResidual].self, forKey: .residuals) ?? [],
             requestID: values.decodeIfPresent(SettlementRequestID.self, forKey: .requestID),
             provenance: values.decode(AssignmentProvenance.self, forKey: .provenance),
             createdAtUnixMilliseconds: values.decode(Int64.self, forKey: .createdAtUnixMilliseconds)

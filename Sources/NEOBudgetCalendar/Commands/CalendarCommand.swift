@@ -335,8 +335,140 @@ public struct RemoveSettlementInput: Hashable, Sendable {
     }
 }
 
+public struct CreateCorrectionInput: Hashable, Sendable {
+    /// The raw transfers the user says belong together (for example +12,000 and -4,000 with the same person).
+    public let sources: [ActualTransfer]
+    /// Must be the user: only a person can say that transfers were a mistake and its correction.
+    public let provenance: AssignmentProvenance
+    public init(sources: [ActualTransfer], provenance: AssignmentProvenance) {
+        self.sources = sources
+        self.provenance = provenance
+    }
+}
+
+public struct RemoveCorrectionInput: Hashable, Sendable {
+    public let groupID: CorrectionGroupID
+    public let by: AssignmentProvenance
+    public init(groupID: CorrectionGroupID, by: AssignmentProvenance) {
+        self.groupID = groupID
+        self.by = by
+    }
+}
+
+public struct ClassifyResidualInput: Hashable, Sendable {
+    public let residualID: ResidualID
+    public let classification: ResidualClassification
+    public let provenance: AssignmentProvenance
+    public init(residualID: ResidualID, classification: ResidualClassification, provenance: AssignmentProvenance) {
+        self.residualID = residualID
+        self.classification = classification
+        self.provenance = provenance
+    }
+}
+
+public struct SetSettlementPolicyInput: Hashable, Sendable {
+    public let target: PolicyTarget
+    /// `nil` clears the override at that level.
+    public let policy: SettlementPolicyOverride?
+    public let provenance: AssignmentProvenance
+    public init(target: PolicyTarget, policy: SettlementPolicyOverride?, provenance: AssignmentProvenance) {
+        self.target = target
+        self.policy = policy
+        self.provenance = provenance
+    }
+}
+
+/// Creates a shared-expense component of an Activity, or updates one when `componentID` is given.
+public struct UpsertExpenseComponentInput: Hashable, Sendable {
+    public let componentID: ExpenseComponentID?
+    public let activity: ActivityTarget
+    public let label: String?
+    public let currency: String
+    public let amount: AmountKnowledge
+    public let payerID: PersonID
+    public let participants: [PersonID]?
+    public let excludedParticipants: [PersonID]
+    public let policy: SettlementPolicyOverride?
+    public let category: CategoryAssignment
+    public let originTransactionID: LedgerEntryID?
+    public let provenance: AssignmentProvenance
+    public init(
+        componentID: ExpenseComponentID? = nil,
+        activity: ActivityTarget,
+        label: String? = nil,
+        currency: String,
+        amount: AmountKnowledge,
+        payerID: PersonID,
+        participants: [PersonID]? = nil,
+        excludedParticipants: [PersonID] = [],
+        policy: SettlementPolicyOverride? = nil,
+        category: CategoryAssignment = .initial,
+        originTransactionID: LedgerEntryID? = nil,
+        provenance: AssignmentProvenance
+    ) {
+        self.componentID = componentID
+        self.activity = activity
+        self.label = label
+        self.currency = currency
+        self.amount = amount
+        self.payerID = payerID
+        self.participants = participants
+        self.excludedParticipants = excludedParticipants
+        self.policy = policy
+        self.category = category
+        self.originTransactionID = originTransactionID
+        self.provenance = provenance
+    }
+}
+
+public struct RemoveExpenseComponentInput: Hashable, Sendable {
+    public let componentID: ExpenseComponentID
+    public let by: AssignmentProvenance
+    public init(componentID: ExpenseComponentID, by: AssignmentProvenance) {
+        self.componentID = componentID
+        self.by = by
+    }
+}
+
+/// Creates the obligations that follow from a component's computed shares (for me only).
+public struct GenerateObligationsInput: Hashable, Sendable {
+    public let componentID: ExpenseComponentID
+    public let provenance: AssignmentProvenance
+    public init(componentID: ExpenseComponentID, provenance: AssignmentProvenance) {
+        self.componentID = componentID
+        self.provenance = provenance
+    }
+}
+
+public struct SetSpendingNatureInput: Hashable, Sendable {
+    public let target: NatureTarget
+    /// `nil` clears the statement at that level.
+    public let nature: SpendingNature?
+    public let provenance: AssignmentProvenance
+    public init(target: NatureTarget, nature: SpendingNature?, provenance: AssignmentProvenance) {
+        self.target = target
+        self.nature = nature
+        self.provenance = provenance
+    }
+}
+
+public enum CategoryTarget: Hashable, Sendable {
+    case allocation(AllocationID)
+    case component(ExpenseComponentID)
+}
+
+public struct SetCategoryInput: Hashable, Sendable {
+    public let target: CategoryTarget
+    /// Carries its own provenance, so `classified`/`other`/`unknown` say who decided.
+    public let assignment: CategoryAssignment
+    public init(target: CategoryTarget, assignment: CategoryAssignment) {
+        self.target = target
+        self.assignment = assignment
+    }
+}
+
 public enum IDKind: String, Sendable {
-    case activity, allocation, obligation, amountGroup, settlement, settlementRequest
+    case activity, allocation, obligation, amountGroup, settlement, settlementRequest, correctionGroup, expenseComponent
 }
 
 public enum CalendarCommand: Hashable, Sendable {
@@ -371,6 +503,21 @@ public enum CalendarCommand: Hashable, Sendable {
     case applySettlement(ApplySettlementInput)
     case recordManualSettlement(ManualSettlementInput)
     case removeSettlement(RemoveSettlementInput)
+
+    // Corrections and what a settlement leaves unexplained.
+    case createCorrection(CreateCorrectionInput)
+    case removeCorrection(RemoveCorrectionInput)
+    case classifyResidual(ClassifyResidualInput)
+
+    // Shared expenses, their policies, and the obligations that follow.
+    case setSettlementPolicy(SetSettlementPolicyInput)
+    case upsertExpenseComponent(UpsertExpenseComponentInput)
+    case removeExpenseComponent(RemoveExpenseComponentInput)
+    case generateObligations(GenerateObligationsInput)
+
+    // Budget-facing meaning, independent of each other.
+    case setSpendingNature(SetSpendingNatureInput)
+    case setCategory(SetCategoryInput)
 }
 
 /// Why a command was refused before anything was written.
@@ -397,6 +544,8 @@ public enum CommandRejection: Error, Hashable, Sendable {
     case invalidAmount(AmountValidationError)
     case invalidAmountGroup(AmountGroupError)
     case invalidSettlement(SettlementValidationError)
+    case invalidCorrection(CorrectionError)
+    case invalidPolicy(SettlementPolicyError)
     /// Several members of the group are still unresolved, so no single value is forced. Nothing is guessed.
     case amountGroupNotUniquelySolvable
     case storageUnavailable
@@ -412,6 +561,9 @@ public struct AppliedCommand: Equatable, Sendable {
     public let amountGroupID: AmountGroupID?
     public let settlementID: SettlementID?
     public let settlementRequestID: SettlementRequestID?
+    public let correctionGroupID: CorrectionGroupID?
+    public let componentID: ExpenseComponentID?
+    public let obligationIDs: [ObligationID]
 
     public init(
         event: CalendarEvent? = nil,
@@ -421,7 +573,10 @@ public struct AppliedCommand: Equatable, Sendable {
         obligationID: ObligationID? = nil,
         amountGroupID: AmountGroupID? = nil,
         settlementID: SettlementID? = nil,
-        settlementRequestID: SettlementRequestID? = nil
+        settlementRequestID: SettlementRequestID? = nil,
+        correctionGroupID: CorrectionGroupID? = nil,
+        componentID: ExpenseComponentID? = nil,
+        obligationIDs: [ObligationID] = []
     ) {
         self.event = event
         self.activityID = activityID
@@ -431,6 +586,9 @@ public struct AppliedCommand: Equatable, Sendable {
         self.amountGroupID = amountGroupID
         self.settlementID = settlementID
         self.settlementRequestID = settlementRequestID
+        self.correctionGroupID = correctionGroupID
+        self.componentID = componentID
+        self.obligationIDs = obligationIDs
     }
 }
 

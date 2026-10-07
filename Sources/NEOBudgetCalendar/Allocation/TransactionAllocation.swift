@@ -14,6 +14,9 @@ public struct TransactionAllocation: Codable, Hashable, Sendable {
     /// simply the transaction's remainder (see `TransactionAllocationSet`).
     public let activityID: ActivityID?
     public var amount: AmountEntry
+    /// What this portion was spent on. A separate axis from `amount`: an exact amount can have an unknown
+    /// category, and an unknown amount can have a classified one.
+    public var category: CategoryAssignment
     /// Who decided that this portion belongs there.
     public let provenance: AssignmentProvenance
     public let createdAtUnixMilliseconds: Int64
@@ -23,6 +26,7 @@ public struct TransactionAllocation: Codable, Hashable, Sendable {
         transactionID: LedgerEntryID,
         activityID: ActivityID?,
         amount: AmountEntry,
+        category: CategoryAssignment = .initial,
         provenance: AssignmentProvenance,
         createdAtUnixMilliseconds: Int64
     ) {
@@ -30,6 +34,7 @@ public struct TransactionAllocation: Codable, Hashable, Sendable {
         self.transactionID = transactionID
         self.activityID = activityID
         self.amount = amount
+        self.category = category
         self.provenance = provenance
         self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
     }

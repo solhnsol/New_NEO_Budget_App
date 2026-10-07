@@ -29,6 +29,21 @@ public struct ProposedInference: Hashable, Sendable {
     }
 }
 
+/// The part of a transfer that the obligations do not explain. It is proposed as **unresolved**: whether it
+/// was a gift, a waiver, a rounding or something else is never decided here.
+public struct ProposedResidual: Hashable, Sendable {
+    public let direction: ResidualDirection
+    public let minorUnits: Int64
+    /// For a shortfall, the obligation left short.
+    public let obligationID: ObligationID?
+
+    public init(direction: ResidualDirection, minorUnits: Int64, obligationID: ObligationID? = nil) {
+        self.direction = direction
+        self.minorUnits = minorUnits
+        self.obligationID = obligationID
+    }
+}
+
 /// A complete, uniquely explained way to apply one transfer. It becomes a `Settlement` only when accepted.
 public struct SettlementProposal: Hashable, Sendable {
     public let transfer: ActualTransfer
@@ -36,8 +51,26 @@ public struct SettlementProposal: Hashable, Sendable {
     /// Unknown amounts that this explanation forces. Applying the proposal records them as `inferred`.
     public let inferences: [ProposedInference]
     public let requestID: SettlementRequestID?
-    /// True when the transfer settles only part of an obligation (supported only with request evidence).
+    /// True when the transfer settles only part of an obligation.
     public let isPartial: Bool
+    /// What is left unexplained once the obligations are applied. Empty for an exact explanation.
+    public let residuals: [ProposedResidual]
+
+    public init(
+        transfer: ActualTransfer,
+        applications: [ProposedApplication],
+        inferences: [ProposedInference],
+        requestID: SettlementRequestID?,
+        isPartial: Bool,
+        residuals: [ProposedResidual] = []
+    ) {
+        self.transfer = transfer
+        self.applications = applications
+        self.inferences = inferences
+        self.requestID = requestID
+        self.isPartial = isPartial
+        self.residuals = residuals
+    }
 
     /// Turns the proposal into a `Settlement`. Forced amounts become `inferred` (never `exact`) with evidence
     /// pointing at the settlement that justifies them.
@@ -61,11 +94,29 @@ public struct SettlementProposal: Hashable, Sendable {
             )
             promotions.append(AppliedPromotion(obligationID: obligation.id, previous: obligation.amount, applied: applied))
         }
+        // Residuals always start unresolved, with deterministic IDs derived from the settlement.
+        let unresolved = Assigned(
+            ResidualClassification.unresolved,
+            provenance: .automated(origin: "settlement-matcher", confidence: 1.0, at: createdAtUnixMilliseconds)
+        )
+        let recorded = try residuals.map { proposed -> SettlementResidual in
+            let suffix = proposed.obligationID.map { "-" + $0.rawValue } ?? ""
+            return try SettlementResidual(
+                id: ResidualID(rawValue: id.rawValue + "-" + proposed.direction.rawValue + suffix),
+                settlementID: id,
+                obligationID: proposed.obligationID,
+                amount: try Money(minorUnits: proposed.minorUnits, currency: transfer.amount.currency),
+                direction: proposed.direction,
+                classification: unresolved,
+                createdAtUnixMilliseconds: createdAtUnixMilliseconds
+            )
+        }
         return try Settlement(
             id: id,
             transfer: transfer,
             allocations: applications.map { try SettlementAllocation(obligationID: $0.obligationID, appliedMinorUnits: $0.appliedMinorUnits) },
             promotions: promotions,
+            residuals: recorded,
             requestID: requestID,
             provenance: provenance,
             createdAtUnixMilliseconds: createdAtUnixMilliseconds
@@ -118,6 +169,9 @@ public enum NoMatchReason: Hashable, Sendable {
     case noOpenObligations
     case noCombinationExplainsTransfer
     case transferAlreadySettled
+    /// The raw transaction was folded into a user-made correction group. Match the group's effective
+    /// transfer instead (`TransactionCorrectionGroup.effectiveTransfer`).
+    case partOfCorrectionGroup(CorrectionGroupID)
 }
 
 public enum SettlementMatchResult: Equatable, Sendable {
@@ -127,6 +181,9 @@ public enum SettlementMatchResult: Equatable, Sendable {
     case netMatch(SettlementProposal)
     /// Exactly one unknown amount is forced by the transfer and promoted to `inferred`.
     case inferredUniqueSolution(SettlementProposal)
+    /// The obligations are explained but the transfer is not: the difference is kept as an unresolved
+    /// residual (a surplus received, or a shortfall left on one obligation). It is not a failure.
+    case matchWithResidual(SettlementProposal)
     case ambiguous(AmbiguityReport)
     case insufficientEvidence(InsufficientEvidenceReason)
     case noMatch(NoMatchReason)
@@ -163,8 +220,14 @@ public enum SettlementMatcher {
         in life: LifeState,
         requestID: SettlementRequestID? = nil
     ) -> SettlementMatchResult {
-        if life.settlements.values.contains(where: { $0.transfer.transactionID == transfer.transactionID }) {
+        if life.settlements.values.contains(where: { !Set($0.transfer.coveredTransactionIDs).isDisjoint(with: transfer.coveredTransactionIDs) }) {
             return .noMatch(.transferAlreadySettled)
+        }
+        // The user's correction decides what a raw transaction means; match the effective transfer instead.
+        if transfer.correctionGroupID == nil {
+            for covered in transfer.coveredTransactionIDs {
+                if let group = life.correctionGroup(containing: covered) { return .noMatch(.partOfCorrectionGroup(group.id)) }
+            }
         }
         var request: SettlementRequest?
         if let requestID, let found = life.settlementRequests[requestID],
@@ -175,7 +238,7 @@ public enum SettlementMatcher {
         var known: [Candidate] = []
         var unknown: [Candidate] = []
         for obligation in life.settleableObligations(with: transfer.counterpartyID) where obligation.currency == transfer.amount.currency {
-            let applied = life.appliedMinorUnits(for: obligation.id)
+            let applied = life.closedMinorUnits(for: obligation.id)
             let sign = obligation.direction.sign
             if let value = obligation.amount.knowledge.knownValue {
                 let remaining = value - applied
@@ -226,7 +289,7 @@ public enum SettlementMatcher {
 
         switch chosen.count {
         case 0:
-            return noExplanation(transfer: transfer, known: known, request: request)
+            return noExplanation(transfer: transfer, known: known, unknown: unknown, request: request)
         case 1:
             return resolve(chosen[0], transfer: transfer, request: request, narrowed: narrowed)
         default:
@@ -319,23 +382,72 @@ public enum SettlementMatcher {
         return explanation.known.count == 1 ? .exactMatch(proposal) : .netMatch(proposal)
     }
 
-    private static func noExplanation(transfer: ActualTransfer, known: [Candidate], request: SettlementRequest?) -> SettlementMatchResult {
+    private static func noExplanation(
+        transfer: ActualTransfer,
+        known: [Candidate],
+        unknown: [Candidate],
+        request: SettlementRequest?
+    ) -> SettlementMatchResult {
         let amount = transfer.amount.minorUnits
         let sign = transfer.direction.sign
         let sameDirection = known.filter { $0.sign == sign }
 
-        // A request that names this exact amount and one obligation is evidence for a partial settlement.
+        // A request that names this exact amount and one obligation is evidence for an intended partial
+        // settlement: nothing is left unexplained.
         if let request, let requested = request.requestedAmount, requested == transfer.amount,
            let target = sameDirection.first(where: { request.obligationIDs.contains($0.id) && ($0.remaining ?? 0) > amount }),
            request.obligationIDs.filter({ id in known.contains { $0.id == id } }).count == 1 {
-            let proposal = SettlementProposal(
+            return .exactMatch(SettlementProposal(
                 transfer: transfer,
                 applications: [ProposedApplication(obligationID: target.id, appliedMinorUnits: amount)],
                 inferences: [], requestID: request.id, isPartial: true
-            )
-            return .exactMatch(proposal)
+            ))
         }
-        let larger = sameDirection.filter { ($0.remaining ?? 0) > amount }.map(\.id).sorted()
+
+        // No explanation fits exactly. Rather than call that a failure, name the obligations the transfer is
+        // *about* (what the request lists, otherwise everything open with this person) and keep the
+        // difference as an unresolved residual. This is only done when the subject is unambiguous.
+        let subject: [Candidate]
+        if let request {
+            let named = Set(request.obligationIDs)
+            guard unknown.allSatisfy({ !named.contains($0.id) }) else { return insufficient(known: known, sign: sign, amount: amount) }
+            subject = known.filter { named.contains($0.id) }
+        } else {
+            guard unknown.isEmpty else { return insufficient(known: known, sign: sign, amount: amount) }
+            subject = known
+        }
+        guard !subject.isEmpty else { return insufficient(known: known, sign: sign, amount: amount) }
+
+        let net = subject.reduce(Int64(0)) { $0 + $1.sign * ($1.remaining ?? 0) }
+        let target = transfer.signedMinorUnits
+        let subjectIDs = Set(subject.map(\.id))
+        let touchesRequest = request.map { !Set($0.obligationIDs).isDisjoint(with: subjectIDs) } ?? false
+        let requestID = touchesRequest ? request?.id : nil
+
+        // Surplus: the transfer is larger than what the subject needs, in the same direction.
+        if net != 0, net.signum() == target.signum(), abs(net) < abs(target) {
+            let applications = subject
+                .map { ProposedApplication(obligationID: $0.id, appliedMinorUnits: $0.remaining ?? 0) }
+                .sorted { $0.obligationID < $1.obligationID }
+            return .matchWithResidual(SettlementProposal(
+                transfer: transfer, applications: applications, inferences: [], requestID: requestID, isPartial: false,
+                residuals: [ProposedResidual(direction: .surplus, minorUnits: abs(target) - abs(net))]
+            ))
+        }
+        // Shortfall: only one obligation can be the one left short, so only then is it unambiguous.
+        if subject.count == 1, let only = subject.first, only.sign == sign, let remaining = only.remaining, remaining > amount {
+            return .matchWithResidual(SettlementProposal(
+                transfer: transfer,
+                applications: [ProposedApplication(obligationID: only.id, appliedMinorUnits: amount)],
+                inferences: [], requestID: requestID, isPartial: true,
+                residuals: [ProposedResidual(direction: .shortfall, minorUnits: remaining - amount, obligationID: only.id)]
+            ))
+        }
+        return insufficient(known: known, sign: sign, amount: amount)
+    }
+
+    private static func insufficient(known: [Candidate], sign: Int64, amount: Int64) -> SettlementMatchResult {
+        let larger = known.filter { $0.sign == sign && ($0.remaining ?? 0) > amount }.map(\.id).sorted()
         if !larger.isEmpty { return .insufficientEvidence(.possiblePartialSettlement(larger)) }
         return .noMatch(.noCombinationExplainsTransfer)
     }

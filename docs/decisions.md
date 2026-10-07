@@ -115,3 +115,19 @@ in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 �
 - 기존 provenance 보호와 통합: 자동은 사용자 결정(링크·분할·참여자·금액·정산·group)을 덮어쓰거나 지우지 못하고, 낮은 신뢰도는 저장하지 않으며, 영구 실패는 typed 결과다.
 
 보류(Mac/서버/외부 API 필요): Contacts 연동과 attendee→Person 해석, 메시지 전송·수신, 실제 송금/은행 API, OnAll 계정·친구 서버와 공유 identity, 지오코딩, LLM 분류. 보류(무관): 다중 통화 정산, 정산 송금의 예산 처리(소비/이체/수입 분류), command 멱등성, 의도 로그 복구, durable 저장소.
+
+## D011 — 정정·잔여·정책·공유 지출·소비 성격·카테고리 상태 (Windows 범위)
+
+배경: D010의 정산 모델은 "정산액 = 송금액"에 가깝게 맞는 경우만 다뤘다. 실제로는 잘못 보낸 송금을 일부 돌려받고, 계산과 다르게 송금하며, 사람마다 반올림하고, 한 활동 안에서도 지출 조각마다 부담자가 다르고, 예산 관점에서 소비의 성격이 카테고리와 다르다.
+
+원칙(아키텍처 원칙으로 명시): 사용자가 실수를 바로잡으면 OnAll은 원본 거래를 지우지 않고 정정된 경제적 의미를 사용한다. 정산 금액과 실제 송금액의 차이는 별도의 residual로 보존하며 의미가 확인되기 전까지 소비/선물/면제로 해석하지 않는다. Category와 Budget Nature는 별도 축이다. 기타는 taxonomy의 한계이고 모름은 정보의 한계다.
+
+결정 요약(상세·테스트 대응은 [calendar-domain.md](calendar-domain.md) §9–§12):
+- **정정**: `TransactionCorrectionGroup`이 raw 거래를 사실 그대로 담고 effective 값은 순합에서 **유도**한다. 사용자 provenance만 생성·삭제하고, 한 거래는 한 그룹, 정산에 쓰인 그룹은 못 지우며, 매처는 raw 대신 effective transfer를 정산한다. 원장은 변경하지 않는다. 정정과 residual은 다르다(자동으로 residual을 정정으로 보지 않는다).
+- **Residual**: 정확한 설명이 없을 때 `matchWithResidual`로 초과(surplus)/부족(shortfall)을 **unresolved**로 제안한다. surplus는 net 불변식에 명시되고, shortfall은 부족한 obligation이 하나로 특정될 때만 제안한다. 분류는 사용자만 하며(`gift`/`waived`/`roundingAdjustment`/…), `waived`/`roundingAdjustment`만 obligation을 닫는다. residual은 지출 분석에 넣지 않는다. 이전의 "더 적게 들어오면 `insufficientEvidence`" 동작은 부분 정산 + unresolved shortfall로 바뀌었다(부족을 면제로 단정하지는 않는다는 원칙은 유지).
+- **정산 정책**: `RoundingRule`(exact/floor/ceil/nearest, unit)과 `SplitRule`(equal/weights/fixedAmounts). 우선순위 global → person(반올림만) → activity → component, 필드별 상속, 설정은 사용자만. obligation은 `ShareBreakdown`으로 raw share를 보존한다(요청 − raw = 조정). 반올림 차이는 지불자가 흡수한다.
+- **공유 지출**: `ExpenseComponent`가 Activity 기본 설정을 상속하고 participants/excluded/fixed로 override한다. 나와 관련된 obligation만, 금액이 settled일 때만 만든다(추측 금지, inferred 총액은 inferred 몫). obligation이 `componentID`로 출처를 가리킨다.
+- **SpendingNature**: living/discretionary/irregular. Category와 별개 축이며 `allocation → transaction → activity → tag → activityType → category` 순으로 가장 구체적인 진술이 이긴다. 진술이 없으면 `unspecified`(living으로 가정 안 함). 사용자 진술은 자동이 덮어쓰지 못한다.
+- **CategoryAssignment**: `classified / other / unknown / unclassified` 4상태. 기타(taxonomy 한계)와 모름(정보 한계)과 미분류(처리 대기)를 합치지 않는다. 분류기는 새 evidence 없이 unknown을 classified로 강제하지 않는다. 기존 `CategoryClassification`은 이 타입으로 대체했고 `unclassified(.insufficientInformation)`은 `unknown`으로 옮겼다. 금액 불확실성과 category 불확실성은 독립 축이다.
+
+보류(Mac/서버/외부 API 필요 또는 범위 밖): UI에서의 residual·정정·정책 편집 UX, 예산 엔진, 카테고리·유형별 성격 기본값 데이터, 정산 입금·선물의 원장 분류, 일괄 undo, durable 저장소와 레거시 데이터 마이그레이션, Contacts·메시지·은행·서버.

@@ -21,7 +21,7 @@ import NEOBudgetInMemoryStorage
 @Test func lowConfidenceCategoryStaysUnclassifiedInsteadOfGuessing() {
     let policy = AssignmentPolicy()
     let food = CanonicalCategoryID(rawValue: "food")
-    #expect(CategoryClassification.initial == .unclassified(.notYetEvaluated))
+    #expect(CategoryAssignment.initial == .unclassified(.notYetEvaluated))
     #expect(policy.classification(proposing: food, provenance: autoProvenance(0.4)) == .unclassified(.ambiguous))
     #expect(policy.classification(proposing: food, provenance: autoProvenance(nil)) == .unclassified(.ambiguous))
     let accepted = policy.classification(proposing: food, provenance: autoProvenance(0.95))
