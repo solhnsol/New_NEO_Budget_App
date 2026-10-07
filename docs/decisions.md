@@ -83,3 +83,18 @@ in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 �
 한국어 baseline parser는 승인/사용/결제, 입금, 이체/송금, 취소/환불, 카드대금/결제대금과 원 단위 금액, 거래번호/승인번호처럼 문구에 명시된 사실만 읽는다. 강한 ID 부재와 merchant/payee 부재는 그 자체로 review 사유가 아니다. 거래 시각이 없으면 notification/capture timestamp를 provenance와 함께 fallback할 수 있다. 승인번호는 scoped evidence이지 전역 strong ID가 아니다. 유사 후보가 충돌할 때만 dedup 계층이 `ambiguousWithoutStrongIdentity`를 올린다.
 
 운영 DB는 도구가 읽기 전용으로 확인하고 Git에는 완전 가상 샘플만 둔다. 현재 26개 합성 형식은 결정론/경계 smoke에 사용하며 실제 거래 관계나 잔액을 보존하지 않는다. 특정 은행/카드/페이 provider profile은 같은 protocol 아래 후속 구현하고 baseline 키워드를 provider 전체 형식 검증으로 과장하지 않는다.
+
+## D009 — Calendar / Activity / Semantic 도메인: 사용자 제품 방향에 따른 구현 (Windows 범위)
+
+선택: 제품 첫 가치는 "좋은 캘린더 UX + 좋은 가계부 UX + 하나의 생활 타임라인"이며 자동화는 점진적으로 강화한다. 의미 모델을 **Category(무엇에, canonical) / Activity(어떤 생활 활동에, OnAll 소유) / Tag(사용자의 세부 맥락) / Area(생활권)**로 나누고, **Calendar는 ActivityType과 별개의 축**으로 둔다. 반복적·공통적인 것은 자동화하고 개인 의미가 강할수록 사용자 결정을 우선하며, 잘못된 자동 분류보다 미분류를 택한다.
+
+결정 요약(상세·근거·테스트 대응은 [calendar-domain.md](calendar-domain.md)):
+- 새 순수 Swift target `NEOBudgetCalendar`(+ `NEOBudgetInMemoryCalendar`). 원장에는 쓰지 않고 `LedgerEntryID`/`Money`만 읽는다. EventKit·SwiftUI 코드는 없다.
+- 외부 캘린더가 이벤트 필드의 원본이고, `Activity`는 별도 OnAll entity다(안정 `ActivityID`, 이벤트와의 association은 선택적, 지연 생성, 이벤트 삭제 시 `eventMissing`으로 보존, 이벤트 없는 `standalone` 가능).
+- `TransactionActivityLink`는 시간 포함 관계가 아니라 의미 관계다(영화표·KTX·참가비 사전 구매 허용). `Activity 없음`은 정상(활동 외 소비). relation 종류(during/forActivity)는 필요가 생길 때까지 만들지 않는다.
+- 모든 자동 배정은 provenance(출처·신뢰도)를 가지며 **자동은 사용자 결정을 덮어쓰거나 지울 수 없고**, 신뢰도 부족(기본 0.85 미만, 값 없음)은 저장하지 않는다. Tag는 사용자의 기존 태그만 선택 가능하고 자동 생성 경로가 없다. Category는 canonical ID만 허용하고 `unclassified`가 명시적 상태다.
+- `CalendarEventID`는 provider가 발급한 **불투명 토큰**이며 반복·식별자 안정성 가정을 코드에 두지 않는다. 반복 scope는 의도(`RecurrenceScope`)만 표현하고 provider가 지원 범위를 선언한다.
+- UI/adapter 경계는 `CalendarCommand`/`CalendarCommandService`/`DayTimeline` read model이다. 쓰기 순서는 캘린더 먼저, 로컬 나중, 실패는 typed 결과(`partiallyApplied` 포함).
+- drag/resize는 순수 정책(15분 snap, 줌 5분, 최소 15분, 겹침·자정 넘김 허용, 선택일 clip)이며 gesture UI는 만들지 않았다.
+
+보류(Mac/Xcode 필요): EventKit adapter, SwiftUI, 권한, EKEvent identifier 안정성, 반복 이벤트 의미, 종일 종료일 관례, 변경 통지. 보류(Mac 무관): command 멱등성, 의도 로그 복구, undo, 이벤트 ID 변경 시 재바인딩, 비선형 시간 축, merchant DB/LLM, durable 저장소.

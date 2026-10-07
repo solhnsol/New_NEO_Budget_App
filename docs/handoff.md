@@ -14,7 +14,7 @@
 
 ## 코드 상태
 
-Swift Package, 중립 RawNotification, facts-only Draft parser, account resolver/assembler, dedup validator, 원본 저장 protocol/별도 in-memory adapter와 첫 원장 모델이 있다. Parser는 repository/ledger를 의존하지 않고 Draft만 만든다. `CandidateProcessingRepository`가 dedup safety gate, candidate 저장과 ready ledger 승격을 원자 처리하고 non-ready 상태의 자동 승격을 막는다. Swift Testing 총 60개가 Windows에서 통과한다. 실제 iOS/Android 코드와 durable 저장소는 없다. `docs/core-plan.md`, `docs/notification-parser.md`, `docs/decisions.md`, `docs/parser-contract.md`, `docs/redteam-closure.md`를 먼저 읽는다.
+Swift Package, 중립 RawNotification, facts-only Draft parser, account resolver/assembler, dedup validator, 원본 저장 protocol/별도 in-memory adapter와 첫 원장 모델이 있다. Parser는 repository/ledger를 의존하지 않고 Draft만 만든다. `CandidateProcessingRepository`가 dedup safety gate, candidate 저장과 ready ledger 승격을 원자 처리하고 non-ready 상태의 자동 승격을 막는다. Swift Testing 총 213개(Core 60 + Calendar 153)가 Windows에서 통과한다. 별도 순수 Swift target `NEOBudgetCalendar`가 Calendar/Activity/Tag/Area 도메인, DayTimeline read model, drag/resize 정책, command 계약을 제공한다(`docs/calendar-domain.md`). 실제 iOS/Android 코드와 durable 저장소는 없다. `docs/core-plan.md`, `docs/notification-parser.md`, `docs/decisions.md`, `docs/parser-contract.md`, `docs/redteam-closure.md`, `docs/calendar-domain.md`를 먼저 읽는다.
 
 ## 다음 논의
 
@@ -28,7 +28,7 @@ Swift Package, 중립 RawNotification, facts-only Draft parser, account resolver
 
 기존 Linux JS 알림 테스트: 48개 중 46개 통과, SQLite 관련 2개 skipped. 새로운 Swift Core의 Windows 검증을 뜻하지 않는다.
 
-기존 플랫폼 경계 테스트를 포함해 ingestion/원장/red-team/원자 처리 총 60개는 Swift 6.4/Windows x86_64에서 통과했다. test-data Python 테스트 7개도 통과한다. Developer Mode 활성화 뒤 SwiftPM 심볼릭 링크 경고도 사라졌다. Android 실행은 별도 검증 필요.
+기존 플랫폼 경계 테스트를 포함해 ingestion/원장/red-team/원자 처리 총 213개(Core 60 + Calendar 153)는 Swift 6.4/Windows x86_64에서 통과했다. test-data Python 테스트 7개도 통과한다. Developer Mode 활성화 뒤 SwiftPM 심볼릭 링크 경고도 사라졌다. Android 실행은 별도 검증 필요.
 
 Linux 테스트 도구는 `.tooling/`에 격리돼 있으며 Git에서 제외된다. Windows로 가져갈 대상은 소스/테스트/문서이며 이 Linux 도구 폴더는 필요 없다.
 
