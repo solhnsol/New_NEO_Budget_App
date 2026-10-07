@@ -62,3 +62,16 @@ provider별 상세 fixture/profile, provider 간 같은 거래 evidence 결합, 
 ## 머니 플로우 red-team 검증 (D012)
 
 Linux x86_64 에이전트 환경에서는 `download.swift.org`가 막혀 Docker Hub의 공식 `swift:6.0-noble` 이미지 레이어에서 Swift 6.0.3 툴체인을 풀어 사용했다(저장소 밖). 이 환경의 결과: `swift build --build-tests`, `swift test` 452개 통과, test-data Python 테스트 7개 통과, `git diff --check` 깨끗함, Sources/Package에서 Apple 전용 API(`UIKit`/`SwiftUI`/`EventKit`/`CoreData` 등 import, `UserDefaults`, `EKEventStore`) 검색 결과 없음. Swift 6.0.3은 6.4보다 지역 변수 이름 가림(shadowing)에 엄격해 `SettlementMatcher`의 지역 변수 한 개를 개명했다(동작 변화 없음). Windows 재검증은 별도로 필요하다.
+
+## macOS / iOS (Xcode)
+
+2026-10-08 Mac(Xcode 27.0, Swift 6.4)에서 `swift build`/`swift test` 452개와 iOS 27 시뮬레이터 `xcodebuild test`(스킴 `NEOBudgetCore-Package`) 452개가 통과했다. `xcode-select`가 CommandLineTools를 가리키면 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`를 지정한다.
+
+EventKit 계약 테스트는 시뮬레이터에서만 돈다. `xctest` 실행기는 캘린더 권한을 받을 수 없어 사용 설명 키가 있는 앱 번들이 필요하다.
+
+```bash
+Platform/iOS/EventKitContractHost/run-contract.sh   # EventKit provider를 공용 계약에 통과시킴
+Platform/iOS/EventKitSpike/run-spike.sh             # EventKit 동작 관찰(탐색용)
+```
+
+결과는 `docs/eventkit-spike.md`.

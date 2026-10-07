@@ -13,6 +13,7 @@ iPhone 내부에서 원본 금융 알림과 거래 원장을 보관하고, 서�
 - [RPi 테스트 자료 생성 및 자동화](docs/test-data-pipeline.md)
 - [Red-team 위험 대응 현황](docs/redteam-closure.md)
 - [Calendar / Activity / Semantic 도메인](docs/calendar-domain.md)
+- [EventKit spike 결과와 provider 계약 변경](docs/eventkit-spike.md)
 
 구현 언어는 순수 Swift Package로 합의했다. 실제 현금 흐름과 소비 예산 귀속을 분리하는 첫 원장 규약까지 합의·구현했다. Windows Swift 6.4 x64에서 빌드와 테스트를 통과했다.
 

@@ -102,6 +102,18 @@ struct EventKitSpike {
         try store.save(reloaded, span: .thisEvent, commit: true)
         SpikeLog.line("lastModified changed on update: \(m1 != reloaded.lastModifiedDate) (\(fmt(m1)) -> \(fmt(reloaded.lastModifiedDate)))")
 
+        // #10b lastModifiedDate resolution: rapid consecutive saves
+        SpikeLog.line("== #10b lastModified resolution ==")
+        let rapid = EKEvent(eventStore: store)
+        rapid.calendar = main; rapid.title = "rapid"
+        rapid.startDate = date(2026, 11, 12, 9); rapid.endDate = date(2026, 11, 12, 10)
+        try store.save(rapid, span: .thisEvent, commit: true)
+        for i in 1...4 {
+            rapid.title = "rapid-\(i)"
+            try store.save(rapid, span: .thisEvent, commit: true)
+            SpikeLog.line("  save \(i): lastModified=\(rapid.lastModifiedDate.map { String($0.timeIntervalSince1970) } ?? "nil")")
+        }
+
         // #6 all-day end convention
         SpikeLog.line("== #6 all-day ==")
         let allDay = EKEvent(eventStore: store)
