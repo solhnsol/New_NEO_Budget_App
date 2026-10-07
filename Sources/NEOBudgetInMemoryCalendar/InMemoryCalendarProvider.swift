@@ -1,26 +1,34 @@
 import NEOBudgetCalendar
 
 /// A scripted calendar system for tests. It can simulate what a real calendar does around the app: events
-/// edited or deleted elsewhere, calendars removed, access revoked, and saves that fail.
+/// edited or deleted elsewhere, calendars removed, access revoked, saves that fail, and recurring series.
 ///
-/// It models only the provider contract. It does not claim to behave like any real platform calendar, and
-/// recurring-event semantics are deliberately not simulated: `isRecurringInstance` is just a flag.
+/// It models only the provider contract. It does not claim to behave like any real platform calendar. A series
+/// is a plain list of occurrences that share a series token: `.thisOccurrence` edits one, `.allInSeries` shifts
+/// every member, and keys never change. There are no recurrence rules and no exceptions.
 public actor InMemoryCalendarProvider: CalendarProvider {
     public nonisolated let supportedRecurrenceScopes: Set<RecurrenceScope>
 
+    private let dayZone: DisplayTimeZone
     private var calendarsByID: [CalendarID: CalendarDescriptor] = [:]
     private var eventsByKey: [CalendarEventKey: CalendarEvent] = [:]
+    private var seriesByKey: [CalendarEventKey: Int] = [:]
     private var nextEventNumber = 1
+    private var nextSeriesNumber = 1
     private var nextRevision = 1
     private var accessAvailable = true
     private var queuedSaveFailures: [CalendarProviderFailure] = []
+    private var listeners: [Int: AsyncStream<Void>.Continuation] = [:]
+    private var nextListener = 0
 
     public init(
         calendars: [CalendarDescriptor] = [],
         events: [CalendarEvent] = [],
-        supportedRecurrenceScopes: Set<RecurrenceScope> = [.thisOccurrence]
+        supportedRecurrenceScopes: Set<RecurrenceScope> = [.thisOccurrence],
+        dayZone: DisplayTimeZone? = nil
     ) {
         self.supportedRecurrenceScopes = supportedRecurrenceScopes
+        self.dayZone = dayZone ?? Self.utc
         for calendar in calendars { calendarsByID[calendar.id] = calendar }
         for event in events { eventsByKey[event.key] = event }
     }
@@ -36,13 +44,60 @@ public actor InMemoryCalendarProvider: CalendarProvider {
     public func editExternally(_ key: CalendarEventKey, update: CalendarEventUpdate) {
         guard let event = eventsByKey[key] else { return }
         eventsByKey[key] = withNewRevision(update.applied(to: event))
+        signalChange()
     }
 
-    public func removeExternally(_ key: CalendarEventKey) { eventsByKey[key] = nil }
+    public func removeExternally(_ key: CalendarEventKey) {
+        eventsByKey[key] = nil
+        seriesByKey[key] = nil
+        signalChange()
+    }
 
     public func removeCalendarExternally(_ id: CalendarID) {
         calendarsByID[id] = nil
-        for key in eventsByKey.keys where key.calendarID == id { eventsByKey[key] = nil }
+        for key in eventsByKey.keys where key.calendarID == id {
+            eventsByKey[key] = nil
+            seriesByKey[key] = nil
+        }
+        signalChange()
+    }
+
+    public func addCalendar(_ calendar: CalendarDescriptor) {
+        calendarsByID[calendar.id] = calendar
+        signalChange()
+    }
+
+    /// Adds a series of `count` occurrences, `intervalDays` apart, as a recurring calendar would expand it.
+    @discardableResult
+    public func seedSeries(
+        calendarID: CalendarID,
+        title: String,
+        firstStartUnixMilliseconds: Int64,
+        durationMilliseconds: Int64,
+        count: Int,
+        intervalDays: Int = 7
+    ) -> [CalendarEvent] {
+        let series = nextSeriesNumber
+        nextSeriesNumber += 1
+        var created: [CalendarEvent] = []
+        for index in 0..<count {
+            let start = firstStartUnixMilliseconds + Int64(index * intervalDays) * 86_400_000
+            guard let range = try? TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: start + durationMilliseconds) else { continue }
+            let event = CalendarEvent(
+                id: CalendarEventID(rawValue: "mem-s\(series)-\(index)"),
+                calendarID: calendarID,
+                title: title,
+                time: .timed(range),
+                isRecurringInstance: true,
+                revisionToken: "r\(nextRevision)"
+            )
+            nextRevision += 1
+            eventsByKey[event.key] = event
+            seriesByKey[event.key] = series
+            created.append(event)
+        }
+        signalChange()
+        return created
     }
 
     public func storedEvent(_ key: CalendarEventKey) -> CalendarEvent? { eventsByKey[key] }
@@ -59,7 +114,7 @@ public actor InMemoryCalendarProvider: CalendarProvider {
         return eventsByKey.values
             .filter { event in
                 if let calendarIDs, !calendarIDs.contains(event.calendarID) { return false }
-                return Self.overlaps(event, from: from, to: to)
+                return event.time.overlaps(from: from, to: to, in: dayZone)
             }
             .sorted { $0.key < $1.key }
     }
@@ -67,6 +122,17 @@ public actor InMemoryCalendarProvider: CalendarProvider {
     public func event(_ key: CalendarEventKey) async throws -> CalendarEvent? {
         guard accessAvailable else { throw CalendarProviderFailure.accessUnavailable }
         return eventsByKey[key]
+    }
+
+    public func changes() async -> AsyncStream<Void> {
+        let id = nextListener
+        nextListener += 1
+        let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        listeners[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { await self?.removeListener(id) }
+        }
+        return stream
     }
 
     public func createEvent(_ draft: CalendarEventDraft) async -> CalendarProviderResult<CalendarEvent> {
@@ -84,6 +150,7 @@ public actor InMemoryCalendarProvider: CalendarProvider {
         nextEventNumber += 1
         nextRevision += 1
         eventsByKey[event.key] = event
+        signalChange()
         return .success(event)
     }
 
@@ -94,13 +161,52 @@ public actor InMemoryCalendarProvider: CalendarProvider {
         expectedRevision: String?
     ) async -> CalendarProviderResult<CalendarEvent> {
         if let failure = writeGate(calendarID: key.calendarID) { return .failure(failure) }
-        guard supportedRecurrenceScopes.contains(scope) else { return .failure(.unsupported("scope \(scope.rawValue)")) }
         guard let event = eventsByKey[key] else { return .failure(.eventMissing) }
         guard event.isEditable else { return .failure(.unsupported("read-only event")) }
+        guard supportedRecurrenceScopes.contains(scope) else { return .failure(.unsupported("scope \(scope.rawValue)")) }
         if let expectedRevision, expectedRevision != event.revisionToken { return .conflict(current: event) }
-        let updated = withNewRevision(update.applied(to: event))
-        eventsByKey[key] = updated
-        return .success(updated)
+
+        guard scope == .allInSeries, let series = seriesByKey[key] else {
+            let updated = withNewRevision(update.applied(to: event))
+            eventsByKey[key] = updated
+            signalChange()
+            return .success(updated)
+        }
+        // allInSeries on a recurring occurrence.
+        var shiftMilliseconds: Int64 = 0
+        var newDuration: Int64?
+        if let time = update.time {
+            guard case let .timed(old) = event.time, case let .timed(new) = time else {
+                return .failure(.unsupported("series time change must stay timed"))
+            }
+            guard dayZone.localDate(of: old.startUnixMilliseconds) == dayZone.localDate(of: new.startUnixMilliseconds) else {
+                return .failure(.unsupported("a date change applies to one occurrence"))
+            }
+            shiftMilliseconds = new.startUnixMilliseconds - old.startUnixMilliseconds
+            newDuration = new.durationMilliseconds
+        }
+        let fieldsOnly = CalendarEventUpdate(
+            title: update.title,
+            timeZoneIdentifier: update.timeZoneIdentifier,
+            location: update.location,
+            notes: update.notes
+        )
+        var result = event
+        for (memberKey, member) in eventsByKey where seriesByKey[memberKey] == series {
+            var changed = fieldsOnly.applied(to: member)
+            if case let .timed(range) = member.time, let newDuration,
+               let shifted = try? TimedRange(
+                startUnixMilliseconds: range.startUnixMilliseconds + shiftMilliseconds,
+                endUnixMilliseconds: range.startUnixMilliseconds + shiftMilliseconds + newDuration
+               ) {
+                changed = CalendarEventUpdate(time: .timed(shifted)).applied(to: changed)
+            }
+            let stored = withNewRevision(changed)
+            eventsByKey[memberKey] = stored
+            if memberKey == key { result = stored }
+        }
+        signalChange()
+        return .success(result)
     }
 
     public func deleteEvent(
@@ -109,16 +215,32 @@ public actor InMemoryCalendarProvider: CalendarProvider {
         expectedRevision: String?
     ) async -> CalendarProviderResult<Bool> {
         if let failure = writeGate(calendarID: key.calendarID) { return .failure(failure) }
-        guard supportedRecurrenceScopes.contains(scope) else { return .failure(.unsupported("scope \(scope.rawValue)")) }
         guard let event = eventsByKey[key] else { return .failure(.eventMissing) }
         guard event.isEditable else { return .failure(.unsupported("read-only event")) }
+        guard supportedRecurrenceScopes.contains(scope) else { return .failure(.unsupported("scope \(scope.rawValue)")) }
         if let expectedRevision, expectedRevision != event.revisionToken { return .conflict(current: event) }
-        eventsByKey[key] = nil
+        if scope == .allInSeries, let series = seriesByKey[key] {
+            for memberKey in eventsByKey.keys where seriesByKey[memberKey] == series {
+                eventsByKey[memberKey] = nil
+                seriesByKey[memberKey] = nil
+            }
+        } else {
+            eventsByKey[key] = nil
+            seriesByKey[key] = nil
+        }
+        signalChange()
         return .success(true)
     }
 
     // MARK: Internals
 
+    private func signalChange() {
+        for continuation in listeners.values { continuation.yield() }
+    }
+
+    private func removeListener(_ id: Int) { listeners[id] = nil }
+
+    /// Check order is part of the provider contract: access, queued failure, calendar exists, calendar writable.
     private func writeGate(calendarID: CalendarID) -> CalendarProviderFailure? {
         guard accessAvailable else { return .accessUnavailable }
         if !queuedSaveFailures.isEmpty { return queuedSaveFailures.removeFirst() }
@@ -142,18 +264,11 @@ public actor InMemoryCalendarProvider: CalendarProvider {
             revisionToken: "r\(nextRevision)"
         )
     }
+}
 
-    /// Overlap with an instant window. All-day events are widened by a day on each side because the fake has
-    /// no time zone; callers that need exact all-day handling resolve it themselves.
-    private static func overlaps(_ event: CalendarEvent, from: Int64, to: Int64) -> Bool {
-        switch event.time {
-        case let .timed(range):
-            return range.overlaps(from: from, to: to)
-        case let .allDay(range):
-            let day: Int64 = 86_400_000
-            let start = Int64(range.firstDay.daysSinceUnixEpoch) * day - day
-            let end = Int64(range.lastDay.daysSinceUnixEpoch + 1) * day + day
-            return start < to && end > from
-        }
+extension InMemoryCalendarProvider {
+    /// "UTC" is valid on every platform, so the fallback is unreachable.
+    fileprivate static var utc: DisplayTimeZone {
+        (try? DisplayTimeZone(identifier: "UTC")) ?? (try! DisplayTimeZone(identifier: "GMT"))
     }
 }
