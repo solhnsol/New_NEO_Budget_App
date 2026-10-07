@@ -53,3 +53,45 @@ public struct CanonicalCategoryID: RawRepresentable, Codable, Hashable, Comparab
     public init(rawValue: String) { self.rawValue = rawValue }
     public static func < (lhs: CanonicalCategoryID, rhs: CanonicalCategoryID) -> Bool { lhs.rawValue < rhs.rawValue }
 }
+
+/// Identifies a person in the user's own world (a participant or settlement counterparty). Independent of any OnAll account.
+public struct PersonID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: PersonID, rhs: PersonID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies one portion of a transaction assigned to an Activity (or explicitly to no Activity).
+public struct AllocationID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: AllocationID, rhs: AllocationID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies a set of amounts known only through their sum.
+public struct AmountGroupID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: AmountGroupID, rhs: AmountGroupID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies a payable or receivable that may exist without any transaction.
+public struct ObligationID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: ObligationID, rhs: ObligationID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies an actual transfer applied against obligations.
+public struct SettlementID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: SettlementID, rhs: SettlementID) -> Bool { lhs.rawValue < rhs.rawValue }
+}
+
+/// Identifies a settlement request OnAll created for the user.
+public struct SettlementRequestID: RawRepresentable, Codable, Hashable, Comparable, Sendable {
+    public let rawValue: String
+    public init(rawValue: String) { self.rawValue = rawValue }
+    public static func < (lhs: SettlementRequestID, rhs: SettlementRequestID) -> Bool { lhs.rawValue < rhs.rawValue }
+}

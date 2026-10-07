@@ -305,7 +305,7 @@ private func appliedEvent(_ outcome: CalendarCommandOutcome) -> CalendarEvent? {
     }
     let life = await harness.life()
     #expect(life.activities[activityID]?.isEventMissing == true)
-    #expect(life.link(for: txID("t1"))?.activityID == activityID)         // nothing silently lost
+    #expect(life.activityID(of: txID("t1")) == activityID)         // nothing silently lost
     #expect(await harness.provider.storedEvent(key("life", "m")) == nil)
 }
 
@@ -315,7 +315,7 @@ private func appliedEvent(_ outcome: CalendarCommandOutcome) -> CalendarEvent? {
     _ = await harness.service.perform(.linkTransaction(LinkTransactionInput(transactionID: txID("t1"), target: .event(key("life", "plain")), provenance: userProvenance())))
     _ = await harness.service.perform(.deleteEvent(DeleteEventInput(target: target("plain"), linkDisposition: .removeLinks)))
     var life = await harness.life()
-    #expect(life.link(for: txID("t1")) == nil)
+    #expect(life.activityID(of: txID("t1")) == nil)
     #expect(life.activities.isEmpty)                                       // an Activity with no meaning left is dropped
 
     _ = await harness.service.perform(.assignActivityType(AssignActivityTypeInput(target: .event(key("life", "typed")), typeID: .social, provenance: userProvenance())))

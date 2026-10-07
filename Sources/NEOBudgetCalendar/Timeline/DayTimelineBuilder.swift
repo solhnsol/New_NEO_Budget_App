@@ -85,22 +85,30 @@ public enum DayTimelineBuilder {
             }
         }
 
-        func linkedItems(for activity: Activity?) -> [LinkedTransactionItem] {
+        func allocationItems(for activity: Activity?) -> [AllocationItem] {
             guard let activity else { return [] }
-            return input.life.links(forActivity: activity.id).compactMap { link in
-                guard let marker = transactionsByID[link.transactionID] else { return nil }
-                return LinkedTransactionItem(
+            return input.life.allocations(forActivity: activity.id).compactMap { allocation in
+                guard let marker = transactionsByID[allocation.transactionID] else { return nil }
+                let wholeTransaction = allocation.amount.knowledge.knownValue == marker.amount.minorUnits
+                return AllocationItem(
+                    allocationID: allocation.id,
                     transactionID: marker.id,
                     title: marker.title,
-                    amount: marker.amount,
+                    transactionAmount: marker.amount,
                     flow: marker.flow,
                     occurredAtUnixMilliseconds: marker.occurredAtUnixMilliseconds,
                     timePrecision: marker.timePrecision,
                     occursOnSelectedDay: marker.occurredAtUnixMilliseconds >= bounds.start && marker.occurredAtUnixMilliseconds < bounds.end,
-                    linkSource: link.provenance.source
+                    allocatedAmount: allocation.amount.knowledge,
+                    isPartOfTransaction: !wholeTransaction,
+                    source: allocation.provenance.source
                 )
             }
-            .sorted { ($0.occurredAtUnixMilliseconds, $0.transactionID.rawValue) < ($1.occurredAtUnixMilliseconds, $1.transactionID.rawValue) }
+            .sorted { ($0.occurredAtUnixMilliseconds, $0.allocationID) < ($1.occurredAtUnixMilliseconds, $1.allocationID) }
+        }
+
+        func aggregates(_ items: [AllocationItem], flow: TransactionFlow) -> [AmountAggregate] {
+            AmountAggregate.summarize(items.filter { $0.flow == flow }.map { ($0.transactionAmount.currency, $0.allocatedAmount) })
         }
 
         func badge(for activity: Activity?) -> ActivityBadge? {
@@ -109,7 +117,9 @@ public enum DayTimelineBuilder {
                 activityID: activity.id,
                 activityType: activity.activityType?.value,
                 areaID: activity.area?.value,
-                tagIDs: activity.tags.map(\.tagID).sorted()
+                tagIDs: activity.tags.map(\.tagID).sorted(),
+                participantIDs: activity.participants.map(\.personID).sorted(),
+                openObligationCount: input.life.obligations(forActivity: activity.id).filter { $0.isSettleable }.count
             )
         }
 
@@ -138,7 +148,7 @@ public enum DayTimelineBuilder {
         var blocks: [EventBlock] = []
         for (index, item) in prepared.enumerated() {
             let candidate = item.candidate
-            let linked = linkedItems(for: candidate.activity)
+            let items = allocationItems(for: candidate.activity)
             blocks.append(EventBlock(
                 id: blockID(for: candidate.key),
                 eventKey: candidate.key,
@@ -155,8 +165,9 @@ public enum DayTimelineBuilder {
                 continuesToNextDay: candidate.range.endUnixMilliseconds > bounds.end,
                 layout: layouts[index],
                 activity: badge(for: candidate.activity),
-                linked: linked,
-                linkedTotals: netTotals(linked.map { ($0.amount.currency, $0.flow == .spend ? $0.amount.minorUnits : -$0.amount.minorUnits) }),
+                allocations: items,
+                allocatedSpend: aggregates(items, flow: .spend),
+                allocatedRefunds: aggregates(items, flow: .refund),
                 isRecurringInstance: candidate.isRecurringInstance,
                 isEditable: candidate.isEditable,
                 state: candidate.state
@@ -167,7 +178,7 @@ public enum DayTimelineBuilder {
             (lhs.range.firstDay, rhs.range.lastDay, lhs.key) < (rhs.range.firstDay, lhs.range.lastDay, rhs.key)
         }
         let allDayItems: [AllDayItem] = allDay.map { candidate in
-            let linked = linkedItems(for: candidate.activity)
+            let items = allocationItems(for: candidate.activity)
             return AllDayItem(
                 id: blockID(for: candidate.key),
                 eventKey: candidate.key,
@@ -179,8 +190,9 @@ public enum DayTimelineBuilder {
                 isFirstDayOfEvent: candidate.range.firstDay == input.day,
                 isLastDayOfEvent: candidate.range.lastDay == input.day,
                 activity: badge(for: candidate.activity),
-                linked: linked,
-                linkedTotals: netTotals(linked.map { ($0.amount.currency, $0.flow == .spend ? $0.amount.minorUnits : -$0.amount.minorUnits) }),
+                allocations: items,
+                allocatedSpend: aggregates(items, flow: .spend),
+                allocatedRefunds: aggregates(items, flow: .refund),
                 isEditable: candidate.isEditable,
                 state: candidate.state
             )
@@ -193,27 +205,47 @@ public enum DayTimelineBuilder {
             .sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
 
         var markers: [TransactionMarkerItem] = []
-        var linkedAmounts: [(String, Int64)] = []
-        var unlinkedAmounts: [(String, Int64)] = []
+        var totalsByCurrency: [String: (linked: Int64, unlinked: Int64, uncertain: Int64)] = [:]
+        var unlinkedCount = 0
+        var partialCount = 0
         for transaction in dayTransactions {
-            let link = input.life.link(for: transaction.id)
-            if link == nil {
-                unlinkedAmounts.append((transaction.amount.currency, transaction.signedMinorUnits))
-            } else {
-                linkedAmounts.append((transaction.amount.currency, transaction.signedMinorUnits))
+            let sign: Int64 = transaction.flow == .spend ? 1 : -1
+            let total = transaction.amount.minorUnits
+            let set = input.life.allocationSet(for: transaction.id)
+            let allocations = set?.allocations ?? []
+            let toActivities = allocations.filter { $0.activityID != nil }
+
+            if toActivities.isEmpty {
+                unlinkedCount += 1
+            } else if allocations.count > 1 || !(set?.isFullyAllocated ?? false) {
+                partialCount += 1
             }
-            let state: MarkerLinkState
-            if let link {
-                if visibleActivityIDs.contains(link.activityID) { continue }
-                let activity = input.life.activities[link.activityID]
-                state = .linkedElsewhere(
-                    activityID: link.activityID,
-                    activityTitle: activity?.displayTitle ?? "",
-                    eventMissing: activity?.isEventMissing ?? false
-                )
+
+            var linked: Int64 = 0, unlinked: Int64 = 0, uncertain: Int64 = 0
+            if allocations.isEmpty {
+                unlinked = total
             } else {
-                state = .unlinked
+                let linkedKnown = toActivities.compactMap { $0.amount.knowledge.knownValue }.reduce(0, +)
+                let nonActivityKnown = allocations.filter { $0.activityID == nil }.compactMap { $0.amount.knowledge.knownValue }.reduce(0, +)
+                linked = linkedKnown
+                if allocations.contains(where: { !$0.amount.knowledge.isKnown }) {
+                    unlinked = nonActivityKnown
+                    uncertain = total - linkedKnown - nonActivityKnown
+                } else {
+                    unlinked = total - linkedKnown
+                }
             }
+            var entry = totalsByCurrency[transaction.amount.currency] ?? (0, 0, 0)
+            entry.linked += sign * linked
+            entry.unlinked += sign * unlinked
+            entry.uncertain += sign * uncertain
+            totalsByCurrency[transaction.amount.currency] = entry
+
+            // A transaction wholly accounted for inside the drawn activities needs no stray marker.
+            let insideBlocks = !allocations.isEmpty && (set?.isFullyAllocated ?? false) &&
+                allocations.allSatisfy { $0.activityID.map(visibleActivityIDs.contains) ?? false }
+            if insideBlocks { continue }
+
             markers.append(TransactionMarkerItem(
                 transactionID: transaction.id,
                 title: transaction.title,
@@ -222,17 +254,29 @@ public enum DayTimelineBuilder {
                 occurredAtUnixMilliseconds: transaction.occurredAtUnixMilliseconds,
                 positionMinute: Int((transaction.occurredAtUnixMilliseconds - bounds.start) / 60_000),
                 timePrecision: transaction.timePrecision,
-                linkState: state
+                allocations: allocations.map { allocation in
+                    let activity = allocation.activityID.flatMap { input.life.activities[$0] }
+                    return MarkerAllocation(
+                        allocationID: allocation.id,
+                        activityID: allocation.activityID,
+                        activityTitle: activity?.displayTitle,
+                        amount: allocation.amount.knowledge,
+                        eventMissing: activity?.isEventMissing ?? false,
+                        isShownToday: allocation.activityID.map(visibleActivityIDs.contains) ?? false
+                    )
+                },
+                remainder: set?.remainder ?? AmountBounds(lower: total, upper: total),
+                isFullyAllocated: set?.isFullyAllocated ?? false
             ))
         }
 
-        let unlinkedCount = dayTransactions.filter { input.life.link(for: $0.id) == nil }.count
-        let currencies = Set(linkedAmounts.map(\.0) + unlinkedAmounts.map(\.0)).sorted()
-        let totals = currencies.map { currency in
-            CurrencyTotals(
+        let totals = totalsByCurrency.keys.sorted().map { currency in
+            let entry = totalsByCurrency[currency] ?? (0, 0, 0)
+            return CurrencyTotals(
                 currency: currency,
-                linkedNetMinorUnits: linkedAmounts.filter { $0.0 == currency }.reduce(0) { $0 + $1.1 },
-                unlinkedNetMinorUnits: unlinkedAmounts.filter { $0.0 == currency }.reduce(0) { $0 + $1.1 }
+                linkedNetMinorUnits: entry.linked,
+                unlinkedNetMinorUnits: entry.unlinked,
+                uncertainNetMinorUnits: entry.uncertain
             )
         }
 
@@ -249,6 +293,7 @@ public enum DayTimelineBuilder {
                 eventCount: blocks.count,
                 allDayCount: allDayItems.count,
                 unlinkedTransactionCount: unlinkedCount,
+                partiallyAllocatedTransactionCount: partialCount,
                 totals: totals
             )
         )
@@ -333,11 +378,5 @@ public enum DayTimelineBuilder {
         }
         closeCluster(upTo: ranges.count)
         return result
-    }
-
-    private static func netTotals(_ amounts: [(String, Int64)]) -> [Money] {
-        var byCurrency: [String: Int64] = [:]
-        for (currency, value) in amounts { byCurrency[currency, default: 0] += value }
-        return byCurrency.keys.sorted().compactMap { try? Money(minorUnits: byCurrency[$0] ?? 0, currency: $0) }
     }
 }

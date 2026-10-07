@@ -179,10 +179,10 @@ private func seoulAreas() throws -> AreaCatalog {
     #expect(failure { _ = try state.applying([.createActivity(Activity.materialized(from: lunchEvent, id: activityID, at: 2))]) } == .duplicateIdentifier(entity: "activity", id: "a1"))
 }
 
-@Test func anEventDisappearingKeepsTheActivityAndItsLinks() throws {
+@Test func anEventDisappearingKeepsTheActivityAndItsAllocations() throws {
     let user = userProvenance()
     let state = try baseState(extra: [
-        .setLink(TransactionActivityLink(transactionID: txID("t"), activityID: activityID, createdAtUnixMilliseconds: 1, provenance: user)),
+        wholeAllocation("t", to: "a1", total: 8_000),
         .setActivityType(activityID, Assigned(.social, provenance: user))
     ])
     let association = try #require(state.activities[activityID]?.association)
@@ -191,19 +191,27 @@ private func seoulAreas() throws -> AreaCatalog {
     #expect(activity.isEventMissing)
     #expect(activity.displayTitle == "점심")
     #expect(activity.activityType?.value == .social)
-    #expect(missing.link(for: txID("t"))?.activityID == activityID)
+    #expect(missing.activityID(of: txID("t")) == activityID)
     #expect(association.markedMissing(at: 99).markedMissing(at: 200).status == .missing(sinceUnixMilliseconds: 99))   // first sighting wins
     let back = try missing.applying([.updateAssociation(activityID, association.refreshed(from: lunchEvent))])
     #expect(!(back.activities[activityID]?.isEventMissing ?? true))
 }
 
-@Test func anActivityWithLinksCannotBeRemoved() throws {
-    let state = try baseState(extra: [
-        .setLink(TransactionActivityLink(transactionID: txID("t"), activityID: activityID, createdAtUnixMilliseconds: 1, provenance: userProvenance()))
+@Test func anActivityWithAllocationsOrObligationsCannotBeRemoved() throws {
+    let state = try baseState(extra: [wholeAllocation("t", to: "a1", total: 8_000)])
+    #expect(failure { _ = try state.applying([.removeActivity(activityID)]) } == .activityHasAllocations(activityID))
+    let released = try state.applying([.removeAllocation(AllocationID(rawValue: "alloc-t-a1"), by: userProvenance())])
+    #expect(try released.applying([.removeActivity(activityID)]).activities.isEmpty)
+
+    let withObligation = try baseState(extra: [
+        .upsertPerson(Person(id: PersonID(rawValue: "p"), displayName: "상대")),
+        .createObligation(Obligation(
+            id: ObligationID(rawValue: "o"), counterpartyID: PersonID(rawValue: "p"), activityID: activityID, direction: .payable,
+            amount: try! AmountEntry(currency: "KRW", knowledge: .unknown, provenance: userProvenance()),
+            provenance: userProvenance(), createdAtUnixMilliseconds: 1
+        ))
     ])
-    #expect(failure { _ = try state.applying([.removeActivity(activityID)]) } == .activityHasLinks(activityID))
-    let unlinked = try state.applying([.removeLink(txID("t"), by: userProvenance())])
-    #expect(try unlinked.applying([.removeActivity(activityID)]).activities.isEmpty)
+    #expect(failure { _ = try withObligation.applying([.removeActivity(activityID)]) } == .activityHasObligations(activityID))
 }
 
 @Test func anActivityNeedsNoCalendarAtAll() throws {
@@ -223,27 +231,30 @@ private func seoulAreas() throws -> AreaCatalog {
     #expect(failure { _ = try state.applying([.updateAssociation(activityID, CalendarEventAssociation(event: other))]) } == .eventAlreadyAssociated(other.key))
 }
 
-// MARK: Links and provenance
+// MARK: Allocations and provenance
 
-@Test func linksNeverCheckTimeAndOneTransactionHasOneActivity() throws {
+@Test func anAllocationNeedsNoTimeContainmentAndTheTotalCannotBeExceeded() throws {
     let other = event("other", title: "다른", from: at(today, 15), to: at(today, 16))
     let state = try baseState(extra: [.createActivity(Activity.materialized(from: other, id: ActivityID(rawValue: "a2"), at: 1))])
-    let user = userProvenance()
-    let linked = try state.applying([.setLink(TransactionActivityLink(transactionID: txID("t"), activityID: activityID, createdAtUnixMilliseconds: 5, provenance: user))])
-    let moved = try linked.applying([.setLink(TransactionActivityLink(transactionID: txID("t"), activityID: ActivityID(rawValue: "a2"), createdAtUnixMilliseconds: 6, provenance: user))])
-    #expect(moved.link(for: txID("t"))?.activityID == ActivityID(rawValue: "a2"))
-    #expect(moved.links(forActivity: activityID).isEmpty)
-    #expect(failure { _ = try state.applying([.setLink(TransactionActivityLink(transactionID: txID("t"), activityID: ActivityID(rawValue: "ghost"), createdAtUnixMilliseconds: 1, provenance: user))]) } == .unknownActivity(ActivityID(rawValue: "ghost")))
+    // Nothing about the transaction's time is known to the state, so nothing can be required of it.
+    let first = try state.applying([wholeAllocation("t", to: "a1", total: 8_000, createdAt: 5)])
+    #expect(first.activityID(of: txID("t")) == activityID)
+    // The same money cannot be assigned in full to a second activity at the same time.
+    #expect(failure { _ = try first.applying([wholeAllocation("t", to: "a2", total: 8_000)]) } == .allocationExceedsTransaction(txID("t")))
+    // Moving means releasing first.
+    let moved = try first.applying([.removeAllocation(AllocationID(rawValue: "alloc-t-a1"), by: userProvenance()), wholeAllocation("t", to: "a2", total: 8_000, createdAt: 6)])
+    #expect(moved.activityID(of: txID("t")) == ActivityID(rawValue: "a2"))
+    #expect(moved.allocations(forActivity: activityID).isEmpty)
+    #expect(failure { _ = try state.applying([wholeAllocation("t", to: "ghost", total: 8_000)]) } == .unknownActivity(ActivityID(rawValue: "ghost")))
 }
 
-@Test func linksOfAnActivityAreOrderedByCreationThenTransaction() throws {
-    let user = userProvenance()
+@Test func allocationsOfAnActivityAreOrderedByCreationThenID() throws {
     let state = try baseState(extra: [
-        .setLink(TransactionActivityLink(transactionID: txID("b"), activityID: activityID, createdAtUnixMilliseconds: 2, provenance: user)),
-        .setLink(TransactionActivityLink(transactionID: txID("c"), activityID: activityID, createdAtUnixMilliseconds: 1, provenance: user)),
-        .setLink(TransactionActivityLink(transactionID: txID("a"), activityID: activityID, createdAtUnixMilliseconds: 2, provenance: user))
+        wholeAllocation("b", to: "a1", total: 100, createdAt: 2),
+        wholeAllocation("c", to: "a1", total: 100, createdAt: 1),
+        wholeAllocation("a", to: "a1", total: 100, createdAt: 2)
     ])
-    #expect(state.links(forActivity: activityID).map(\.transactionID.rawValue) == ["c", "a", "b"])
+    #expect(state.allocations(forActivity: activityID).map { $0.transactionID.rawValue } == ["c", "a", "b"])
 }
 
 @Test func automationCannotOverwriteOrRemoveAUserDecision() throws {
@@ -255,7 +266,7 @@ private func seoulAreas() throws -> AreaCatalog {
         .setActivityType(activityID, Assigned(.date, provenance: user)),
         .setActivityArea(activityID, Assigned(AreaID(rawValue: "yeonnam"), provenance: user)),
         .setActivityTag(activityID, TagAssignment(tagID: TagID(rawValue: "t1"), provenance: user)),
-        .setLink(TransactionActivityLink(transactionID: txID("t"), activityID: activityID, createdAtUnixMilliseconds: 1, provenance: user)),
+        wholeAllocation("t", to: "a1", total: 8_000),
         .setTransactionTag(txID("t"), TagAssignment(tagID: TagID(rawValue: "t1"), provenance: user))
     ])
     let protected = LifeValidationError.userAssignmentProtected
@@ -265,14 +276,14 @@ private func seoulAreas() throws -> AreaCatalog {
     #expect(failure { _ = try state.applying([.clearActivityArea(activityID, by: auto)]) } == protected)
     #expect(failure { _ = try state.applying([.setActivityTag(activityID, TagAssignment(tagID: TagID(rawValue: "t1"), provenance: auto))]) } == protected)
     #expect(failure { _ = try state.applying([.removeActivityTag(activityID, TagID(rawValue: "t1"), by: auto)]) } == protected)
-    #expect(failure { _ = try state.applying([.setLink(TransactionActivityLink(transactionID: txID("t"), activityID: activityID, createdAtUnixMilliseconds: 9, provenance: auto))]) } == protected)
-    #expect(failure { _ = try state.applying([.removeLink(txID("t"), by: auto)]) } == protected)
+    #expect(failure { _ = try state.applying([wholeAllocation("t", to: "a1", total: 8_000, provenance: auto)]) } == protected)
+    #expect(failure { _ = try state.applying([.removeAllocation(AllocationID(rawValue: "alloc-t-a1"), by: auto)]) } == protected)
     #expect(failure { _ = try state.applying([.setTransactionTag(txID("t"), TagAssignment(tagID: TagID(rawValue: "t1"), provenance: auto))]) } == protected)
     #expect(failure { _ = try state.applying([.removeTransactionTag(txID("t"), TagID(rawValue: "t1"), by: auto)]) } == protected)
     // The user can still change their own mind.
-    let changed = try state.applying([.setActivityType(activityID, Assigned(.social, provenance: user)), .removeLink(txID("t"), by: user)])
+    let changed = try state.applying([.setActivityType(activityID, Assigned(.social, provenance: user)), .removeAllocation(AllocationID(rawValue: "alloc-t-a1"), by: user)])
     #expect(changed.activities[activityID]?.activityType?.value == .social)
-    #expect(changed.link(for: txID("t")) == nil)
+    #expect(changed.activityID(of: txID("t")) == nil)
 }
 
 @Test func automationMayRefineItsOwnEarlierGuessAndUsersMayOverrideIt() throws {
@@ -315,7 +326,7 @@ private func seoulAreas() throws -> AreaCatalog {
         .setActivityType(activityID, Assigned(.date, provenance: user)),
         .setActivityArea(activityID, Assigned(AreaID(rawValue: "sinchon"), provenance: user)),
         .setActivityTag(activityID, TagAssignment(tagID: TagID(rawValue: "t1"), provenance: autoProvenance(0.9, 11))),
-        .setLink(TransactionActivityLink(transactionID: txID("tx"), activityID: activityID, createdAtUnixMilliseconds: 12, provenance: user)),
+        wholeAllocation("tx", to: "a1", total: 8_000, createdAt: 12),
         .setTransactionTag(txID("tx"), TagAssignment(tagID: TagID(rawValue: "t1"), provenance: user))
     ])
     let data = try JSONEncoder().encode(LifeSnapshot(revision: 7, state: state))

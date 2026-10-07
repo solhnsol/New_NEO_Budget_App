@@ -18,6 +18,6 @@ iPhone 내부에서 원본 금융 알림과 거래 원장을 보관하고, 서�
 
 현재 구현은 중립 `RawNotification`, facts-only `TransactionCandidateDraft`, account resolver/assembler, dedup validation, `Posting`/`LiabilityChange`/`BudgetImpact` 원장 모델과 in-memory 참조 adapter를 포함한다. Parser는 `RawNotification -> TransactionCandidateDraft`만 수행하고, `CandidateProcessingRepository`가 candidate 저장과 ready candidate의 ledger 반영을 하나의 원자 작업으로 정의한다. `swift build`, `swift test`로 실행한다. provider별 상세 fixture parser와 durable 저장소는 아직 구현하지 않았다.
 
-현재 검증: Core/ingestion/atomic promotion/calendar·activity 테스트 213개가 Windows x86_64에서 통과했다. 합성 알림 26개 형식의 결정론/provenance 및 kind/direction/amount 검증을 포함한다. 로컬 데이터 생성 도구 Python 테스트 7개도 통과한다. Android/iOS의 실제 실행은 별도 확인 필요.
+현재 검증: Core/ingestion/atomic promotion/calendar·activity·정산 테스트 344개가 Windows x86_64에서 통과했다. 합성 알림 26개 형식의 결정론/provenance 및 kind/direction/amount 검증을 포함한다. 로컬 데이터 생성 도구 Python 테스트 7개도 통과한다. Android/iOS의 실제 실행은 별도 확인 필요.
 
-`NEOBudgetCore`는 Platform/Infrastructure를 의존하지 않는다. `NEOBudgetInMemoryStorage` target이 Core protocol을 구현한다. `NEOBudgetCalendar`는 EventKit/SwiftUI 없이 Calendar·Activity·Tag·Area 도메인과 day timeline read model, drag/resize 정책, command 계약을 제공하고 `NEOBudgetInMemoryCalendar`가 테스트용 fake를 제공한다. `Platform/iOS`, `Platform/Android`는 향후 adapter 경계 문서만 있으며 빌드 target이나 실제 플랫폼 코드가 아니다.
+`NEOBudgetCore`는 Platform/Infrastructure를 의존하지 않는다. `NEOBudgetInMemoryStorage` target이 Core protocol을 구현한다. `NEOBudgetCalendar`는 EventKit/SwiftUI 없이 Calendar·Activity·Tag·Area·Person 도메인, 금액 지식·거래 분할·Obligation·Settlement(상계/유일 해 추론), day timeline read model, drag/resize 정책, command 계약을 제공하고 `NEOBudgetInMemoryCalendar`가 테스트용 fake를 제공한다. `Platform/iOS`, `Platform/Android`는 향후 adapter 경계 문서만 있으며 빌드 target이나 실제 플랫폼 코드가 아니다.

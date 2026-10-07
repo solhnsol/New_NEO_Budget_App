@@ -46,46 +46,39 @@ public struct ActivityBadge: Equatable, Sendable {
     public let activityType: ActivityTypeID?
     public let areaID: AreaID?
     public let tagIDs: [TagID]
+    public let participantIDs: [PersonID]
+    /// Obligations of this activity that are not yet settled.
+    public let openObligationCount: Int
 
-    public init(activityID: ActivityID, activityType: ActivityTypeID?, areaID: AreaID?, tagIDs: [TagID]) {
+    public init(
+        activityID: ActivityID, activityType: ActivityTypeID?, areaID: AreaID?, tagIDs: [TagID],
+        participantIDs: [PersonID], openObligationCount: Int
+    ) {
         self.activityID = activityID
         self.activityType = activityType
         self.areaID = areaID
         self.tagIDs = tagIDs
+        self.participantIDs = participantIDs
+        self.openObligationCount = openObligationCount
     }
 }
 
-/// A transaction linked to an activity. It is listed with the activity even when it happened on another day.
-public struct LinkedTransactionItem: Equatable, Sendable {
+/// One portion of a transaction that belongs to an activity. It is listed with the activity even when the
+/// payment happened on another day, and `allocatedAmount` keeps how much is actually known.
+public struct AllocationItem: Equatable, Sendable {
+    public let allocationID: AllocationID
     public let transactionID: LedgerEntryID
     public let title: String?
-    public let amount: Money
+    public let transactionAmount: Money
     public let flow: TransactionFlow
     public let occurredAtUnixMilliseconds: Int64
     public let timePrecision: TimePrecision
-    /// False when the link is meaningful but the payment is outside the selected day (a ticket bought earlier).
+    /// False when the allocation is meaningful but the payment is outside the selected day.
     public let occursOnSelectedDay: Bool
-    public let linkSource: AssignmentSource
-
-    public init(
-        transactionID: LedgerEntryID,
-        title: String?,
-        amount: Money,
-        flow: TransactionFlow,
-        occurredAtUnixMilliseconds: Int64,
-        timePrecision: TimePrecision,
-        occursOnSelectedDay: Bool,
-        linkSource: AssignmentSource
-    ) {
-        self.transactionID = transactionID
-        self.title = title
-        self.amount = amount
-        self.flow = flow
-        self.occurredAtUnixMilliseconds = occurredAtUnixMilliseconds
-        self.timePrecision = timePrecision
-        self.occursOnSelectedDay = occursOnSelectedDay
-        self.linkSource = linkSource
-    }
+    public let allocatedAmount: AmountKnowledge
+    /// True unless the allocation is known to be the entire transaction.
+    public let isPartOfTransaction: Bool
+    public let source: AssignmentSource
 }
 
 public struct EventBlock: Equatable, Sendable {
@@ -107,9 +100,10 @@ public struct EventBlock: Equatable, Sendable {
     public let continuesToNextDay: Bool
     public let layout: OverlapLayout
     public let activity: ActivityBadge?
-    public let linked: [LinkedTransactionItem]
-    /// Net spending of the linked transactions per currency (refunds subtract).
-    public let linkedTotals: [Money]
+    public let allocations: [AllocationItem]
+    /// Spending allocated to this activity per currency, with uncertainty kept (never a falsely exact total).
+    public let allocatedSpend: [AmountAggregate]
+    public let allocatedRefunds: [AmountAggregate]
     public let isRecurringInstance: Bool
     public let isEditable: Bool
     public let state: BlockState
@@ -126,20 +120,27 @@ public struct AllDayItem: Equatable, Sendable {
     public let isFirstDayOfEvent: Bool
     public let isLastDayOfEvent: Bool
     public let activity: ActivityBadge?
-    public let linked: [LinkedTransactionItem]
-    public let linkedTotals: [Money]
+    public let allocations: [AllocationItem]
+    public let allocatedSpend: [AmountAggregate]
+    public let allocatedRefunds: [AmountAggregate]
     public let isEditable: Bool
     public let state: BlockState
 }
 
-public enum MarkerLinkState: Equatable, Sendable {
-    /// No Activity. This is a normal state: the spending counts as non-activity spending.
-    case unlinked
-    /// Linked to an Activity that is not drawn on this day.
-    case linkedElsewhere(activityID: ActivityID, activityTitle: String, eventMissing: Bool)
+/// Where one portion of a transaction went, as shown next to a stray transaction marker.
+public struct MarkerAllocation: Equatable, Sendable {
+    public let allocationID: AllocationID
+    /// `nil` is a deliberate "no activity" portion.
+    public let activityID: ActivityID?
+    public let activityTitle: String?
+    public let amount: AmountKnowledge
+    public let eventMissing: Bool
+    /// Whether that activity is drawn on this day (so the portion is also visible inside a block).
+    public let isShownToday: Bool
 }
 
-/// A transaction that happened on the selected day and is not already shown inside an activity block.
+/// A transaction that happened on the selected day and is not completely accounted for inside the activity
+/// blocks drawn today.
 public struct TransactionMarkerItem: Equatable, Sendable {
     public let transactionID: LedgerEntryID
     public let title: String?
@@ -149,21 +150,30 @@ public struct TransactionMarkerItem: Equatable, Sendable {
     /// Whole minutes from the start of the selected day.
     public let positionMinute: Int
     public let timePrecision: TimePrecision
-    public let linkState: MarkerLinkState
+    /// Empty means no portion is allocated. That is a normal state: the spending counts as non-activity.
+    public let allocations: [MarkerAllocation]
+    /// What is left of the transaction after its allocations (widened by unknown portions).
+    public let remainder: AmountBounds
+    public let isFullyAllocated: Bool
 }
 
 public struct CurrencyTotals: Equatable, Sendable {
     public let currency: String
-    /// Net spending (refunds subtract) of the day's transactions that are linked to an Activity.
+    /// Net spending (refunds subtract) of the day's transactions that is settled as belonging to activities.
     public let linkedNetMinorUnits: Int64
-    /// Net spending of the day's transactions with no Activity: non-activity spending.
+    /// Net spending certainly outside activities: explicit "no activity" portions and unallocated remainders.
     public let unlinkedNetMinorUnits: Int64
+    /// Net spending whose placement is not yet known because some portion has no settled amount.
+    public let uncertainNetMinorUnits: Int64
 }
 
 public struct DaySummary: Equatable, Sendable {
     public let eventCount: Int
     public let allDayCount: Int
+    /// Today's transactions with no portion allocated to any activity.
     public let unlinkedTransactionCount: Int
+    /// Today's transactions that are split or only partly allocated.
+    public let partiallyAllocatedTransactionCount: Int
     public let totals: [CurrencyTotals]
 }
 

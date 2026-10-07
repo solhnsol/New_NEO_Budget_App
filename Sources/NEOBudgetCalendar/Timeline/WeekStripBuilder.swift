@@ -5,7 +5,7 @@ public struct WeekStripDay: Equatable, Sendable {
     public let day: LocalDate
     /// Events (timed and all-day) that touch this day.
     public let eventCount: Int
-    /// Transactions of this day with no Activity (non-activity spending).
+    /// Transactions of this day with no portion allocated to an Activity (non-activity spending).
     public let unlinkedTransactionCount: Int
     /// Net spending of all of this day's transactions per currency.
     public let netSpend: [Money]
@@ -36,7 +36,9 @@ public enum WeekStripBuilder {
             return WeekStripDay(
                 day: current,
                 eventCount: eventCount,
-                unlinkedTransactionCount: dayTransactions.filter { life.link(for: $0.id) == nil }.count,
+                unlinkedTransactionCount: dayTransactions.filter { transaction in
+                    !(life.allocationSet(for: transaction.id)?.allocations.contains { $0.activityID != nil } ?? false)
+                }.count,
                 netSpend: byCurrency.keys.sorted().compactMap { try? Money(minorUnits: byCurrency[$0] ?? 0, currency: $0) }
             )
         }

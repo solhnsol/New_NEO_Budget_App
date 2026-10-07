@@ -145,7 +145,7 @@ struct Harness {
             repository: repository ?? InMemoryLifeRepository(initialState: life),
             transactions: InMemoryTransactionSource(transactions),
             configuration: CalendarServiceConfiguration(displayTimeZone: seoul, editPolicy: editPolicy),
-            makeActivityID: { ActivityID(rawValue: "act-\(sequence.next())") },
+            makeID: { kind in "\(kind.rawValue)-\(sequence.next())" },
             now: { clock.now() }
         )
         return Harness(provider: provider, service: service, clock: clock)
@@ -159,4 +159,128 @@ struct Harness {
 func userProvenance(_ time: Int64 = 1) -> AssignmentProvenance { .user(at: time) }
 func autoProvenance(_ confidence: Double?, _ time: Int64 = 1) -> AssignmentProvenance {
     .automated(origin: "test-rule", confidence: confidence, at: time)
+}
+
+// MARK: Allocation helpers for tests
+
+extension LifeState {
+    /// The activity a transaction is wholly or mainly assigned to (its first activity allocation), if any.
+    func activityID(of transaction: LedgerEntryID) -> ActivityID? {
+        allocationSet(for: transaction)?.allocations.compactMap(\.activityID).first
+    }
+}
+
+/// A change that assigns the whole transaction to an activity (what the old 1:1 link meant).
+func wholeAllocation(
+    _ transaction: String,
+    to activity: String,
+    total: Int64,
+    id: String? = nil,
+    provenance: AssignmentProvenance = userProvenance(),
+    createdAt: Int64 = 1,
+    flow: TransactionFlow = .spend
+) -> LifeChange {
+    allocation(transaction, to: activity, amount: .exact(total), of: total, id: id, provenance: provenance, createdAt: createdAt, flow: flow)
+}
+
+/// A change that assigns one portion (with any level of knowledge) of a transaction to an activity, or to
+/// no activity when `activity` is nil.
+func allocation(
+    _ transaction: String,
+    to activity: String?,
+    amount: AmountKnowledge,
+    of total: Int64,
+    id: String? = nil,
+    provenance: AssignmentProvenance = userProvenance(),
+    createdAt: Int64 = 1,
+    flow: TransactionFlow = .spend
+) -> LifeChange {
+    .upsertAllocation(
+        TransactionAllocation(
+            id: AllocationID(rawValue: id ?? "alloc-\(transaction)-\(activity ?? "none")"),
+            transactionID: txID(transaction),
+            activityID: activity.map { ActivityID(rawValue: $0) },
+            amount: try! AmountEntry(currency: "KRW", knowledge: amount, provenance: provenance),
+            provenance: provenance,
+            createdAtUnixMilliseconds: createdAt
+        ),
+        transactionTotal: won(total),
+        flow: flow
+    )
+}
+
+// MARK: Amount, people, obligation, and settlement helpers
+
+func entry(_ knowledge: AmountKnowledge, currency: String = "KRW", provenance: AssignmentProvenance = userProvenance()) -> AmountEntry {
+    try! AmountEntry(currency: currency, knowledge: knowledge, provenance: provenance)
+}
+
+func amountRange(_ minimum: Int64, _ maximum: Int64) -> AmountKnowledge {
+    .range(try! AmountRange(minMinorUnits: minimum, maxMinorUnits: maximum))
+}
+
+func inferred(_ value: Int64, summary: String = "test") -> AmountKnowledge {
+    .inferred(value, InferenceEvidence(summary: summary))
+}
+
+func pid(_ value: String) -> PersonID { PersonID(rawValue: value) }
+func oid(_ value: String) -> ObligationID { ObligationID(rawValue: value) }
+let myself = pid("me")
+
+func person(_ id: String, name: String? = nil, isSelf: Bool = false) -> Person {
+    Person(id: pid(id), displayName: name ?? id, isSelf: isSelf)
+}
+
+func obligation(
+    _ id: String,
+    with counterparty: String = "friend",
+    _ direction: ObligationDirection,
+    _ knowledge: AmountKnowledge,
+    activity: String? = nil,
+    currency: String = "KRW",
+    provenance: AssignmentProvenance = userProvenance(),
+    createdAt: Int64 = 1
+) -> Obligation {
+    Obligation(
+        id: oid(id),
+        counterpartyID: pid(counterparty),
+        activityID: activity.map { ActivityID(rawValue: $0) },
+        direction: direction,
+        amount: entry(knowledge, currency: currency, provenance: provenance),
+        provenance: provenance,
+        createdAtUnixMilliseconds: createdAt
+    )
+}
+
+func transfer(_ transaction: String, _ direction: TransferDirection, _ amount: Int64, currency: String = "KRW") -> ActualTransfer {
+    transfer(transaction, "friend", direction, amount, currency: currency)
+}
+
+func transfer(_ transaction: String, _ counterparty: String, _ direction: TransferDirection, _ amount: Int64, currency: String = "KRW") -> ActualTransfer {
+    try! ActualTransfer(
+        transactionID: txID(transaction), counterpartyID: pid(counterparty), direction: direction,
+        amount: try! Money(minorUnits: amount, currency: currency), occurredAtUnixMilliseconds: 1_000
+    )
+}
+
+/// A state with me (self) and the given other people, then the given changes.
+func lifeWithPeople(_ others: [String] = ["friend"], extra: [LifeChange] = []) -> LifeState {
+    let people: [LifeChange] = [.upsertPerson(person("me", name: "나", isSelf: true))] + others.map { .upsertPerson(person($0)) }
+    return try! LifeState.empty.applying(people + extra)
+}
+
+func settleable(_ life: LifeState, _ id: String) -> ObligationStatus? { life.obligations[oid(id)]?.status }
+
+func settle(_ life: LifeState, _ proposal: SettlementProposal, id: String = "s1", provenance: AssignmentProvenance = userProvenance()) throws -> LifeState {
+    let settlement = try proposal.makeSettlement(id: SettlementID(rawValue: id), life: life, provenance: provenance, createdAtUnixMilliseconds: 50)
+    return try life.applying([.recordSettlement(settlement)])
+}
+
+extension SettlementMatchResult {
+    var proposal: SettlementProposal? {
+        switch self {
+        case let .exactMatch(p), let .netMatch(p), let .inferredUniqueSolution(p): return p
+        default: return nil
+        }
+    }
 }

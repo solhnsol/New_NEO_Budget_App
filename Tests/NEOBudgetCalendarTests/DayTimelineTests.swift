@@ -16,16 +16,12 @@ private func build(
     ))
 }
 
-private func lifeWith(activities: [(String, CalendarEvent)], links: [(String, String)] = [], extra: [LifeChange] = []) -> LifeState {
+/// `links` are (transaction, activity, transaction total): each assigns the whole transaction to the activity.
+private func lifeWith(activities: [(String, CalendarEvent)], links: [(String, String, Int64)] = [], extra: [LifeChange] = []) -> LifeState {
     var changes: [LifeChange] = activities.map {
         .createActivity(Activity.materialized(from: $0.1, id: ActivityID(rawValue: $0.0), at: 1))
     }
-    changes += links.map { link in
-        .setLink(TransactionActivityLink(
-            transactionID: txID(link.0), activityID: ActivityID(rawValue: link.1),
-            createdAtUnixMilliseconds: 1, provenance: userProvenance()
-        ))
-    }
+    changes += links.map { wholeAllocation($0.0, to: $0.1, total: $0.2) }
     return try! LifeState.empty.applying(changes + extra)
 }
 
@@ -38,7 +34,7 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
     let date = event("date", title: "데이트", from: clock(19), to: clock(22))
     let life = lifeWith(
         activities: [("a-lunch", lunch), ("a-lab", lab)],
-        links: [("t-lunch", "a-lunch"), ("t-cafe", "a-lab")]
+        links: [("t-lunch", "a-lunch", 9_500), ("t-cafe", "a-lab", 5_800)]
     )
     let transactions = [
         marker("t-lunch", at: clock(12, 20), amount: 9_500, title: "식당"),
@@ -53,15 +49,16 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
     #expect(timeline.blocks.allSatisfy { $0.layout == OverlapLayout(column: 0, columnCount: 1) })
 
     let lunchBlock = timeline.blocks[1]
-    #expect(lunchBlock.linked.map(\.transactionID) == [txID("t-lunch")])
-    #expect(lunchBlock.linked.first?.title == "식당")
-    #expect(lunchBlock.linkedTotals == [won(9_500)])
+    #expect(lunchBlock.allocations.map(\.transactionID) == [txID("t-lunch")])
+    #expect(lunchBlock.allocations.first?.title == "식당")
+    #expect(lunchBlock.allocatedSpend.first?.exactMinorUnits == 9_500)
+    #expect(lunchBlock.allocatedSpend.first?.isFullyKnown == true)
     #expect(lunchBlock.activity?.activityID == ActivityID(rawValue: "a-lunch"))
-    #expect(timeline.blocks[2].linkedTotals == [won(5_800)])
-    #expect(timeline.blocks[0].activity == nil && timeline.blocks[0].linked.isEmpty)   // no Activity is normal
+    #expect(timeline.blocks[2].allocatedSpend.first?.exactMinorUnits == 5_800)
+    #expect(timeline.blocks[0].activity == nil && timeline.blocks[0].allocations.isEmpty)   // no Activity is normal
 
     #expect(timeline.markers.map(\.transactionID) == [txID("t-taxi")])
-    #expect(timeline.markers.first?.linkState == .unlinked)
+    #expect(timeline.markers.first?.allocations.isEmpty == true)             // unallocated is a normal state
     #expect(timeline.markers.first?.positionMinute == 22 * 60 + 5)
 
     #expect(timeline.summary.eventCount == 4)
@@ -207,13 +204,13 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
     // The date is today at 19:00; the movie ticket was bought yesterday evening.
     let date = event("date", title: "데이트", from: clock(19), to: clock(22))
     let ticketTime = clock(18, on: today.adding(days: -1))
-    let life = lifeWith(activities: [("a-date", date)], links: [("t-ticket", "a-date")])
+    let life = lifeWith(activities: [("a-date", date)], links: [("t-ticket", "a-date", 14_000)])
     let timeline = build([date], life: life, transactions: [marker("t-ticket", at: ticketTime, amount: 14_000, title: "영화표")])
 
     let block = timeline.blocks[0]
-    #expect(block.linked.count == 1)
-    #expect(block.linked[0].occursOnSelectedDay == false)
-    #expect(block.linkedTotals == [won(14_000)])
+    #expect(block.allocations.count == 1)
+    #expect(block.allocations[0].occursOnSelectedDay == false)
+    #expect(block.allocatedSpend.first?.exactMinorUnits == 14_000)
     #expect(timeline.markers.isEmpty)                         // it is inside the activity, not a stray marker
     #expect(timeline.summary.totals.isEmpty)                  // and it is not today's spending
     #expect(timeline.summary.unlinkedTransactionCount == 0)
@@ -221,10 +218,13 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
 
 @Test func aLinkedTransactionWhoseActivityIsNotShownAppearsAsLinkedElsewhere() {
     let trip = event("trip", title: "여행", from: clock(9, on: today.adding(days: 1)), to: clock(18, on: today.adding(days: 1)))
-    let life = lifeWith(activities: [("a-trip", trip)], links: [("t-ktx", "a-trip")])
+    let life = lifeWith(activities: [("a-trip", trip)], links: [("t-ktx", "a-trip", 59_800)])
     let timeline = build([], life: life, transactions: [marker("t-ktx", at: clock(9), amount: 59_800, title: "KTX")])
     #expect(timeline.markers.count == 1)
-    #expect(timeline.markers[0].linkState == .linkedElsewhere(activityID: ActivityID(rawValue: "a-trip"), activityTitle: "여행", eventMissing: false))
+    let elsewhere = timeline.markers[0].allocations
+    #expect(elsewhere.count == 1)
+    #expect(elsewhere[0].activityID == ActivityID(rawValue: "a-trip") && elsewhere[0].activityTitle == "여행")
+    #expect(elsewhere[0].eventMissing == false && elsewhere[0].isShownToday == false)
     #expect(timeline.summary.totals.first?.linkedNetMinorUnits == 59_800)
     #expect(timeline.summary.totals.first?.unlinkedNetMinorUnits == 0)
     #expect(timeline.summary.unlinkedTransactionCount == 0)
@@ -232,7 +232,7 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
 
 @Test func anEventDeletedElsewhereStaysVisibleAsAGhostWithItsSpending() throws {
     let gone = event("gone", title: "취소된 모임", from: clock(15), to: clock(16))
-    var life = lifeWith(activities: [("a-gone", gone)], links: [("t-food", "a-gone")])
+    var life = lifeWith(activities: [("a-gone", gone)], links: [("t-food", "a-gone", 20_000)])
     let missing = CalendarEventAssociation(event: gone).markedMissing(at: 5)
     life = try life.applying([.updateAssociation(ActivityID(rawValue: "a-gone"), missing)])
     let transactions = [marker("t-food", at: clock(15, 30), amount: 20_000)]
@@ -242,12 +242,14 @@ private func clock(_ hour: Int, _ minute: Int = 0, on date: LocalDate = today) -
     #expect(shown.blocks[0].state == .eventMissing)
     #expect(shown.blocks[0].isEditable == false)
     #expect(shown.blocks[0].title == "취소된 모임")
-    #expect(shown.blocks[0].linkedTotals == [won(20_000)])
+    #expect(shown.blocks[0].allocatedSpend.first?.exactMinorUnits == 20_000)
     #expect(shown.markers.isEmpty)
 
     let hidden = build([], life: life, transactions: transactions, policy: TimelineDisplayPolicy(includeMissingEventGhosts: false))
     #expect(hidden.blocks.isEmpty)
-    #expect(hidden.markers.first?.linkState == .linkedElsewhere(activityID: ActivityID(rawValue: "a-gone"), activityTitle: "취소된 모임", eventMissing: true))
+    let hiddenAllocation = hidden.markers.first?.allocations.first
+    #expect(hiddenAllocation?.activityID == ActivityID(rawValue: "a-gone") && hiddenAllocation?.activityTitle == "취소된 모임")
+    #expect(hiddenAllocation?.eventMissing == true)
 }
 
 @Test func refundsSubtractFromNetSpendingAndAreMarkedAsRefunds() {

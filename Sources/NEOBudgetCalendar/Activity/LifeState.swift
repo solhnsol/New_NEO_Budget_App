@@ -16,10 +16,51 @@ public enum LifeValidationError: Error, Hashable, Sendable {
     case unknownArea(AreaID)
     case eventAlreadyAssociated(CalendarEventKey)
     case notCalendarActivity(ActivityID)
-    case activityHasLinks(ActivityID)
+    case activityHasAllocations(ActivityID)
+    case activityHasObligations(ActivityID)
     case presetImmutable(ActivityTypeID)
     case invalidConfidence
     case userAssignmentProtected
+
+    // People
+    case unknownPerson(PersonID)
+    case duplicateSelf
+    case relationshipLabelRequiresUser
+    case counterpartyIsSelf(PersonID)
+
+    // Allocations
+    case unknownAllocation(AllocationID)
+    case allocationExceedsTransaction(LedgerEntryID)
+    case transactionTotalMismatch(LedgerEntryID)
+    case allocationCurrencyMismatch(AllocationID)
+    case duplicateAllocationTarget(LedgerEntryID)
+    case allocationIdentityChanged(AllocationID)
+
+    // Amounts and groups
+    case amountUpdateRejected(AmountUpdateDecision)
+    case unknownAmountGroup(AmountGroupID)
+    case unknownGroupMember(AmountMemberRef)
+    case memberAlreadyInGroup(AmountMemberRef)
+    case memberOfAmountGroup(AmountMemberRef)
+    case groupCurrencyMismatch(AmountMemberRef)
+    case amountGroupContradiction(AmountGroupID, AmountGroupContradiction)
+
+    // Obligations and settlements
+    case unknownObligation(ObligationID)
+    case obligationNotSettleable(ObligationID)
+    case obligationHasSettlements(ObligationID)
+    case obligationMustStartOpen(ObligationID)
+    case obligationCounterpartyMismatch(ObligationID)
+    case obligationCurrencyMismatch(ObligationID)
+    case amountBelowAppliedSettlements(ObligationID)
+    case unknownSettlement(SettlementID)
+    case transferAlreadySettled(LedgerEntryID)
+    case settlementNetMismatch
+    case appliedExceedsObligation(ObligationID)
+    case unknownSettlementRequest(SettlementRequestID)
+    case requestCounterpartyMismatch(SettlementRequestID)
+    case staleAmountPromotion(ObligationID)
+    case automatedPromotionMustBeInferred(ObligationID)
 }
 
 /// A single validated mutation of life state. Removals and clears carry who is asking so that automation
@@ -28,6 +69,7 @@ public enum LifeChange: Hashable, Sendable {
     case upsertActivityType(ActivityTypeDefinition)
     case upsertTag(Tag)
     case upsertArea(Area)
+    case upsertPerson(Person)
 
     case createActivity(Activity)
     case updateAssociation(ActivityID, CalendarEventAssociation)
@@ -39,52 +81,55 @@ public enum LifeChange: Hashable, Sendable {
     case clearActivityArea(ActivityID, by: AssignmentProvenance)
     case setActivityTag(ActivityID, TagAssignment)
     case removeActivityTag(ActivityID, TagID, by: AssignmentProvenance)
+    case addParticipant(ActivityID, ParticipantAssignment)
+    case removeParticipant(ActivityID, PersonID, by: AssignmentProvenance)
 
-    case setLink(TransactionActivityLink)
-    case removeLink(LedgerEntryID, by: AssignmentProvenance)
+    /// Adds or updates one portion of a transaction. `transactionTotal` and `flow` describe the immutable
+    /// ledger entry and must match any earlier allocation of the same transaction.
+    case upsertAllocation(TransactionAllocation, transactionTotal: Money, flow: TransactionFlow)
+    case removeAllocation(AllocationID, by: AssignmentProvenance)
+    case setAllocationAmount(AllocationID, AmountEntry)
 
     case setTransactionTag(LedgerEntryID, TagAssignment)
     case removeTransactionTag(LedgerEntryID, TagID, by: AssignmentProvenance)
+
+    case createObligation(Obligation)
+    case setObligationAmount(ObligationID, AmountEntry)
+    case cancelObligation(ObligationID, by: AssignmentProvenance)
+
+    case defineAmountGroup(AmountGroup)
+    case removeAmountGroup(AmountGroupID, by: AssignmentProvenance)
+
+    case createSettlementRequest(SettlementRequest)
+    case setSettlementRequestStatus(SettlementRequestID, SettlementRequestStatus)
+
+    case recordSettlement(Settlement)
+    case removeSettlement(SettlementID, by: AssignmentProvenance)
 }
 
-/// All OnAll-owned meaning around calendar events and transactions, as one value with enforced invariants.
-///
-/// Pure and platform-independent: any repository (in-memory now, durable later) can wrap it. `applying`
+/// All OnAll-owned meaning around calendar events, transactions, people, and money still to be settled, as
+/// one value with enforced invariants. Pure and platform-independent: any repository can wrap it. `applying`
 /// is all-or-nothing and never mutates the receiver.
 public struct LifeState: Codable, Equatable, Sendable {
     public private(set) var activityTypes: [ActivityTypeID: ActivityTypeDefinition]
     public private(set) var tags: [TagID: Tag]
     public private(set) var areaCatalog: AreaCatalog
+    public private(set) var persons: [PersonID: Person]
     public private(set) var activities: [ActivityID: Activity]
-    public private(set) var linksByTransaction: [LedgerEntryID: TransactionActivityLink]
+    public private(set) var allocationSets: [LedgerEntryID: TransactionAllocationSet]
     public private(set) var transactionTags: [LedgerEntryID: [TagAssignment]]
+    public private(set) var amountGroups: [AmountGroupID: AmountGroup]
+    public private(set) var obligations: [ObligationID: Obligation]
+    public private(set) var settlements: [SettlementID: Settlement]
+    public private(set) var settlementRequests: [SettlementRequestID: SettlementRequest]
 
     /// Starts with the preset activity types and nothing else.
     public static var empty: LifeState {
         LifeState(
             activityTypes: Dictionary(uniqueKeysWithValues: ActivityTypeDefinition.presets.map { ($0.id, $0) }),
-            tags: [:],
-            areaCatalog: AreaCatalog(),
-            activities: [:],
-            linksByTransaction: [:],
-            transactionTags: [:]
+            tags: [:], areaCatalog: AreaCatalog(), persons: [:], activities: [:], allocationSets: [:],
+            transactionTags: [:], amountGroups: [:], obligations: [:], settlements: [:], settlementRequests: [:]
         )
-    }
-
-    private init(
-        activityTypes: [ActivityTypeID: ActivityTypeDefinition],
-        tags: [TagID: Tag],
-        areaCatalog: AreaCatalog,
-        activities: [ActivityID: Activity],
-        linksByTransaction: [LedgerEntryID: TransactionActivityLink],
-        transactionTags: [LedgerEntryID: [TagAssignment]]
-    ) {
-        self.activityTypes = activityTypes
-        self.tags = tags
-        self.areaCatalog = areaCatalog
-        self.activities = activities
-        self.linksByTransaction = linksByTransaction
-        self.transactionTags = transactionTags
     }
 
     // MARK: Queries
@@ -102,15 +147,63 @@ public struct LifeState: Codable, Equatable, Sendable {
         return index
     }
 
-    public func link(for transactionID: LedgerEntryID) -> TransactionActivityLink? { linksByTransaction[transactionID] }
+    public func allocationSet(for transactionID: LedgerEntryID) -> TransactionAllocationSet? { allocationSets[transactionID] }
 
-    public func links(forActivity id: ActivityID) -> [TransactionActivityLink] {
-        linksByTransaction.values
-            .filter { $0.activityID == id }
-            .sorted { ($0.createdAtUnixMilliseconds, $0.transactionID.rawValue) < ($1.createdAtUnixMilliseconds, $1.transactionID.rawValue) }
+    /// Every allocation that targets `activityID`, oldest first.
+    public func allocations(forActivity activityID: ActivityID) -> [TransactionAllocation] {
+        allocationSets.values
+            .flatMap(\.allocations)
+            .filter { $0.activityID == activityID }
+            .sorted { ($0.createdAtUnixMilliseconds, $0.id) < ($1.createdAtUnixMilliseconds, $1.id) }
+    }
+
+    public func allocation(_ id: AllocationID) -> TransactionAllocation? {
+        for set in allocationSets.values {
+            if let found = set.allocations.first(where: { $0.id == id }) { return found }
+        }
+        return nil
     }
 
     public func tags(forTransaction id: LedgerEntryID) -> [TagAssignment] { transactionTags[id] ?? [] }
+
+    public func obligations(forActivity id: ActivityID) -> [Obligation] {
+        obligations.values.filter { $0.activityID == id }.sorted { $0.id < $1.id }
+    }
+
+    /// How much of an obligation settlements have already applied.
+    public func appliedMinorUnits(for id: ObligationID) -> Int64 {
+        settlements.values.reduce(0) { total, settlement in
+            total + (settlement.allocations.first { $0.obligationID == id }?.appliedMinorUnits ?? 0)
+        }
+    }
+
+    /// Obligations with `counterpartyID` that can still be settled, in a stable order.
+    public func settleableObligations(with counterpartyID: PersonID) -> [Obligation] {
+        obligations.values.filter { $0.counterpartyID == counterpartyID && $0.isSettleable }.sorted { $0.id < $1.id }
+    }
+
+    public func group(containing member: AmountMemberRef) -> AmountGroup? {
+        amountGroups.values.first { $0.members.contains(member) }
+    }
+
+    public func amount(of member: AmountMemberRef) -> AmountEntry? {
+        switch member {
+        case let .obligation(id): return obligations[id]?.amount
+        case let .allocation(id): return allocation(id)?.amount
+        }
+    }
+
+    /// What the group constraint currently implies about its members.
+    public func analysis(ofGroup id: AmountGroupID) -> AmountGroupAnalysis? {
+        guard let group = amountGroups[id] else { return nil }
+        return analyze(group)
+    }
+
+    private func analyze(_ group: AmountGroup) -> AmountGroupAnalysis {
+        var members: [AmountMemberRef: AmountKnowledge] = [:]
+        for member in group.members { members[member] = amount(of: member)?.knowledge ?? .unknown }
+        return AmountGroupSolver.analyze(totalMinorUnits: group.totalMinorUnits, members: members)
+    }
 
     // MARK: Mutation
 
@@ -144,6 +237,18 @@ public struct LifeState: Codable, Equatable, Sendable {
         case let .upsertArea(area):
             areaCatalog = try areaCatalog.inserting(area)
 
+        case let .upsertPerson(person):
+            guard !person.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "person") }
+            guard !NameNormalizer.normalize(person.displayName).isEmpty else { throw LifeValidationError.emptyName(entity: "person") }
+            if person.isSelf, persons.values.contains(where: { $0.isSelf && $0.id != person.id }) {
+                throw LifeValidationError.duplicateSelf
+            }
+            if let label = person.relationshipLabel {
+                // Relationships are never inferred; only an explicit user statement may set one.
+                guard label.provenance.source == .user else { throw LifeValidationError.relationshipLabelRequiresUser }
+            }
+            persons[person.id] = person
+
         case let .createActivity(activity):
             guard !activity.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "activity") }
             guard activities[activity.id] == nil else {
@@ -159,11 +264,18 @@ public struct LifeState: Codable, Equatable, Sendable {
             }
             if let type = activity.activityType { try validateType(type) }
             if let area = activity.area { try validateArea(area) }
-            var seen = Set<TagID>()
+            var seenTags = Set<TagID>()
             for tag in activity.tags {
                 try validateTag(tag)
-                guard seen.insert(tag.tagID).inserted else {
+                guard seenTags.insert(tag.tagID).inserted else {
                     throw LifeValidationError.duplicateIdentifier(entity: "activityTag", id: tag.tagID.rawValue)
+                }
+            }
+            var seenPeople = Set<PersonID>()
+            for participant in activity.participants {
+                try validateParticipant(participant)
+                guard seenPeople.insert(participant.personID).inserted else {
+                    throw LifeValidationError.duplicateIdentifier(entity: "participant", id: participant.personID.rawValue)
                 }
             }
             activities[activity.id] = activity
@@ -179,8 +291,11 @@ public struct LifeState: Codable, Equatable, Sendable {
 
         case let .removeActivity(id):
             _ = try existingActivity(id)
-            guard !linksByTransaction.values.contains(where: { $0.activityID == id }) else {
-                throw LifeValidationError.activityHasLinks(id)
+            guard !allocationSets.values.contains(where: { $0.allocations.contains { $0.activityID == id } }) else {
+                throw LifeValidationError.activityHasAllocations(id)
+            }
+            guard !obligations.values.contains(where: { $0.activityID == id }) else {
+                throw LifeValidationError.activityHasObligations(id)
             }
             activities[id] = nil
 
@@ -243,22 +358,55 @@ public struct LifeState: Codable, Equatable, Sendable {
                 activities[id] = activity
             }
 
-        case let .setLink(link):
-            guard !link.transactionID.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "transaction") }
-            _ = try existingActivity(link.activityID)
-            try requireValid(link.provenance)
-            if let existing = linksByTransaction[link.transactionID], !link.provenance.mayReplace(existing.provenance) {
-                throw LifeValidationError.userAssignmentProtected
+        case let .addParticipant(id, assignment):
+            var activity = try existingActivity(id)
+            try validateParticipant(assignment)
+            if let index = activity.participants.firstIndex(where: { $0.personID == assignment.personID }) {
+                guard assignment.provenance.mayReplace(activity.participants[index].provenance) else {
+                    throw LifeValidationError.userAssignmentProtected
+                }
+                activity.participants[index] = assignment
+            } else {
+                activity.participants.append(assignment)
+                activity.participants.sort { $0.personID < $1.personID }
             }
-            // Deliberately no time-containment check: a link is meaning, not a time window.
-            linksByTransaction[link.transactionID] = link
+            activities[id] = activity
 
-        case let .removeLink(transactionID, by):
+        case let .removeParticipant(id, personID, by):
+            var activity = try existingActivity(id)
             try requireValid(by)
-            if let existing = linksByTransaction[transactionID] {
-                guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
-                linksByTransaction[transactionID] = nil
+            if let index = activity.participants.firstIndex(where: { $0.personID == personID }) {
+                guard by.mayReplace(activity.participants[index].provenance) else { throw LifeValidationError.userAssignmentProtected }
+                activity.participants.remove(at: index)
+                activities[id] = activity
             }
+
+        case let .upsertAllocation(allocation, total, flow):
+            try upsertAllocation(allocation, total: total, flow: flow)
+
+        case let .removeAllocation(id, by):
+            try requireValid(by)
+            guard let existing = allocation(id) else { throw LifeValidationError.unknownAllocation(id) }
+            guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            guard group(containing: .allocation(id)) == nil else { throw LifeValidationError.memberOfAmountGroup(.allocation(id)) }
+            guard var set = allocationSets[existing.transactionID] else { return }
+            set.replace(set.allocations.filter { $0.id != id })
+            allocationSets[existing.transactionID] = set.isEmpty ? nil : set
+
+        case let .setAllocationAmount(id, entry):
+            guard let existing = allocation(id), var set = allocationSets[existing.transactionID] else {
+                throw LifeValidationError.unknownAllocation(id)
+            }
+            guard entry.currency == set.transactionTotal.currency else { throw LifeValidationError.allocationCurrencyMismatch(id) }
+            try requireAcceptable(old: existing.amount, new: entry)
+            var updated = existing
+            updated.amount = entry
+            set.replace(set.allocations.map { $0.id == id ? updated : $0 })
+            guard set.allocatedLowerBound <= set.transactionTotal.minorUnits else {
+                throw LifeValidationError.allocationExceedsTransaction(existing.transactionID)
+            }
+            allocationSets[existing.transactionID] = set
+            try ensureGroupsConsistent(touching: [.allocation(id)])
 
         case let .setTransactionTag(transactionID, assignment):
             guard !transactionID.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "transaction") }
@@ -283,6 +431,256 @@ public struct LifeState: Codable, Equatable, Sendable {
                 list.remove(at: index)
                 transactionTags[transactionID] = list.isEmpty ? nil : list
             }
+
+        case let .createObligation(obligation):
+            guard !obligation.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "obligation") }
+            guard obligations[obligation.id] == nil else {
+                throw LifeValidationError.duplicateIdentifier(entity: "obligation", id: obligation.id.rawValue)
+            }
+            try validateCounterparty(obligation.counterpartyID)
+            if let activityID = obligation.activityID { _ = try existingActivity(activityID) }
+            try requireValid(obligation.provenance)
+            try requireValid(obligation.amount.provenance)
+            guard obligation.status == .open else { throw LifeValidationError.obligationMustStartOpen(obligation.id) }
+            obligations[obligation.id] = obligation
+
+        case let .setObligationAmount(id, entry):
+            try setObligationAmount(id, entry)
+
+        case let .cancelObligation(id, by):
+            try requireValid(by)
+            guard var obligation = obligations[id] else { throw LifeValidationError.unknownObligation(id) }
+            guard obligation.status != .cancelled else { return }
+            guard by.mayReplace(obligation.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            guard appliedMinorUnits(for: id) == 0 else { throw LifeValidationError.obligationHasSettlements(id) }
+            guard group(containing: .obligation(id)) == nil else { throw LifeValidationError.memberOfAmountGroup(.obligation(id)) }
+            obligation.status = .cancelled
+            obligations[id] = obligation
+
+        case let .defineAmountGroup(group):
+            try defineGroup(group)
+
+        case let .removeAmountGroup(id, by):
+            try requireValid(by)
+            guard let group = amountGroups[id] else { throw LifeValidationError.unknownAmountGroup(id) }
+            guard by.mayReplace(group.total.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            amountGroups[id] = nil
+
+        case let .createSettlementRequest(request):
+            guard !request.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "settlementRequest") }
+            guard settlementRequests[request.id] == nil else {
+                throw LifeValidationError.duplicateIdentifier(entity: "settlementRequest", id: request.id.rawValue)
+            }
+            try validateCounterparty(request.counterpartyID)
+            for obligationID in request.obligationIDs {
+                guard let obligation = obligations[obligationID] else { throw LifeValidationError.unknownObligation(obligationID) }
+                guard obligation.counterpartyID == request.counterpartyID else {
+                    throw LifeValidationError.obligationCounterpartyMismatch(obligationID)
+                }
+                if let requested = request.requestedAmount, requested.currency != obligation.currency {
+                    throw LifeValidationError.obligationCurrencyMismatch(obligationID)
+                }
+            }
+            settlementRequests[request.id] = request
+
+        case let .setSettlementRequestStatus(id, status):
+            guard var request = settlementRequests[id] else { throw LifeValidationError.unknownSettlementRequest(id) }
+            request.status = status
+            settlementRequests[id] = request
+
+        case let .recordSettlement(settlement):
+            try recordSettlement(settlement)
+
+        case let .removeSettlement(id, by):
+            try removeSettlement(id, by: by)
+        }
+    }
+
+    // MARK: Allocation
+
+    private mutating func upsertAllocation(_ allocation: TransactionAllocation, total: Money, flow: TransactionFlow) throws {
+        guard !allocation.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "allocation") }
+        guard !allocation.transactionID.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "transaction") }
+        if let activityID = allocation.activityID { _ = try existingActivity(activityID) }
+        try requireValid(allocation.provenance)
+        try requireValid(allocation.amount.provenance)
+        guard allocation.amount.currency == total.currency else {
+            throw LifeValidationError.allocationCurrencyMismatch(allocation.id)
+        }
+
+        var set = allocationSets[allocation.transactionID] ?? TransactionAllocationSet(transactionTotal: total, flow: flow)
+        guard set.transactionTotal == total, set.flow == flow else {
+            throw LifeValidationError.transactionTotalMismatch(allocation.transactionID)
+        }
+        var others = set.allocations.filter { $0.id != allocation.id }
+
+        if let existing = self.allocation(allocation.id) {
+            guard existing.transactionID == allocation.transactionID, existing.activityID == allocation.activityID else {
+                throw LifeValidationError.allocationIdentityChanged(allocation.id)
+            }
+            guard allocation.provenance.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+            try requireAcceptable(old: existing.amount, new: allocation.amount)
+        }
+        guard !others.contains(where: { $0.activityID == allocation.activityID }) else {
+            throw LifeValidationError.duplicateAllocationTarget(allocation.transactionID)
+        }
+        others.append(allocation)
+        set.replace(others)
+        guard set.allocatedLowerBound <= total.minorUnits else {
+            throw LifeValidationError.allocationExceedsTransaction(allocation.transactionID)
+        }
+        allocationSets[allocation.transactionID] = set
+        try ensureGroupsConsistent(touching: [.allocation(allocation.id)])
+    }
+
+    // MARK: Obligations and settlements
+
+    private mutating func setObligationAmount(_ id: ObligationID, _ entry: AmountEntry, checkGroups: Bool = true) throws {
+        guard var obligation = obligations[id] else { throw LifeValidationError.unknownObligation(id) }
+        guard obligation.isSettleable else { throw LifeValidationError.obligationNotSettleable(id) }
+        try requireValid(entry.provenance)
+        try requireAcceptable(old: obligation.amount, new: entry)
+        let applied = appliedMinorUnits(for: id)
+        if let upper = entry.knowledge.bounds.upper, upper < applied {
+            throw LifeValidationError.amountBelowAppliedSettlements(id)
+        }
+        obligation.amount = entry
+        obligations[id] = obligation
+        refreshStatus(of: id)
+        if checkGroups { try ensureGroupsConsistent(touching: [.obligation(id)]) }
+    }
+
+    private mutating func defineGroup(_ group: AmountGroup) throws {
+        guard !group.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "amountGroup") }
+        guard amountGroups[group.id] == nil else {
+            throw LifeValidationError.duplicateIdentifier(entity: "amountGroup", id: group.id.rawValue)
+        }
+        try requireValid(group.total.provenance)
+        for member in group.members {
+            guard let entry = amount(of: member) else { throw LifeValidationError.unknownGroupMember(member) }
+            guard entry.currency == group.currency else { throw LifeValidationError.groupCurrencyMismatch(member) }
+            guard self.group(containing: member) == nil else { throw LifeValidationError.memberAlreadyInGroup(member) }
+            if case let .obligation(id) = member, obligations[id]?.status == .cancelled {
+                throw LifeValidationError.obligationNotSettleable(id)
+            }
+        }
+        if case let .contradiction(reason) = analyze(group) {
+            throw LifeValidationError.amountGroupContradiction(group.id, reason)
+        }
+        amountGroups[group.id] = group
+    }
+
+    private mutating func recordSettlement(_ settlement: Settlement) throws {
+        guard !settlement.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "settlement") }
+        guard settlements[settlement.id] == nil else {
+            throw LifeValidationError.duplicateIdentifier(entity: "settlement", id: settlement.id.rawValue)
+        }
+        try requireValid(settlement.provenance)
+        try validateCounterparty(settlement.transfer.counterpartyID)
+        guard !settlements.values.contains(where: { $0.transfer.transactionID == settlement.transfer.transactionID }) else {
+            throw LifeValidationError.transferAlreadySettled(settlement.transfer.transactionID)
+        }
+        if let requestID = settlement.requestID {
+            guard let request = settlementRequests[requestID] else { throw LifeValidationError.unknownSettlementRequest(requestID) }
+            guard request.counterpartyID == settlement.transfer.counterpartyID else {
+                throw LifeValidationError.requestCounterpartyMismatch(requestID)
+            }
+        }
+
+        // Amounts that the settlement made known are applied first, under the normal knowledge rules.
+        for promotion in settlement.promotions {
+            guard let current = obligations[promotion.obligationID] else { throw LifeValidationError.unknownObligation(promotion.obligationID) }
+            guard current.amount == promotion.previous else { throw LifeValidationError.staleAmountPromotion(promotion.obligationID) }
+            if promotion.applied.provenance.source == .automated {
+                guard case .inferred = promotion.applied.knowledge else {
+                    throw LifeValidationError.automatedPromotionMustBeInferred(promotion.obligationID)
+                }
+            }
+            try setObligationAmount(promotion.obligationID, promotion.applied, checkGroups: false)
+        }
+
+        var signedNet: Int64 = 0
+        for allocation in settlement.allocations {
+            guard let obligation = obligations[allocation.obligationID] else {
+                throw LifeValidationError.unknownObligation(allocation.obligationID)
+            }
+            guard obligation.counterpartyID == settlement.transfer.counterpartyID else {
+                throw LifeValidationError.obligationCounterpartyMismatch(obligation.id)
+            }
+            guard obligation.currency == settlement.transfer.amount.currency else {
+                throw LifeValidationError.obligationCurrencyMismatch(obligation.id)
+            }
+            guard obligation.isSettleable else { throw LifeValidationError.obligationNotSettleable(obligation.id) }
+            let applied = appliedMinorUnits(for: obligation.id) + allocation.appliedMinorUnits
+            if let upper = obligation.amount.knowledge.bounds.upper, applied > upper {
+                throw LifeValidationError.appliedExceedsObligation(obligation.id)
+            }
+            signedNet += obligation.direction.sign * allocation.appliedMinorUnits
+        }
+        // Net balance, not one-to-one: receivables count for me, payables against me.
+        guard signedNet == settlement.transfer.signedMinorUnits else { throw LifeValidationError.settlementNetMismatch }
+
+        settlements[settlement.id] = settlement
+        for allocation in settlement.allocations { refreshStatus(of: allocation.obligationID) }
+        try ensureGroupsConsistent(touching: settlement.promotions.map { .obligation($0.obligationID) })
+        refreshRequests(affecting: settlement.allocations.map(\.obligationID), also: settlement.requestID)
+    }
+
+    private mutating func removeSettlement(_ id: SettlementID, by: AssignmentProvenance) throws {
+        try requireValid(by)
+        guard let settlement = settlements[id] else { throw LifeValidationError.unknownSettlement(id) }
+        guard by.mayReplace(settlement.provenance) else { throw LifeValidationError.userAssignmentProtected }
+        settlements[id] = nil
+        // Inferences that rested on this settlement go away with it.
+        for promotion in settlement.promotions {
+            if var obligation = obligations[promotion.obligationID], obligation.amount == promotion.applied {
+                obligation.amount = promotion.previous
+                obligations[promotion.obligationID] = obligation
+            }
+        }
+        for allocation in settlement.allocations { refreshStatus(of: allocation.obligationID) }
+        for promotion in settlement.promotions { refreshStatus(of: promotion.obligationID) }
+        refreshRequests(affecting: settlement.allocations.map(\.obligationID), also: settlement.requestID)
+    }
+
+    /// Settled when the applied total reaches a known amount, partially settled when something has been
+    /// applied, open otherwise. A cancelled obligation stays cancelled.
+    private mutating func refreshStatus(of id: ObligationID) {
+        guard var obligation = obligations[id], obligation.status != .cancelled else { return }
+        let applied = appliedMinorUnits(for: id)
+        let status: ObligationStatus
+        if applied == 0 {
+            status = .open
+        } else if let known = obligation.amount.knowledge.knownValue, applied >= known {
+            status = .settled
+        } else {
+            status = .partiallySettled
+        }
+        if obligation.status != status {
+            obligation.status = status
+            obligations[id] = obligation
+        }
+    }
+
+    /// A request is fulfilled once every obligation it names is settled or cancelled, no matter which
+    /// settlements got it there (a request may be paid in several transfers, each recorded on its own).
+    private mutating func refreshRequests(affecting obligationIDs: [ObligationID], also explicit: SettlementRequestID?) {
+        let affected = Set(obligationIDs)
+        var ids = settlementRequests.values.filter { !affected.isDisjoint(with: Set($0.obligationIDs)) }.map(\.id)
+        if let explicit, !ids.contains(explicit) { ids.append(explicit) }
+        for id in ids { refreshRequestStatus(id) }
+    }
+
+    private mutating func refreshRequestStatus(_ id: SettlementRequestID) {
+        guard var request = settlementRequests[id], request.status != .cancelled else { return }
+        let allDone = request.obligationIDs.allSatisfy {
+            let status = obligations[$0]?.status
+            return status == .settled || status == .cancelled
+        }
+        let status: SettlementRequestStatus = allDone ? .fulfilled : .open
+        if request.status != status {
+            request.status = status
+            settlementRequests[id] = request
         }
     }
 
@@ -295,6 +693,12 @@ public struct LifeState: Codable, Equatable, Sendable {
 
     private func requireValid(_ provenance: AssignmentProvenance) throws {
         guard provenance.hasValidConfidence else { throw LifeValidationError.invalidConfidence }
+    }
+
+    private func requireAcceptable(old: AmountEntry, new: AmountEntry) throws {
+        try requireValid(new.provenance)
+        let decision = AmountUpdatePolicy.evaluate(old: old, new: new)
+        guard decision == .accept else { throw LifeValidationError.amountUpdateRejected(decision) }
     }
 
     private func validateType(_ assigned: Assigned<ActivityTypeID>) throws {
@@ -312,5 +716,25 @@ public struct LifeState: Codable, Equatable, Sendable {
         try requireValid(assignment.provenance)
         guard let tag = tags[assignment.tagID] else { throw LifeValidationError.unknownTag(assignment.tagID) }
         guard !tag.isArchived else { throw LifeValidationError.tagArchived(assignment.tagID) }
+    }
+
+    private func validateParticipant(_ assignment: ParticipantAssignment) throws {
+        try requireValid(assignment.provenance)
+        guard persons[assignment.personID] != nil else { throw LifeValidationError.unknownPerson(assignment.personID) }
+    }
+
+    private func validateCounterparty(_ id: PersonID) throws {
+        guard let person = persons[id] else { throw LifeValidationError.unknownPerson(id) }
+        guard !person.isSelf else { throw LifeValidationError.counterpartyIsSelf(id) }
+    }
+
+    /// A change to a member's amount must not make its group constraint impossible.
+    private func ensureGroupsConsistent(touching members: [AmountMemberRef]) throws {
+        for member in members {
+            guard let group = group(containing: member) else { continue }
+            if case let .contradiction(reason) = analyze(group) {
+                throw LifeValidationError.amountGroupContradiction(group.id, reason)
+            }
+        }
     }
 }

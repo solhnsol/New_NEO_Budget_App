@@ -1,5 +1,3 @@
-import NEOBudgetCore
-
 /// What the calendar last reported about an event. Kept so an Activity can still be shown, and explained
 /// to the user, after its event disappears from the calendar.
 public struct EventSummary: Codable, Hashable, Sendable {
@@ -85,6 +83,8 @@ public struct Activity: Codable, Hashable, Sendable {
     public var activityType: Assigned<ActivityTypeID>?
     public var area: Assigned<AreaID>?
     public var tags: [TagAssignment]
+    /// Who took part. A participant is a `Person`; calendar attendees are not assumed to be the same people.
+    public var participants: [ParticipantAssignment]
     public let createdAtUnixMilliseconds: Int64
 
     public init(
@@ -93,6 +93,7 @@ public struct Activity: Codable, Hashable, Sendable {
         activityType: Assigned<ActivityTypeID>? = nil,
         area: Assigned<AreaID>? = nil,
         tags: [TagAssignment] = [],
+        participants: [ParticipantAssignment] = [],
         createdAtUnixMilliseconds: Int64
     ) {
         self.id = id
@@ -100,6 +101,7 @@ public struct Activity: Codable, Hashable, Sendable {
         self.activityType = activityType
         self.area = area
         self.tags = tags
+        self.participants = participants.sorted { $0.personID < $1.personID }
         self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
     }
 
@@ -130,29 +132,5 @@ public struct Activity: Codable, Hashable, Sendable {
     }
 
     /// True when nothing but the association itself would be lost by deleting this Activity.
-    public var carriesNoMeaning: Bool { activityType == nil && area == nil && tags.isEmpty }
-}
-
-/// Connects one transaction to one Activity.
-///
-/// The link means "this spending belongs to that activity". It does **not** mean the transaction happened
-/// while the activity was going on: a movie ticket bought days earlier, train tickets before a trip, or a
-/// registration fee before a contest are all legitimately linked. No code may require time containment.
-public struct TransactionActivityLink: Codable, Hashable, Sendable {
-    public let transactionID: LedgerEntryID
-    public let activityID: ActivityID
-    public let createdAtUnixMilliseconds: Int64
-    public let provenance: AssignmentProvenance
-
-    public init(
-        transactionID: LedgerEntryID,
-        activityID: ActivityID,
-        createdAtUnixMilliseconds: Int64,
-        provenance: AssignmentProvenance
-    ) {
-        self.transactionID = transactionID
-        self.activityID = activityID
-        self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
-        self.provenance = provenance
-    }
+    public var carriesNoMeaning: Bool { activityType == nil && area == nil && tags.isEmpty && participants.isEmpty }
 }

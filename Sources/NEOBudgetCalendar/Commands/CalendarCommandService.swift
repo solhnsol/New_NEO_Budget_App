@@ -31,7 +31,7 @@ public actor CalendarCommandService {
     private var repository: any LifeRepository
     private let transactions: any TransactionSource
     private let configuration: CalendarServiceConfiguration
-    private let makeActivityID: @Sendable () -> ActivityID
+    private let makeID: @Sendable (IDKind) -> String
     private let now: @Sendable () -> Int64
 
     public init(
@@ -39,14 +39,14 @@ public actor CalendarCommandService {
         repository: any LifeRepository,
         transactions: any TransactionSource,
         configuration: CalendarServiceConfiguration,
-        makeActivityID: @escaping @Sendable () -> ActivityID,
+        makeID: @escaping @Sendable (IDKind) -> String,
         now: @escaping @Sendable () -> Int64
     ) {
         self.provider = provider
         self.repository = repository
         self.transactions = transactions
         self.configuration = configuration
-        self.makeActivityID = makeActivityID
+        self.makeID = makeID
         self.now = now
     }
 
@@ -66,7 +66,9 @@ public actor CalendarCommandService {
         let byEvent = life.activitiesByEvent()
         var relevantActivityIDs = Set(events.compactMap { byEvent[$0.key]?.id })
         for activity in life.activities.values where activity.isEventMissing { relevantActivityIDs.insert(activity.id) }
-        let linkedIDs = Set(life.linksByTransaction.values.filter { relevantActivityIDs.contains($0.activityID) }.map(\.transactionID))
+        let linkedIDs = Set(life.allocationSets.values.filter { set in
+            set.allocations.contains { $0.activityID.map(relevantActivityIDs.contains) ?? false }
+        }.compactMap { $0.allocations.first?.transactionID })
 
         var markers = Dictionary(
             transactions.transactions(occurringFrom: bounds.start, to: bounds.end).map { ($0.id, $0) },
@@ -124,6 +126,16 @@ public actor CalendarCommandService {
         case commitFailed(CommandRejection)
     }
 
+    /// Explains an actual transfer with the counterparty's open obligations (a read; nothing is recorded).
+    public func matchSettlement(_ transfer: ActualTransfer, requestID: SettlementRequestID? = nil) throws -> SettlementMatchResult {
+        SettlementMatcher.match(transfer, in: try repository.snapshot().state, requestID: requestID)
+    }
+
+    /// People most likely to join an activity, given who is already on it.
+    public func recommendParticipants(given chosen: [PersonID], limit: Int = 5) throws -> [ParticipantRecommendation] {
+        ParticipantAffinityCalculator.recommend(given: chosen, in: try repository.snapshot().state, now: now(), limit: limit)
+    }
+
     // MARK: Commands
 
     public func perform(_ command: CalendarCommand) async -> CalendarCommandOutcome {
@@ -139,6 +151,20 @@ public actor CalendarCommandService {
         case let .assignActivityType(input): return await assignActivityType(input)
         case let .assignTag(input): return await assignTag(input, remove: false)
         case let .unassignTag(input): return await assignTag(input, remove: true)
+        case let .setAllocations(input): return await setAllocations(input)
+        case let .upsertPerson(person): return applyLocal([.upsertPerson(person)], activityID: nil)
+        case let .addParticipant(input): return await participant(input, remove: false)
+        case let .removeParticipant(input): return await participant(input, remove: true)
+        case let .createObligation(input): return await createObligation(input)
+        case let .setObligationAmount(input): return setObligationAmount(input)
+        case let .cancelObligation(input): return cancelObligation(input)
+        case let .defineAmountGroup(input): return defineAmountGroup(input)
+        case let .removeAmountGroup(input): return removeAmountGroup(input)
+        case let .resolveAmountGroup(id): return resolveAmountGroup(id)
+        case let .createSettlementRequest(input): return createSettlementRequest(input)
+        case let .applySettlement(input): return applySettlement(input)
+        case let .recordManualSettlement(input): return recordManualSettlement(input)
+        case let .removeSettlement(input): return removeSettlement(input)
         }
     }
 
@@ -159,7 +185,7 @@ public actor CalendarCommandService {
         }
         guard let typeID = input.initialActivityType else { return .applied(AppliedCommand(event: event)) }
 
-        let activity = Activity.materialized(from: event, id: makeActivityID(), at: now())
+        let activity = Activity.materialized(from: event, id: ActivityID(rawValue: makeID(.activity)), at: now())
         let provenance = AssignmentProvenance.user(at: now())
         let changes: [LifeChange] = [.createActivity(activity), .setActivityType(activity.id, Assigned(typeID, provenance: provenance))]
         switch commit(changes) {
@@ -279,8 +305,9 @@ public actor CalendarCommandService {
             changes.append(.updateAssociation(activity.id, association.markedMissing(at: now())))
         case .removeLinks:
             let by = AssignmentProvenance.user(at: now())
-            for link in state.links(forActivity: activity.id) { changes.append(.removeLink(link.transactionID, by: by)) }
-            changes.append(activity.carriesNoMeaning ? .removeActivity(activity.id) : .updateAssociation(activity.id, association.markedMissing(at: now())))
+            for allocation in state.allocations(forActivity: activity.id) { changes.append(.removeAllocation(allocation.id, by: by)) }
+            let removable = activity.carriesNoMeaning && state.obligations(forActivity: activity.id).isEmpty
+            changes.append(removable ? .removeActivity(activity.id) : .updateAssociation(activity.id, association.markedMissing(at: now())))
         }
         switch commit(changes) {
         case let .success(revision):
@@ -292,36 +319,105 @@ public actor CalendarCommandService {
 
     // MARK: Meaning commands
 
+    /// Assigns the whole transaction to one activity (replacing any other division). A convenience over
+    /// `setAllocations`.
     private func linkTransaction(_ input: LinkTransactionInput) async -> CalendarCommandOutcome {
         guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
-        guard transactions.transaction(input.transactionID) != nil else { return .rejected(.transactionNotFound) }
-        let resolved: ResolvedActivity
-        switch await resolveActivity(input.target) {
-        case let .success(value): resolved = value
-        case let .failure(outcome): return outcome
-        }
-        if resolved.isEventMissing { return .rejected(.activityEventMissing) }
-
-        // Re-linking to the same activity is a no-op, unless a user decision replaces an automated one.
-        if let state = try? repository.snapshot().state,
-           let existing = state.link(for: input.transactionID),
-           existing.activityID == resolved.id,
-           !(existing.provenance.source == .automated && input.provenance.source == .user) {
-            return .applied(AppliedCommand(activityID: resolved.id))
-        }
-        // No time-containment check on purpose: a link is meaning, not a time window.
-        let link = TransactionActivityLink(
+        guard let marker = transactions.transaction(input.transactionID) else { return .rejected(.transactionNotFound) }
+        return await setAllocations(SetAllocationsInput(
             transactionID: input.transactionID,
-            activityID: resolved.id,
-            createdAtUnixMilliseconds: now(),
+            parts: [AllocationPartInput(target: .activity(input.target), amount: .exact(marker.amount.minorUnits))],
             provenance: input.provenance
-        )
-        return applyLocal(resolved.creation + [.setLink(link)], activityID: resolved.id)
+        ))
     }
 
+    /// Removes every allocation of the transaction, returning it to unallocated.
     private func unlinkTransaction(_ input: UnlinkTransactionInput) -> CalendarCommandOutcome {
         guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
-        return applyLocal([.removeLink(input.transactionID, by: input.by)], activityID: nil)
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        let existing = state.allocationSet(for: input.transactionID)?.allocations ?? []
+        guard !existing.isEmpty else { return .applied(AppliedCommand()) }
+        return applyLocal(existing.map { .removeAllocation($0.id, by: input.by) }, activityID: nil)
+    }
+
+    /// Divides a transaction among activities (or deliberately none). The ledger entry is never touched, the
+    /// transaction need not lie inside any activity's time range, and the portions may cover only part of it.
+    private func setAllocations(_ input: SetAllocationsInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let marker = transactions.transaction(input.transactionID) else { return .rejected(.transactionNotFound) }
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        let existing = state.allocationSet(for: input.transactionID)?.allocations ?? []
+
+        var creation: [LifeChange] = []
+        var desired: [(activityID: ActivityID?, knowledge: AmountKnowledge)] = []
+        // The same event named twice in one command resolves to one activity, created at most once.
+        var resolvedByEvent: [CalendarEventKey: ResolvedActivity] = [:]
+        for part in input.parts {
+            switch part.target {
+            case .nonActivity:
+                desired.append((nil, part.amount))
+            case let .activity(target):
+                var resolved: ResolvedActivity
+                if case let .event(key) = target, let known = resolvedByEvent[key] {
+                    resolved = ResolvedActivity(id: known.id, isEventMissing: known.isEventMissing, creation: [])
+                } else {
+                    switch await resolveActivity(target) {
+                    case let .success(value): resolved = value
+                    case let .failure(outcome): return outcome
+                    }
+                    if case let .event(key) = target { resolvedByEvent[key] = resolved }
+                }
+                // A new portion cannot go to an activity whose event is gone; an existing one may stay.
+                if resolved.isEventMissing, !existing.contains(where: { $0.activityID == resolved.id }) {
+                    return .rejected(.activityEventMissing)
+                }
+                creation += resolved.creation
+                desired.append((resolved.id, part.amount))
+            }
+        }
+
+        var changes = creation
+        // Removals first, so that replacing a division can never momentarily exceed the transaction.
+        for old in existing where !desired.contains(where: { $0.activityID == old.activityID }) {
+            changes.append(.removeAllocation(old.id, by: input.provenance))
+        }
+        var touched: [AllocationID] = []
+        for item in desired {
+            let entry: AmountEntry
+            do {
+                entry = try AmountEntry(currency: marker.amount.currency, knowledge: item.knowledge, provenance: input.provenance)
+            } catch let error as AmountValidationError {
+                return .rejected(.invalidAmount(error))
+            } catch {
+                return .rejected(.storageUnavailable)
+            }
+            if let old = existing.first(where: { $0.activityID == item.activityID }) {
+                touched.append(old.id)
+                // Asking for what is already there changes nothing, unless a user decision confirms an automated one.
+                let upgrade = old.provenance.source == .automated && input.provenance.source == .user
+                if old.amount.knowledge == item.knowledge && !upgrade { continue }
+                changes.append(.upsertAllocation(
+                    TransactionAllocation(
+                        id: old.id, transactionID: old.transactionID, activityID: old.activityID, amount: entry,
+                        provenance: input.provenance, createdAtUnixMilliseconds: old.createdAtUnixMilliseconds
+                    ),
+                    transactionTotal: marker.amount, flow: marker.flow
+                ))
+            } else {
+                let id = AllocationID(rawValue: makeID(.allocation))
+                touched.append(id)
+                changes.append(.upsertAllocation(
+                    TransactionAllocation(
+                        id: id, transactionID: input.transactionID, activityID: item.activityID, amount: entry,
+                        provenance: input.provenance, createdAtUnixMilliseconds: now()
+                    ),
+                    transactionTotal: marker.amount, flow: marker.flow
+                ))
+            }
+        }
+        let primary = desired.compactMap(\.activityID).first
+        guard !changes.isEmpty else { return .applied(AppliedCommand(activityID: primary, allocationIDs: touched)) }
+        return applyLocal(changes, activityID: primary, allocationIDs: touched)
     }
 
     private func assignActivityType(_ input: AssignActivityTypeInput) async -> CalendarCommandOutcome {
@@ -366,6 +462,210 @@ public actor CalendarCommandService {
                 activityID: resolved.id
             )
         }
+    }
+
+    // MARK: People
+
+    private func participant(_ input: ParticipantInput, remove: Bool) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        if remove {
+            guard let id = await existingActivity(input.activity) else { return .applied(AppliedCommand()) }
+            return applyLocal([.removeParticipant(id, input.personID, by: input.provenance)], activityID: id)
+        }
+        let resolved: ResolvedActivity
+        switch await resolveActivity(input.activity) {
+        case let .success(value): resolved = value
+        case let .failure(outcome): return outcome
+        }
+        return applyLocal(
+            resolved.creation + [.addParticipant(resolved.id, ParticipantAssignment(personID: input.personID, provenance: input.provenance))],
+            activityID: resolved.id
+        )
+    }
+
+    // MARK: Obligations and amounts
+
+    private func createObligation(_ input: CreateObligationInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        let entry: AmountEntry
+        do {
+            entry = try AmountEntry(currency: input.currency, knowledge: input.amount, provenance: input.provenance)
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+        var creation: [LifeChange] = []
+        var activityID: ActivityID?
+        if let target = input.activity {
+            switch await resolveActivity(target) {
+            case let .success(resolved):
+                creation = resolved.creation
+                activityID = resolved.id
+            case let .failure(outcome):
+                return outcome
+            }
+        }
+        let id = ObligationID(rawValue: makeID(.obligation))
+        let obligation = Obligation(
+            id: id, counterpartyID: input.counterpartyID, activityID: activityID, direction: input.direction, amount: entry,
+            provenance: input.provenance, createdAtUnixMilliseconds: now(),
+            originTransactionID: input.originTransactionID, label: input.label
+        )
+        return applyLocal(creation + [.createObligation(obligation)], activityID: activityID, obligationID: id)
+    }
+
+    private func setObligationAmount(_ input: SetObligationAmountInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let obligation = (try? repository.snapshot().state)?.obligations[input.obligationID] else {
+            return .rejected(.lifeValidation(.unknownObligation(input.obligationID)))
+        }
+        let entry: AmountEntry
+        do {
+            entry = try AmountEntry(currency: obligation.currency, knowledge: input.amount, provenance: input.provenance)
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+        return applyLocal([.setObligationAmount(input.obligationID, entry)], activityID: nil, obligationID: input.obligationID)
+    }
+
+    private func cancelObligation(_ input: CancelObligationInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.cancelObligation(input.obligationID, by: input.by)], activityID: nil, obligationID: input.obligationID)
+    }
+
+    private func defineAmountGroup(_ input: DefineAmountGroupInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        do {
+            let total = try AmountEntry(currency: input.currency, knowledge: input.total, provenance: input.provenance)
+            let id = AmountGroupID(rawValue: makeID(.amountGroup))
+            let group = try AmountGroup(id: id, total: total, members: input.members, createdAtUnixMilliseconds: now())
+            return applyLocal([.defineAmountGroup(group)], activityID: nil, amountGroupID: id)
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch let error as AmountGroupError {
+            return .rejected(.invalidAmountGroup(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+    }
+
+    private func removeAmountGroup(_ input: RemoveAmountGroupInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.removeAmountGroup(input.groupID, by: input.by)], activityID: nil, amountGroupID: input.groupID)
+    }
+
+    /// Promotes a group's last unresolved member to `inferred` when the constraint forces exactly one value.
+    /// With several unresolved members nothing is chosen: the constraint stays and the caller is told.
+    private func resolveAmountGroup(_ id: AmountGroupID) -> CalendarCommandOutcome {
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        guard let group = state.amountGroups[id], let analysis = state.analysis(ofGroup: id) else {
+            return .rejected(.lifeValidation(.unknownAmountGroup(id)))
+        }
+        switch analysis {
+        case .satisfied:
+            return .applied(AppliedCommand(amountGroupID: id))
+        case .underdetermined:
+            return .rejected(.amountGroupNotUniquelySolvable)
+        case let .contradiction(reason):
+            return .rejected(.lifeValidation(.amountGroupContradiction(id, reason)))
+        case let .uniqueSolution(member, minorUnits):
+            let evidence = InferenceEvidence(
+                amountGroupID: id,
+                summary: "The group total leaves exactly this amount for the only unresolved member."
+            )
+            do {
+                let entry = try AmountEntry(
+                    currency: group.currency,
+                    knowledge: .inferred(minorUnits, evidence),
+                    provenance: .automated(origin: "amount-group-solver", confidence: 1.0, at: now())
+                )
+                let change: LifeChange
+                switch member {
+                case let .obligation(obligationID): change = .setObligationAmount(obligationID, entry)
+                case let .allocation(allocationID): change = .setAllocationAmount(allocationID, entry)
+                }
+                return applyLocal([change], activityID: nil, amountGroupID: id)
+            } catch {
+                return .rejected(.storageUnavailable)
+            }
+        }
+    }
+
+    // MARK: Settlement
+
+    private func createSettlementRequest(_ input: CreateSettlementRequestInput) -> CalendarCommandOutcome {
+        do {
+            let id = SettlementRequestID(rawValue: makeID(.settlementRequest))
+            let request = try SettlementRequest(
+                id: id, counterpartyID: input.counterpartyID, obligationIDs: input.obligationIDs,
+                requestedAmount: input.requestedAmount, createdAtUnixMilliseconds: now()
+            )
+            return applyLocal([.createSettlementRequest(request)], activityID: nil, settlementRequestID: id)
+        } catch let error as SettlementValidationError {
+            return .rejected(.invalidSettlement(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+    }
+
+    private func applySettlement(_ input: ApplySettlementInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        do {
+            let id = SettlementID(rawValue: makeID(.settlement))
+            let settlement = try input.proposal.makeSettlement(
+                id: id, life: state, provenance: input.provenance, createdAtUnixMilliseconds: now()
+            )
+            return applyLocal([.recordSettlement(settlement)], activityID: nil, settlementID: id)
+        } catch let error as SettlementValidationError {
+            return .rejected(.invalidSettlement(error))
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+    }
+
+    private func recordManualSettlement(_ input: ManualSettlementInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
+        do {
+            var promotions: [AppliedPromotion] = []
+            for (obligationID, minorUnits) in input.confirmedAmounts.sorted(by: { $0.key < $1.key }) {
+                guard let obligation = state.obligations[obligationID] else {
+                    return .rejected(.lifeValidation(.unknownObligation(obligationID)))
+                }
+                let applied = try AmountEntry(
+                    currency: obligation.currency, knowledge: .exact(minorUnits), provenance: input.provenance
+                )
+                promotions.append(AppliedPromotion(obligationID: obligationID, previous: obligation.amount, applied: applied))
+            }
+            let id = SettlementID(rawValue: makeID(.settlement))
+            let settlement = try Settlement(
+                id: id,
+                transfer: input.transfer,
+                allocations: input.applications.map { try SettlementAllocation(obligationID: $0.obligationID, appliedMinorUnits: $0.appliedMinorUnits) },
+                promotions: promotions,
+                requestID: input.requestID,
+                provenance: input.provenance,
+                createdAtUnixMilliseconds: now()
+            )
+            return applyLocal([.recordSettlement(settlement)], activityID: nil, settlementID: id)
+        } catch let error as SettlementValidationError {
+            return .rejected(.invalidSettlement(error))
+        } catch let error as AmountValidationError {
+            return .rejected(.invalidAmount(error))
+        } catch {
+            return .rejected(.storageUnavailable)
+        }
+    }
+
+    private func removeSettlement(_ input: RemoveSettlementInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        return applyLocal([.removeSettlement(input.settlementID, by: input.by)], activityID: nil, settlementID: input.settlementID)
     }
 
     // MARK: Shared helpers
@@ -485,7 +785,7 @@ public actor CalendarCommandService {
                 return .failure(.providerFailure(.saveFailed(retryable: true, reason: "\(error)")))
             }
             guard let event else { return .failure(.rejected(.eventNotFound)) }
-            let activity = Activity.materialized(from: event, id: makeActivityID(), at: now())
+            let activity = Activity.materialized(from: event, id: ActivityID(rawValue: makeID(.activity)), at: now())
             return .success(ResolvedActivity(id: activity.id, isEventMissing: false, creation: [.createActivity(activity)]))
         }
     }
@@ -498,10 +798,23 @@ public actor CalendarCommandService {
         }
     }
 
-    private func applyLocal(_ changes: [LifeChange], activityID: ActivityID?) -> CalendarCommandOutcome {
+    private func applyLocal(
+        _ changes: [LifeChange],
+        activityID: ActivityID?,
+        allocationIDs: [AllocationID] = [],
+        obligationID: ObligationID? = nil,
+        amountGroupID: AmountGroupID? = nil,
+        settlementID: SettlementID? = nil,
+        settlementRequestID: SettlementRequestID? = nil
+    ) -> CalendarCommandOutcome {
         switch commit(changes) {
-        case let .success(revision): return .applied(AppliedCommand(activityID: activityID, lifeRevision: revision))
-        case let .failure(rejection): return .rejected(rejection)
+        case let .success(revision):
+            return .applied(AppliedCommand(
+                activityID: activityID, lifeRevision: revision, allocationIDs: allocationIDs, obligationID: obligationID,
+                amountGroupID: amountGroupID, settlementID: settlementID, settlementRequestID: settlementRequestID
+            ))
+        case let .failure(rejection):
+            return .rejected(rejection)
         }
     }
 

@@ -91,10 +91,27 @@ in-memory 구현은 후보 상태와 ledger 값을 복사해 모두 검증한 �
 결정 요약(상세·근거·테스트 대응은 [calendar-domain.md](calendar-domain.md)):
 - 새 순수 Swift target `NEOBudgetCalendar`(+ `NEOBudgetInMemoryCalendar`). 원장에는 쓰지 않고 `LedgerEntryID`/`Money`만 읽는다. EventKit·SwiftUI 코드는 없다.
 - 외부 캘린더가 이벤트 필드의 원본이고, `Activity`는 별도 OnAll entity다(안정 `ActivityID`, 이벤트와의 association은 선택적, 지연 생성, 이벤트 삭제 시 `eventMissing`으로 보존, 이벤트 없는 `standalone` 가능).
-- `TransactionActivityLink`는 시간 포함 관계가 아니라 의미 관계다(영화표·KTX·참가비 사전 구매 허용). `Activity 없음`은 정상(활동 외 소비). relation 종류(during/forActivity)는 필요가 생길 때까지 만들지 않는다.
+- 거래–활동 연결은 시간 포함 관계가 아니라 의미 관계다(영화표·KTX·참가비 사전 구매 허용). `Activity 없음`은 정상(활동 외 소비). relation 종류(during/forActivity)는 필요가 생길 때까지 만들지 않는다. **(1거래:1활동 `TransactionActivityLink`는 D010에서 `TransactionAllocation`으로 대체되었다.)**
 - 모든 자동 배정은 provenance(출처·신뢰도)를 가지며 **자동은 사용자 결정을 덮어쓰거나 지울 수 없고**, 신뢰도 부족(기본 0.85 미만, 값 없음)은 저장하지 않는다. Tag는 사용자의 기존 태그만 선택 가능하고 자동 생성 경로가 없다. Category는 canonical ID만 허용하고 `unclassified`가 명시적 상태다.
 - `CalendarEventID`는 provider가 발급한 **불투명 토큰**이며 반복·식별자 안정성 가정을 코드에 두지 않는다. 반복 scope는 의도(`RecurrenceScope`)만 표현하고 provider가 지원 범위를 선언한다.
 - UI/adapter 경계는 `CalendarCommand`/`CalendarCommandService`/`DayTimeline` read model이다. 쓰기 순서는 캘린더 먼저, 로컬 나중, 실패는 typed 결과(`partiallyApplied` 포함).
 - drag/resize는 순수 정책(15분 snap, 줌 5분, 최소 15분, 겹침·자정 넘김 허용, 선택일 clip)이며 gesture UI는 만들지 않았다.
 
 보류(Mac/Xcode 필요): EventKit adapter, SwiftUI, 권한, EKEvent identifier 안정성, 반복 이벤트 의미, 종일 종료일 관례, 변경 통지. 보류(Mac 무관): command 멱등성, 의도 로그 복구, undo, 이벤트 ID 변경 시 재바인딩, 비선형 시간 축, merchant DB/LLM, durable 저장소.
+
+## D010 — 거래 분할·금액 지식·정산: 사용자 제품 요구에 따른 도메인 수정 (Windows 범위)
+
+배경: D009의 1거래:1활동 링크는 현실적인 정산(80,000원 송금을 세 활동에 나눔)과 아직 거래가 없는 경제적 관계(상대가 점심을 결제해 내가 줄 돈이 생김)를 표현하지 못했다. 잘못된 abstraction을 호환성 때문에 유지하지 않고 모델을 바꿨다.
+
+원칙(아키텍처 원칙으로 명시): OnAll은 불완전한 정보를 버리거나 억지로 확정하지 않고 알고 있는 수준 그대로 저장해 후속 evidence로 정밀하게 만든다. 실제 송금액이 obligation과 다르다는 것은 정산 실패의 증거가 아니라 다른 obligation이 상계되었을 가능성을 뜻한다. 유일하게 설명 가능한 경우에만 unknown을 자동으로 inferred로 승격한다.
+
+결정 요약(상세·근거·테스트 대응은 [calendar-domain.md](calendar-domain.md)):
+- **금액 지식** `AmountKnowledge`(unknown / range / estimated / inferred(evidence) / exact). inferred는 exact가 아니다. 사용자가 확정한 exact는 자동이 덮어쓰지 못하고, 자동은 지식을 약화하거나 알려진 범위와 모순되게 바꿀 수 없다(`AmountUpdatePolicy`). 집계(`AmountAggregate`)는 exact·inferred·estimated를 분리하고 하한/상한/미해결 수를 보존한다.
+- **거래 분할** `TransactionAllocation`이 1:1 링크를 대체한다(N:M, 부분 금액, 알 수 없는 금액, 명시적 "활동 외"). 배분 합은 거래 총액을 넘지 못하고 남은 금액(remainder)을 표현한다. 거래 시각은 활동 시간과 무관하다. 원장은 변경하지 않는다.
+- **"복합"은 category가 아니다.** 합계만 아는 구성요소는 `AmountGroup` 제약으로 보존하고(해석기는 유일 해일 때만 승격, 여럿이면 범위만 좁히고 선택하지 않음) canonical category에 복합을 추가하지 않는다.
+- **Obligation**(payable/receivable, 거래 없이 존재, 상태는 settlement에서 유도), **Person**(OnAll 계정 무관), **SettlementRequest**(OnAll이 만든 요청 기록, 실제 전송 없음), **Settlement/SettlementAllocation**(N:M, 부분 정산, 부호 있는 net이 송금액과 같아야 함).
+- **매처**는 단일 금액 비교가 아니라 열린 obligation 부분집합의 net을 송금액과 비교한다. 설명이 정확히 하나일 때만 `exactMatch/netMatch/inferredUniqueSolution`을 내고, 아니면 `ambiguous`(대안·합계 제약 보존)/`insufficientEvidence`/`noMatch`로 구분한다. 요청은 이미 맞는 설명들 사이에서 고르는 근거로만 쓴다.
+- **Participant**를 Activity의 축으로 추가(`누구와`). 친밀도는 co-occurrence의 순수 함수(소규모·최근 가중, 대규모 억제)이며 관계 label(친구·연인·가족)은 추론하지 않고 사용자 입력에서만 설정된다.
+- 기존 provenance 보호와 통합: 자동은 사용자 결정(링크·분할·참여자·금액·정산·group)을 덮어쓰거나 지우지 못하고, 낮은 신뢰도는 저장하지 않으며, 영구 실패는 typed 결과다.
+
+보류(Mac/서버/외부 API 필요): Contacts 연동과 attendee→Person 해석, 메시지 전송·수신, 실제 송금/은행 API, OnAll 계정·친구 서버와 공유 identity, 지오코딩, LLM 분류. 보류(무관): 다중 통화 정산, 정산 송금의 예산 처리(소비/이체/수입 분류), command 멱등성, 의도 로그 복구, durable 저장소.
