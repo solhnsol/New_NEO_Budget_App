@@ -1,7 +1,9 @@
 .build/
 .swiftpm/
 .tooling/
-*.xcodeproj/
+# Xcode: the project itself is tracked (Platform/iOS/OnAllApp); only per-user state is ignored.
+xcuserdata/
+*.xcuserstate
 .DS_Store
 
 # Local financial data and credentials are never repository fixtures.

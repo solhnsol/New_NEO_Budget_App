@@ -75,3 +75,19 @@ Platform/iOS/EventKitSpike/run-spike.sh             # EventKit 동작 관찰(탐
 ```
 
 결과는 `docs/eventkit-spike.md`.
+
+## OnAll iOS 앱
+
+`Platform/iOS/OnAllApp/OnAllApp.xcodeproj`가 실제 앱 타깃이다(임시 spike 아님). 루트 Swift Package를 로컬 의존성으로 연결하며 `NEOBudgetCore`, `NEOBudgetCalendar`, `NEOBudgetEventKit`, `NEOBudgetInMemoryCalendar`, `NEOBudgetInMemoryStorage`를 쓴다. 소스는 파일 시스템 동기화 그룹이라 `OnAllApp/` 아래에 파일을 추가하면 프로젝트에 자동 포함된다. Xcode에서 열어 실행하거나 명령줄로 빌드/테스트한다.
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+xcodebuild test -scheme OnAllApp -destination 'platform=iOS Simulator,name=iPhone 18 Pro'
+```
+
+- 실행 인자 `-demo`(스킴의 Arguments에서 켠다)는 기기 캘린더를 건드리지 않고 합성 일정과 지출로 화면을 채운다.
+- 실기기에서 실행하려면 Xcode에서 Signing Team을 지정한다. 프로젝트에는 팀을 넣지 않았다.
+- 번들 ID는 `dev.onall.app`(임시). 정식 ID는 배포 전에 정한다.
+- 단위 테스트는 레이아웃 계산(`TimelineGeometry`)을 다룬다. 도메인 규칙은 Swift Package 쪽 테스트가 소유한다.
+
+현재 범위: 읽기 전용 Day Timeline(주간 스트립, 종일 행, 시간 격자, 겹침 열 배치, 지출 마커, 상세 시트, 권한 요청/거부 화면). 원장과는 아직 연결하지 않아 실제 실행에서는 지출이 비어 있다. 드래그/리사이즈 편집은 다음 단계다.

@@ -1,0 +1,404 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		000000000000000000000240 /* NEOBudgetCore in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000200 /* NEOBudgetCore */; };
+		000000000000000000000241 /* NEOBudgetCalendar in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000201 /* NEOBudgetCalendar */; };
+		000000000000000000000242 /* NEOBudgetEventKit in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000202 /* NEOBudgetEventKit */; };
+		000000000000000000000243 /* NEOBudgetInMemoryCalendar in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000203 /* NEOBudgetInMemoryCalendar */; };
+		000000000000000000000244 /* NEOBudgetInMemoryStorage in Frameworks */ = {isa = PBXBuildFile; productRef = 000000000000000000000204 /* NEOBudgetInMemoryStorage */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		000000000000000000000131 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 000000000000000000000100 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 000000000000000000000110;
+			remoteInfo = OnAllApp;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		000000000000000000000103 /* OnAllApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OnAllApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000104 /* OnAllAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OnAllAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		000000000000000000000105 /* OnAllApp */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OnAllApp;
+			sourceTree = "<group>";
+		};
+		000000000000000000000106 /* OnAllAppTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OnAllAppTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		000000000000000000000113 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				000000000000000000000240 /* NEOBudgetCore in Frameworks */,
+				000000000000000000000241 /* NEOBudgetCalendar in Frameworks */,
+				000000000000000000000242 /* NEOBudgetEventKit in Frameworks */,
+				000000000000000000000243 /* NEOBudgetInMemoryCalendar in Frameworks */,
+				000000000000000000000244 /* NEOBudgetInMemoryStorage in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000116 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		000000000000000000000101 = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000105 /* OnAllApp */,
+				000000000000000000000106 /* OnAllAppTests */,
+				000000000000000000000102 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		000000000000000000000102 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				000000000000000000000103 /* OnAllApp.app */,
+				000000000000000000000104 /* OnAllAppTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		000000000000000000000110 /* OnAllApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000125 /* Build configuration list for PBXNativeTarget "OnAllApp" */;
+			buildPhases = (
+				000000000000000000000112 /* Sources */,
+				000000000000000000000113 /* Frameworks */,
+				000000000000000000000114 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000105 /* OnAllApp */,
+			);
+			name = OnAllApp;
+			packageProductDependencies = (
+				000000000000000000000200 /* NEOBudgetCore */,
+				000000000000000000000201 /* NEOBudgetCalendar */,
+				000000000000000000000202 /* NEOBudgetEventKit */,
+				000000000000000000000203 /* NEOBudgetInMemoryCalendar */,
+				000000000000000000000204 /* NEOBudgetInMemoryStorage */,
+			);
+			productName = OnAllApp;
+			productReference = 000000000000000000000103 /* OnAllApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		000000000000000000000111 /* OnAllAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 000000000000000000000128 /* Build configuration list for PBXNativeTarget "OnAllAppTests" */;
+			buildPhases = (
+				000000000000000000000115 /* Sources */,
+				000000000000000000000116 /* Frameworks */,
+				000000000000000000000117 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				000000000000000000000132 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				000000000000000000000106 /* OnAllAppTests */,
+			);
+			name = OnAllAppTests;
+			packageProductDependencies = (
+			);
+			productName = OnAllAppTests;
+			productReference = 000000000000000000000104 /* OnAllAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		000000000000000000000100 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					000000000000000000000110 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					000000000000000000000111 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 000000000000000000000110;
+					};
+				};
+			};
+			buildConfigurationList = 000000000000000000000122 /* Build configuration list for PBXProject "OnAllApp" */;
+			developmentRegion = ko;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				ko,
+				en,
+				Base,
+			);
+			mainGroup = 000000000000000000000101;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				000000000000000000000130 /* XCLocalSwiftPackageReference "../../.." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 000000000000000000000102 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				000000000000000000000110 /* OnAllApp */,
+				000000000000000000000111 /* OnAllAppTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		000000000000000000000114 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000117 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		000000000000000000000112 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		000000000000000000000115 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		000000000000000000000132 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 000000000000000000000110 /* OnAllApp */;
+			targetProxy = 000000000000000000000131 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		000000000000000000000120 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		000000000000000000000121 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 6.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		000000000000000000000123 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OnAll;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "일정을 타임라인에 보여주고 일정과 지출을 연결하기 위해 캘린더 전체 접근이 필요합니다.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		000000000000000000000124 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = OnAll;
+				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "일정을 타임라인에 보여주고 일정과 지출을 연결하기 위해 캘린더 전체 접근이 필요합니다.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		000000000000000000000126 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OnAllApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OnAllApp";
+			};
+			name = Debug;
+		};
+		000000000000000000000127 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 0.1;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OnAllApp.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OnAllApp";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		000000000000000000000122 /* Build configuration list for PBXProject "OnAllApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000120 /* Debug */,
+				000000000000000000000121 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000125 /* Build configuration list for PBXNativeTarget "OnAllApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000123 /* Debug */,
+				000000000000000000000124 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		000000000000000000000128 /* Build configuration list for PBXNativeTarget "OnAllAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				000000000000000000000126 /* Debug */,
+				000000000000000000000127 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		000000000000000000000130 /* XCLocalSwiftPackageReference "../../.." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		000000000000000000000200 /* NEOBudgetCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NEOBudgetCore;
+		};
+		000000000000000000000201 /* NEOBudgetCalendar */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NEOBudgetCalendar;
+		};
+		000000000000000000000202 /* NEOBudgetEventKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NEOBudgetEventKit;
+		};
+		000000000000000000000203 /* NEOBudgetInMemoryCalendar */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NEOBudgetInMemoryCalendar;
+		};
+		000000000000000000000204 /* NEOBudgetInMemoryStorage */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = NEOBudgetInMemoryStorage;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 000000000000000000000100 /* Project object */;
+}

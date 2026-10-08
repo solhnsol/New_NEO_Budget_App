@@ -4,6 +4,16 @@ import EventKit
 import Foundation
 import NEOBudgetCalendar
 
+/// What the app may do with the device calendar, without asking.
+public enum CalendarAccessState: Sendable, Equatable {
+    case notDetermined
+    case fullAccess
+    /// The user allowed adding events but not reading them. The app cannot show a timeline in this state.
+    case writeOnly
+    case denied
+    case restricted
+}
+
 /// `CalendarProvider` backed by the device calendar (EventKit). It owns one `EKEventStore` inside the actor and
 /// never lets an `EK*` object leave it. Behavior follows what `docs/eventkit-spike.md` observed.
 ///
@@ -30,6 +40,17 @@ public actor EventKitCalendarProvider: CalendarProvider {
         let identifier = dayZoneIdentifier ?? TimeZone.current.identifier
         dayZone = try DisplayTimeZone(identifier: identifier)
         store = EKEventStore()
+    }
+
+    /// The current authorization, read without prompting.
+    public nonisolated static func accessState() -> CalendarAccessState {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .notDetermined: return .notDetermined
+        case .fullAccess: return .fullAccess
+        case .writeOnly: return .writeOnly
+        case .restricted: return .restricted
+        default: return .denied
+        }
     }
 
     /// Asks the user for full calendar access. Returns whether it was granted.
