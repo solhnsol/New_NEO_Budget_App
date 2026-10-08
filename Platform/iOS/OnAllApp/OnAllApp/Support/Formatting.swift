@@ -53,6 +53,15 @@ enum Formatting {
         return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
     }
 
+    /// "10/7": the date of something that happened on another day.
+    static func shortDate(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = locale
+        formatter.timeZone = TimeZone(identifier: zoneIdentifier)
+        formatter.dateFormat = "M/d"
+        return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+    }
+
     static func timeRange(_ start: Int64, _ end: Int64, zoneIdentifier: String) -> String {
         time(start, zoneIdentifier: zoneIdentifier) + " – " + time(end, zoneIdentifier: zoneIdentifier)
     }

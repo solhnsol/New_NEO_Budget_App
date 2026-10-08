@@ -33,14 +33,15 @@ struct TimelineGeometry: Equatable {
     /// The nearest minute at a vertical position, clamped to the day.
     func minute(atY y: CGFloat) -> Int { axis.minute(atY: y) }
 
-    func blockFrame(_ block: EventBlock, totalWidth: CGFloat) -> CGRect {
+    /// An expanded block takes the whole width (it opens over its neighbours); otherwise it keeps its overlap column.
+    func blockFrame(_ block: EventBlock, totalWidth: CGFloat, expanded: Bool = false) -> CGRect {
         let available = max(0, totalWidth - gutterWidth - markerRailWidth)
-        let columns = CGFloat(max(1, block.layout.columnCount))
+        let columns = expanded ? 1 : CGFloat(max(1, block.layout.columnCount))
         let columnWidth = available / columns
         let top = y(minute: block.displayStartMinute)
         let bottom = y(minute: block.displayEndMinute)
         return CGRect(
-            x: gutterWidth + columnWidth * CGFloat(block.layout.column),
+            x: gutterWidth + columnWidth * CGFloat(expanded ? 0 : block.layout.column),
             y: top,
             width: max(0, columnWidth - columnSpacing),
             height: max(minimumBlockHeight, bottom - top - 1)

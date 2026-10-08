@@ -104,6 +104,9 @@ final class TimelineEditor {
     private(set) var focus: ClosedRange<Int>?
     /// The event being edited. `nil` while only a focus exists means a new event is being placed.
     private(set) var selectedKey: CalendarEventKey?
+    /// The event opened in place to show what it means and every linked transaction. Only one at a time, and never
+    /// together with edit mode: time adjustment and reading details are separate.
+    private(set) var expandedKey: CalendarEventKey?
     private(set) var scrollRequest: ScrollRequest?
     private(set) var timeline: DayTimeline?
     private let parameters = TimelineAxis.Parameters.standard
@@ -141,20 +144,36 @@ final class TimelineEditor {
         return TimelineAxis.browse(for: timeline, parameters: parameters)
     }
 
-    private func axis(for focus: ClosedRange<Int>?) -> TimelineAxis {
-        let browse = browseAxis
-        guard let focus else { return browse }
-        return browse.expanded(over: focus, scale: parameters.editScale)
+    /// The axis for a view shape: the browse axis, with the edit window enlarged and/or one event opened over its own range.
+    private func axis(focus: ClosedRange<Int>?, expanded: CalendarEventKey?) -> TimelineAxis {
+        var result = browseAxis
+        if let focus { result = result.expanded(over: focus, scale: parameters.editScale) }
+        if let spec = expansion(for: expanded) { result = result.expanded(over: spec.window, scale: spec.scale) }
+        return result
     }
 
-    /// What the grid draws right now: folded in browse mode, enlarged around the focus in edit mode.
-    var geometry: TimelineGeometry { TimelineGeometry(axis: axis(for: focus)) }
+    private var currentAxis: TimelineAxis { axis(focus: focus, expanded: expandedKey) }
+
+    /// The minutes an expanded event occupies and how large they are drawn: large enough that the block is as tall as its
+    /// content needs, but never smaller than browse scale.
+    private func expansion(for key: CalendarEventKey?) -> (window: ClosedRange<Int>, scale: CGFloat)? {
+        guard let key, let block = timeline?.blocks.first(where: { $0.eventKey == key }) else { return nil }
+        let lower = block.displayStartMinute
+        let upper = max(block.displayEndMinute, lower + 1)
+        let needed = ExpandedBlockPlan.height(for: block)
+        return (lower...upper, max(parameters.browseScale, needed / CGFloat(upper - lower)))
+    }
+
+    /// What the grid draws right now: folded in browse mode, enlarged around the focus in edit mode, with at most one
+    /// event opened in place.
+    var geometry: TimelineGeometry { TimelineGeometry(axis: currentAxis) }
 
     /// The model reports the timeline it now shows. A selected event is followed to wherever it is now; if it is gone
     /// (deleted elsewhere) edit mode ends quietly. Nothing re-centres under a gesture or a pending decision.
     func timelineDidChange(_ new: DayTimeline) {
-        let before = axis(for: focus)
+        let before = currentAxis
         timeline = new
+        if let key = expandedKey, !new.blocks.contains(where: { $0.eventKey == key }) { expandedKey = nil }      // it is gone
         guard let key = selectedKey else { return }
         guard let block = new.blocks.first(where: { $0.eventKey == key }) else {
             setFocus(nil, selected: nil, anchorMinute: nil, from: before)
@@ -169,11 +188,14 @@ final class TimelineEditor {
     }
 
     /// Switches the axis and, if asked, scrolls so `anchorMinute` stays where it was on screen.
-    private func setFocus(_ new: ClosedRange<Int>?, selected: CalendarEventKey?, anchorMinute: Int?, from old: TimelineAxis) {
+    private func setFocus(
+        _ new: ClosedRange<Int>?, selected: CalendarEventKey?, expanded: CalendarEventKey? = nil, anchorMinute: Int?, from old: TimelineAxis
+    ) {
         focus = new
         selectedKey = selected
+        expandedKey = expanded
         guard let anchorMinute else { return }
-        let delta = axis(for: new).y(minute: anchorMinute) - old.y(minute: anchorMinute)
+        let delta = currentAxis.y(minute: anchorMinute) - old.y(minute: anchorMinute)
         if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
     }
 
@@ -188,7 +210,7 @@ final class TimelineEditor {
         }
         feedback = nil
         if selectedKey != block.eventKey || focus == nil {
-            setFocus(window(around: block), selected: block.eventKey, anchorMinute: pressMinute, from: axis(for: focus))
+            setFocus(window(around: block), selected: block.eventKey, anchorMinute: pressMinute, from: currentAxis)
             settlesAt = Date().addingTimeInterval(0.35)
         }
         return true
@@ -200,7 +222,7 @@ final class TimelineEditor {
         guard mode == .idle, timeline != nil else { return false }
         feedback = nil
         let window = browseAxis.editWindow(around: minute...minute, parameters: parameters)
-        setFocus(window, selected: nil, anchorMinute: minute, from: axis(for: focus))
+        setFocus(window, selected: nil, anchorMinute: minute, from: currentAxis)
         settlesAt = Date().addingTimeInterval(0.35)
         return true
     }
@@ -209,8 +231,32 @@ final class TimelineEditor {
     func exitEditMode() {
         guard mode == .idle, focus != nil else { return }
         let anchor = selectedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.startMinute } ?? focus?.lowerBound
-        setFocus(nil, selected: nil, anchorMinute: anchor, from: axis(for: focus))
+        setFocus(nil, selected: nil, anchorMinute: anchor, from: currentAxis)
     }
+
+    /// Tap on an event: open it in place (closing any other, and leaving edit mode), or close it if it is already open.
+    /// The block's top stays where it is on screen. Ignored while a gesture or a decision is in progress.
+    func toggleExpanded(_ block: EventBlock) {
+        guard mode == .idle, timeline != nil else { return }
+        feedback = nil
+        let before = currentAxis
+        if expandedKey == block.eventKey {
+            setFocus(nil, selected: nil, expanded: nil, anchorMinute: block.displayStartMinute, from: before)
+        } else {
+            setFocus(nil, selected: nil, expanded: block.eventKey, anchorMinute: block.displayStartMinute, from: before)
+        }
+    }
+
+    /// Back to the plain folded day: closes the opened event and leaves edit mode.
+    func collapseAll() {
+        guard mode == .idle, focus != nil || expandedKey != nil else { return }
+        let anchor = expandedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.displayStartMinute }
+            ?? selectedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.startMinute }
+            ?? focus?.lowerBound
+        setFocus(nil, selected: nil, expanded: nil, anchorMinute: anchor, from: currentAxis)
+    }
+
+    func isExpanded(_ block: EventBlock) -> Bool { expandedKey == block.eventKey }
 
     /// Whether `block` is the one being edited, so its handles are shown.
     func isSelected(_ block: EventBlock) -> Bool { selectedKey == block.eventKey }
@@ -359,7 +405,7 @@ final class TimelineEditor {
     }
 
     private func run(_ command: CalendarCommand) async {
-        let before = axis(for: focus)          // what the user was looking at, to keep the event still when the axis re-centres
+        let before = currentAxis               // what the user was looking at, to keep the event still when the axis re-centres
         let outcome = await environment.perform(command)
         // Whatever happened, show the calendar's truth: the preview goes away only after the fresh read.
         await environment.reload()

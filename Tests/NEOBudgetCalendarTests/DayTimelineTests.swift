@@ -352,3 +352,37 @@ private extension Array {
     #expect(result.blocks.first?.revisionToken == "r7")
     #expect(result.allDay.first?.revisionToken == "r9")
 }
+
+@Test func anActivityBadgeCarriesTheMeaningInWordsSoAUIDoesNotLookItUp() throws {
+    let lunch = event("lunch", title: "점심", from: at(today, 12), to: at(today, 13))
+    let sungsu = Area(id: AreaID(rawValue: "sungsu"), displayName: "성수")
+    let dating = OnAllTag(id: TagID(rawValue: "dating"), name: "#데이트")
+    let state = try LifeState.empty.applying([
+        .upsertArea(sungsu),
+        .upsertTag(dating),
+        .upsertPerson(person("me", name: "나", isSelf: true)),
+        .upsertPerson(person("zed", name: "지은")),
+        .upsertPerson(person("amy", name: "가영")),
+        .createActivity(Activity.materialized(from: lunch, id: ActivityID(rawValue: "A"), at: 1)),
+        .setActivityType(ActivityID(rawValue: "A"), Assigned(.social, provenance: userProvenance())),
+        .setActivityArea(ActivityID(rawValue: "A"), Assigned(sungsu.id, provenance: userProvenance())),
+        .setActivityTag(ActivityID(rawValue: "A"), TagAssignment(tagID: dating.id, provenance: userProvenance())),
+        .addParticipant(ActivityID(rawValue: "A"), ParticipantAssignment(personID: pid("zed"), provenance: userProvenance())),
+        .addParticipant(ActivityID(rawValue: "A"), ParticipantAssignment(personID: pid("amy"), provenance: userProvenance())),
+        .addParticipant(ActivityID(rawValue: "A"), ParticipantAssignment(personID: pid("me"), provenance: userProvenance())),
+    ])
+    let result = DayTimelineBuilder.build(DayTimelineInput(day: today, timeZone: seoul, events: [lunch], life: state, transactions: []))
+    let display = try #require(result.blocks.first?.activity?.display)
+    #expect(display.typeName == "친구·사교" && display.areaName == "성수" && display.tagNames == ["#데이트"])
+    // The user comes first, then the others by name.
+    #expect(display.participantNames == ["나", "가영", "지은"])
+}
+
+@Test func anEventWithoutMeaningHasNoActivityAndAnActivityWithoutMeaningHasEmptyWords() throws {
+    let plain = event("plain", title: "메모", from: at(today, 9), to: at(today, 10))
+    let bare = event("bare", title: "그냥", from: at(today, 11), to: at(today, 12))
+    let state = try LifeState.empty.applying([.createActivity(Activity.materialized(from: bare, id: ActivityID(rawValue: "B"), at: 1))])
+    let result = DayTimelineBuilder.build(DayTimelineInput(day: today, timeZone: seoul, events: [plain, bare], life: state, transactions: []))
+    #expect(result.blocks.first { $0.title == "메모" }?.activity == nil)
+    #expect(result.blocks.first { $0.title == "그냥" }?.activity?.display == .empty)
+}

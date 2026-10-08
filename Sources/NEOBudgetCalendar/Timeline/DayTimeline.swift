@@ -41,6 +41,26 @@ public enum BlockState: String, Equatable, Sendable {
     case eventMissing
 }
 
+/// What an Activity means, as words a person reads: names resolved from the life state so a UI never looks them up
+/// itself. A name is absent when the Activity does not have that kind of meaning; an unknown or archived ID still
+/// resolves while its definition exists, because history must stay readable.
+public struct ActivityDisplay: Equatable, Sendable {
+    public let typeName: String?
+    public let areaName: String?
+    /// The user first (if they took part), then the others by name.
+    public let participantNames: [String]
+    public let tagNames: [String]
+
+    public init(typeName: String? = nil, areaName: String? = nil, participantNames: [String] = [], tagNames: [String] = []) {
+        self.typeName = typeName
+        self.areaName = areaName
+        self.participantNames = participantNames
+        self.tagNames = tagNames
+    }
+
+    public static let empty = ActivityDisplay()
+}
+
 public struct ActivityBadge: Equatable, Sendable {
     public let activityID: ActivityID
     public let activityType: ActivityTypeID?
@@ -49,10 +69,12 @@ public struct ActivityBadge: Equatable, Sendable {
     public let participantIDs: [PersonID]
     /// Obligations of this activity that are not yet settled.
     public let openObligationCount: Int
+    /// The same meaning in words.
+    public let display: ActivityDisplay
 
     public init(
         activityID: ActivityID, activityType: ActivityTypeID?, areaID: AreaID?, tagIDs: [TagID],
-        participantIDs: [PersonID], openObligationCount: Int
+        participantIDs: [PersonID], openObligationCount: Int, display: ActivityDisplay = .empty
     ) {
         self.activityID = activityID
         self.activityType = activityType
@@ -60,6 +82,7 @@ public struct ActivityBadge: Equatable, Sendable {
         self.tagIDs = tagIDs
         self.participantIDs = participantIDs
         self.openObligationCount = openObligationCount
+        self.display = display
     }
 }
 

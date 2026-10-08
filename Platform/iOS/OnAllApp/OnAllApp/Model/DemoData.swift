@@ -80,6 +80,41 @@ private extension TimedRange {
     }
 }
 
+/// Meaning for the demo events (type, area, people, tags), as the initial state of the life repository. Nothing here
+/// is real data; it only gives the expanded event something to show.
+enum DemoLife {
+    static func initialState(events: [CalendarEvent]) -> LifeState {
+        func provenance() -> AssignmentProvenance { .user(at: 1, evidenceVersion: nil) }
+        let sungsu = Area(id: AreaID(rawValue: "demo-sungsu"), displayName: "성수")
+        let sinchon = Area(id: AreaID(rawValue: "demo-sinchon"), displayName: "신촌")
+        let gathering = Tag(id: TagID(rawValue: "demo-gathering"), name: "#모임")
+        let people = [
+            Person(id: PersonID(rawValue: "demo-me"), displayName: "나", isSelf: true),
+            Person(id: PersonID(rawValue: "demo-jieun"), displayName: "지은"),
+            Person(id: PersonID(rawValue: "demo-gayoung"), displayName: "가영"),
+            Person(id: PersonID(rawValue: "demo-minsu"), displayName: "민수"),
+        ]
+        var changes: [LifeChange] = [.upsertArea(sungsu), .upsertArea(sinchon), .upsertTag(gathering)] + people.map { .upsertPerson($0) }
+
+        func describe(_ title: String, type: ActivityTypeID, area: Area?, people ids: [String], tag: Tag? = nil) {
+            guard let event = events.first(where: { $0.title == title }) else { return }
+            let id = ActivityID(rawValue: "demo-activity-\(title)")
+            changes.append(.createActivity(Activity.materialized(from: event, id: id, at: 1)))
+            changes.append(.setActivityType(id, Assigned(type, provenance: provenance())))
+            if let area { changes.append(.setActivityArea(id, Assigned(area.id, provenance: provenance()))) }
+            if let tag { changes.append(.setActivityTag(id, TagAssignment(tagID: tag.id, provenance: provenance()))) }
+            for person in ids {
+                changes.append(.addParticipant(id, ParticipantAssignment(personID: PersonID(rawValue: person), provenance: provenance())))
+            }
+        }
+        describe("점심 약속", type: .social, area: sungsu, people: ["demo-me", "demo-jieun", "demo-gayoung", "demo-minsu"], tag: gathering)
+        describe("스터디", type: .study, area: nil, people: ["demo-me", "demo-minsu"])
+        describe("알고리즘 수업", type: .study, area: sinchon, people: ["demo-me"])
+        describe("저녁 운동", type: .exercise, area: nil, people: ["demo-me", "demo-jieun"])
+        return (try? LifeState.empty.applying(changes)) ?? .empty
+    }
+}
+
 /// Links sample transactions to the demo events through the real command, so event blocks show linked spending inline.
 enum DemoLinks {
     private static let links: [(event: String, transactions: [String])] = [
@@ -102,7 +137,7 @@ enum DemoLinks {
     }
 }
 
-/// Holds the timeline in a state worth screenshotting (`-demo-preview edit|move|resize|create`). Only used with `-demo`;
+/// Holds the timeline in a state worth screenshotting (`-demo-preview expand|edit|move|resize|create`). Only used with `-demo`;
 /// it drives the same editor entry points a finger does.
 enum DemoPreview {
     @MainActor
@@ -114,6 +149,8 @@ enum DemoPreview {
             return block
         }
         switch mode {
+        case "expand":
+            if let block = timeline.blocks.first(where: { $0.title == "점심 약속" }) { editor.toggleExpanded(block) }
         case "edit":
             _ = selectClass()
         case "move":

@@ -1,9 +1,11 @@
 import NEOBudgetCalendar
 import SwiftUI
 
-/// How many linked transactions fit inside an event block, and what to say about the rest. Pure, so it is tested.
-/// A block's height reflects its time, so spending never makes it taller: past `maximumInline` rows (or when the
-/// block is short) the remainder folds into "+N", and a block too small for any row shows one summary chip instead.
+/// How many linked transactions a collapsed event block shows, and what it says about the rest. Pure, so it is tested.
+///
+/// Block height reflects time, so spending never makes a block taller. A collapsed block shows at most `maximumItems`
+/// transactions (the largest ones; see `AllocationOrdering`), then one "+N건 · 합계" row. When the block is too short
+/// for that, it falls back to a single summary row, and when it has no room for any row, to a chip in the title.
 struct InlineAllocationPlan: Equatable {
     /// Allocations shown as rows, in order.
     let shown: Int
@@ -15,7 +17,9 @@ struct InlineAllocationPlan: Equatable {
     /// A block with no room for rows still tells how many transactions are linked.
     let showsSummaryChip: Bool
 
-    static let maximumInline = 3
+    static let maximumItems = 2
+    /// Two transactions plus the "+N" row.
+    static let maximumRows = maximumItems + 1
     static let titleHeight: CGFloat = 16
     static let timeHeight: CGFloat = 14
     static let rowHeight: CGFloat = 15
@@ -24,16 +28,65 @@ struct InlineAllocationPlan: Equatable {
     static func make(allocationCount: Int, blockHeight: CGFloat, showsTime: Bool) -> InlineAllocationPlan {
         guard allocationCount > 0 else { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
         let free = blockHeight - verticalPadding - titleHeight - (showsTime ? timeHeight : 0)
-        let rows = max(0, min(maximumInline, Int((free / rowHeight).rounded(.down))))
+        let rows = max(0, min(maximumRows, Int((free / rowHeight).rounded(.down))))
         if rows == 0 { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: true) }
-        if allocationCount <= rows { return InlineAllocationPlan(shown: allocationCount, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
-        if rows == 1 { return InlineAllocationPlan(shown: 0, hidden: allocationCount, showsSummaryRow: true, showsSummaryChip: false) }
-        // One row is spent on "+N", so the others show real transactions.
-        let shown = rows - 1
+        if rows == 1 {
+            if allocationCount == 1 { return InlineAllocationPlan(shown: 1, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
+            return InlineAllocationPlan(shown: 0, hidden: allocationCount, showsSummaryRow: true, showsSummaryChip: false)
+        }
+        // With room for the "+N" row too (three rows) two real transactions are shown; with two rows, one plus "+N".
+        let itemRows = rows >= maximumRows ? maximumItems : rows
+        if allocationCount <= itemRows && allocationCount <= maximumItems {
+            return InlineAllocationPlan(shown: allocationCount, hidden: 0, showsSummaryRow: false, showsSummaryChip: false)
+        }
+        let shown = min(maximumItems, rows - 1)
         return InlineAllocationPlan(shown: shown, hidden: allocationCount - shown, showsSummaryRow: false, showsSummaryChip: false)
     }
 
     static func showsTime(blockHeight: CGFloat) -> Bool { blockHeight >= 44 }
+}
+
+/// The order linked transactions are listed in. Collapsed blocks lead with the largest; expanded blocks follow the day.
+enum AllocationOrdering {
+    /// The amount used for ranking, the best size there is: a settled or inferred amount, an estimate, or the least a
+    /// range can be. Only a transaction with no amount at all ranks last.
+    static func rankingAmount(_ item: AllocationItem) -> Int64 {
+        switch item.allocatedAmount {
+        case let .exact(value), let .inferred(value, _), let .estimated(value): return value
+        case .range: return item.allocatedAmount.bounds.lower
+        case .unknown: return 0
+        }
+    }
+
+    static func byAmountDescending(_ items: [AllocationItem]) -> [AllocationItem] {
+        items.sorted { lhs, rhs in
+            let (left, right) = (rankingAmount(lhs), rankingAmount(rhs))
+            if left != right { return left > right }
+            return (lhs.occurredAtUnixMilliseconds, lhs.allocationID) < (rhs.occurredAtUnixMilliseconds, rhs.allocationID)
+        }
+    }
+
+    static func byTime(_ items: [AllocationItem]) -> [AllocationItem] {
+        items.sorted { ($0.occurredAtUnixMilliseconds, $0.allocationID) < ($1.occurredAtUnixMilliseconds, $1.allocationID) }
+    }
+}
+
+/// "합계" for a block's linked transactions without ever mixing currencies or looking more certain than it is.
+/// Refunds subtract. Only what is settled counts toward the number; anything unsettled is said out loud.
+enum LinkedTotal {
+    static func text(spend: [AmountAggregate], refunds: [AmountAggregate]) -> String? {
+        let currencies = Set(spend.map(\.currency) + refunds.map(\.currency)).sorted()
+        let parts: [String] = currencies.compactMap { currency in
+            let spent = spend.first { $0.currency == currency }
+            let returned = refunds.first { $0.currency == currency }
+            let net = (spent?.knownMinorUnits ?? 0) - (returned?.knownMinorUnits ?? 0)
+            let unresolved = (spent?.unresolvedCount ?? 0) + (returned?.unresolvedCount ?? 0)
+            let amount = Formatting.money(net, currency: currency)
+            if unresolved == 0 { return amount }
+            return net == 0 ? "금액 미정 \(unresolved)건" : "\(amount) 외 미정 \(unresolved)건"
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 struct EventBlockView: View {
@@ -46,13 +99,14 @@ struct EventBlockView: View {
         let missing = block.state == .eventMissing
         let showsTime = InlineAllocationPlan.showsTime(blockHeight: height)
         let plan = InlineAllocationPlan.make(allocationCount: block.allocations.count, blockHeight: height, showsTime: showsTime)
+        let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 3) {
                 if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
                 Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
                 if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
                 Spacer(minLength: 2)
-                if plan.showsSummaryChip, let total = block.allocatedSpend.first {
+                if plan.showsSummaryChip, let total {
                     SummaryChip(count: block.allocations.count, total: total)
                 }
             }
@@ -60,21 +114,13 @@ struct EventBlockView: View {
                 Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
             }
-            ForEach(Array(block.allocations.prefix(plan.shown)), id: \.allocationID) { item in
+            ForEach(Array(AllocationOrdering.byAmountDescending(block.allocations).prefix(plan.shown)), id: \.allocationID) { item in
                 AllocationRow(item: item)
             }
-            if plan.showsSummaryRow, let total = block.allocatedSpend.first {
-                HStack(spacing: 3) {
-                    Image(systemName: "creditcard").font(.system(size: 8))
-                    Text("\(plan.hidden)건")
-                    Spacer(minLength: 2)
-                    Text(Formatting.aggregate(total)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
-                }
-                .font(.system(size: 10)).foregroundStyle(Color.orange)
-                .frame(height: InlineAllocationPlan.rowHeight - 2)
+            if plan.showsSummaryRow {
+                MoreRow(label: "\(plan.hidden)건", total: total, color: .orange)
             } else if plan.hidden > 0 {
-                Text("+\(plan.hidden)건").font(.system(size: 10).weight(.semibold)).foregroundStyle(.secondary)
-                    .frame(height: InlineAllocationPlan.rowHeight - 2, alignment: .leading)
+                MoreRow(label: "+\(plan.hidden)건", total: total, color: .secondary)
             }
             Spacer(minLength: 0)
         }
@@ -115,14 +161,33 @@ private struct AllocationRow: View {
     }
 }
 
+/// "+2건 · 합계 12,300원": what the rows above do not show, and everything together.
+private struct MoreRow: View {
+    let label: String
+    let total: String?
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 3) {
+            Text(label).font(.system(size: 10).weight(.semibold))
+            Spacer(minLength: 2)
+            if let total {
+                Text("합계 \(total)").font(.system(size: 10)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+            }
+        }
+        .foregroundStyle(color)
+        .frame(height: InlineAllocationPlan.rowHeight - 2)
+    }
+}
+
 private struct SummaryChip: View {
     let count: Int
-    let total: AmountAggregate
+    let total: String
 
     var body: some View {
         HStack(spacing: 2) {
             Image(systemName: "creditcard.fill").font(.system(size: 8))
-            Text("\(count)건 \(Formatting.aggregate(total))").lineLimit(1).minimumScaleFactor(0.6)
+            Text("\(count)건 \(total)").lineLimit(1).minimumScaleFactor(0.6)
         }
         .font(.system(size: 9).weight(.semibold))
         .foregroundStyle(Color.orange)

@@ -2,14 +2,13 @@ import NEOBudgetCalendar
 import SwiftUI
 import UIKit
 
+/// What opens a detail sheet. Event blocks do not: they expand in place.
 enum TimelineSelection: Identifiable {
-    case block(EventBlock)
     case allDay(AllDayItem)
     case marker(TransactionMarkerItem)
 
     var id: String {
         switch self {
-        case let .block(block): return "block-" + block.id.rawValue
         case let .allDay(item): return "allday-" + item.id.rawValue
         case let .marker(marker): return "marker-" + marker.transactionID.rawValue
         }
@@ -44,7 +43,7 @@ struct TimelineGridView: View {
                     let width = size.size.width
                     ZStack(alignment: .topLeading) {
                         Color.clear.contentShape(Rectangle())
-                            .onTapGesture { editor.exitEditMode() }
+                            .onTapGesture { editor.collapseAll() }
                             .frame(width: width, height: geometry.contentHeight)
                         ForEach(marks, id: \.elapsedMinute) { mark in
                             HourRow(mark: mark, geometry: geometry, width: width)
@@ -52,9 +51,15 @@ struct TimelineGridView: View {
                         ForEach(geometry.axis.foldedSegments, id: \.startMinute) { segment in
                             FoldRow(segment: segment, geometry: geometry, width: width)
                         }
-                        ForEach(timeline.blocks, id: \.id) { block in
-                            let frame = geometry.blockFrame(block, totalWidth: width)
-                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onTap: { onSelect(.block(block)) })
+                        ForEach(timeline.blocks.filter { !editor.isExpanded($0) }, id: \.id) { block in
+                            let frame = frame(of: block, width: width)
+                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                        }
+                        // The opened event is drawn last so it sits over its neighbours.
+                        ForEach(timeline.blocks.filter { editor.isExpanded($0) }, id: \.id) { block in
+                            let frame = frame(of: block, width: width)
+                            QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone)
+                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
                         }
                         MarkerRail(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
                         if let frame = editor.previewFrame(totalWidth: width), let preview = editor.preview {
@@ -66,9 +71,11 @@ struct TimelineGridView: View {
                         if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
                     }
                     .background { gestureHost(width: width, geometry: geometry) }
+                    .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width) }
                 }
                 .frame(height: geometry.contentHeight)
                 .animation(Self.transition, value: editor.focus)
+                .animation(Self.transition, value: editor.expandedKey)
                 // Scroll anchors need real layout frames; `offset` does not move a view's frame.
                 .background(alignment: .top) {
                     VStack(spacing: 0) {
@@ -146,13 +153,29 @@ struct TimelineGridView: View {
 
     private func editHit(at point: CGPoint, width: CGFloat) -> EditHit? {
         guard editor.isEditing, let block = selectedBlock else { return nil }
-        let frame = editor.geometry.blockFrame(block, width: width)
+        let frame = frame(of: block, width: width)
         return EditHit.hit(point, frame: frame, canResizeStart: !block.continuesFromPreviousDay, canResizeEnd: !block.continuesToNextDay)
     }
 
     /// The topmost block under a point in grid coordinates.
     private func block(at point: CGPoint, width: CGFloat) -> EventBlock? {
-        timeline.blocks.last { editor.geometry.blockFrame($0, totalWidth: width).contains(point) }
+        // The opened event is on top, then later blocks over earlier ones.
+        let ordered = timeline.blocks.filter { !editor.isExpanded($0) } + timeline.blocks.filter { editor.isExpanded($0) }
+        return ordered.last { frame(of: $0, width: width).contains(point) }
+    }
+
+    private func frame(of block: EventBlock, width: CGFloat) -> CGRect {
+        editor.geometry.blockFrame(block, totalWidth: width, expanded: editor.isExpanded(block))
+    }
+
+    /// After an event opens, bring all of it into view; its content is taller than the block was.
+    private func revealWhenOpened(_ key: CalendarEventKey?, width: CGFloat) {
+        guard let key, let block = timeline.blocks.first(where: { $0.eventKey == key }) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(340))          // after the open animation settles
+            guard editor.expandedKey == key else { return }
+            reveal = EditGestureHost.RevealRequest(rect: frame(of: block, width: width))
+        }
     }
 
     /// A day that already fits about one screen stays at the top. A taller one opens near the current time (today).
@@ -170,28 +193,35 @@ private extension TimelineGeometry {
 
 // MARK: Pieces
 
-/// One event. In edit mode the selected event also shows its two resize handles; otherwise there are none.
+/// One event. A tap opens it in place (or closes it). In edit mode the selected event also shows its two resize
+/// handles; otherwise there are none. The two never happen together.
 private struct BlockCell: View {
     let block: EventBlock
     let frame: CGRect
     let zoneIdentifier: String
     let editor: TimelineEditor
-    let onTap: () -> Void
 
     var body: some View {
         let selected = editor.isSelected(block)
-        EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height)
-            .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
-            .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
-            .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-            .overlay(alignment: .topLeading) {
-                if selected && !block.continuesFromPreviousDay { HandleDot().position(x: frame.width - EditHit.handleInset, y: 0) }
+        let expanded = editor.isExpanded(block)
+        Group {
+            if expanded {
+                ExpandedBlockView(block: block, zoneIdentifier: zoneIdentifier)
+            } else {
+                EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height)
+                    .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
+                    .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
             }
-            .overlay(alignment: .topLeading) {
-                if selected && !block.continuesToNextDay { HandleDot().position(x: EditHit.handleInset, y: frame.height) }
-            }
-            .offset(x: frame.minX, y: frame.minY)
-            .onTapGesture(perform: onTap)
+        }
+        .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            if selected && !block.continuesFromPreviousDay { HandleDot().position(x: frame.width - EditHit.handleInset, y: 0) }
+        }
+        .overlay(alignment: .topLeading) {
+            if selected && !block.continuesToNextDay { HandleDot().position(x: EditHit.handleInset, y: frame.height) }
+        }
+        .offset(x: frame.minX, y: frame.minY)
+        .onTapGesture { editor.toggleExpanded(block) }
     }
 }
 
@@ -322,5 +352,42 @@ private struct MarkerRail: View {
             .offset(x: width - geometry.markerRailWidth, y: positions[index] - 10)
             .accessibilityLabel("지출 \(marker.title ?? "") \(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency))")
         }
+    }
+}
+
+/// Quarter-hour ticks beside an opened event: its own time axis, laid open. They appear only when the axis is large
+/// enough that a quarter hour is a comfortable distance, and never where an hour label already is.
+private struct QuarterMarks: View {
+    let block: EventBlock
+    let geometry: TimelineGeometry
+    let timeline: DayTimeline
+    let zone: DisplayTimeZone
+
+    var body: some View {
+        let start = block.displayStartMinute
+        let end = block.displayEndMinute
+        let quarter = geometry.y(minute: min(end, start + 15)) - geometry.y(minute: start)
+        if end > start, quarter >= 14 {
+            ForEach(Array(marks(start: start, end: end)), id: \.self) { minute in
+                Text(label(minute))
+                    .font(.system(size: 9).monospacedDigit()).foregroundStyle(.secondary)
+                    .frame(width: geometry.gutterWidth - 6, alignment: .trailing)
+                    .offset(y: geometry.y(minute: minute) - 6)
+                    .accessibilityHidden(true)
+            }
+        }
+    }
+
+    private func clockMinute(_ minute: Int) -> Int {
+        zone.minuteOfDay(of: timeline.dayStartUnixMilliseconds + Int64(minute) * 60_000)
+    }
+
+    private func marks(start: Int, end: Int) -> [Int] {
+        ((start + 1)..<end).filter { clockMinute($0) % 15 == 0 && clockMinute($0) % 60 != 0 }
+    }
+
+    private func label(_ minute: Int) -> String {
+        let clock = clockMinute(minute)
+        return String(format: "%d:%02d", clock / 60, clock % 60)
     }
 }

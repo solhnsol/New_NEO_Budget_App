@@ -104,9 +104,17 @@ final class AppModel {
     private func makeService() async throws {
         guard service == nil else { return }
         let source = try await ledger.transactionSource()
+        // The demo starts with meaning on its events (type, area, people); a real launch starts with none.
+        var initialLife = LifeState.empty
+        if isDemo {
+            let bounds = dayZone.dayBounds(selectedDay)
+            if let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) {
+                initialLife = DemoLife.initialState(events: events)
+            }
+        }
         let service = CalendarCommandService(
             provider: provider,
-            repository: InMemoryLifeRepository(),
+            repository: InMemoryLifeRepository(initialState: initialLife),
             transactions: source,
             configuration: CalendarServiceConfiguration(displayTimeZone: dayZone),
             makeID: { kind in "\(kind.rawValue)-\(UUID().uuidString)" },

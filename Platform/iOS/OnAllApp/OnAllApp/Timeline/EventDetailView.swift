@@ -1,7 +1,7 @@
 import NEOBudgetCalendar
 import SwiftUI
 
-/// Read-only details for a tapped block, all-day item or transaction marker. Editing arrives with the gesture work.
+/// Read-only details for a tapped all-day item or transaction marker. Event blocks open in place instead.
 struct EventDetailView: View {
     let selection: TimelineSelection
     let zoneIdentifier: String
@@ -10,7 +10,6 @@ struct EventDetailView: View {
         NavigationStack {
             List {
                 switch selection {
-                case let .block(block): blockSections(block)
                 case let .allDay(item): allDaySections(item)
                 case let .marker(marker): markerSections(marker)
                 }
@@ -22,22 +21,9 @@ struct EventDetailView: View {
 
     private var title: String {
         switch selection {
-        case let .block(block): return block.title
         case let .allDay(item): return item.title
         case let .marker(marker): return marker.title ?? "지출"
         }
-    }
-
-    @ViewBuilder
-    private func blockSections(_ block: EventBlock) -> some View {
-        Section {
-            row("시간", Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
-            if let calendar = block.calendarTitle { row("캘린더", calendar) }
-            if block.isRecurringInstance { row("반복", "반복 일정의 한 회차") }
-            if !block.isEditable { row("편집", "읽기 전용") }
-            if block.state == .eventMissing { Text("캘린더에서 삭제된 일정입니다. 연결된 지출 기록을 위해 마지막 상태로 보여줍니다.").font(.footnote) }
-        }
-        allocationSections(block.allocations, spend: block.allocatedSpend, refunds: block.allocatedRefunds)
     }
 
     @ViewBuilder

@@ -120,7 +120,23 @@ public enum DayTimelineBuilder {
                 areaID: activity.area?.value,
                 tagIDs: activity.tags.map(\.tagID).sorted(),
                 participantIDs: activity.participants.map(\.personID).sorted(),
-                openObligationCount: input.life.obligations(forActivity: activity.id).filter { $0.isSettleable }.count
+                openObligationCount: input.life.obligations(forActivity: activity.id).filter { $0.isSettleable }.count,
+                display: display(for: activity)
+            )
+        }
+
+        func display(for activity: Activity) -> ActivityDisplay {
+            let life = input.life
+            let people = activity.participants.compactMap { life.persons[$0.personID] }
+                .sorted { lhs, rhs in
+                    if lhs.isSelf != rhs.isSelf { return lhs.isSelf }
+                    return (lhs.displayName, lhs.id) < (rhs.displayName, rhs.id)
+                }
+            return ActivityDisplay(
+                typeName: activity.activityType.flatMap { life.activityTypes[$0.value]?.displayName },
+                areaName: activity.area.flatMap { life.areaCatalog.areasByID[$0.value]?.displayName },
+                participantNames: people.map(\.displayName),
+                tagNames: activity.tags.compactMap { life.tags[$0.tagID]?.name }.sorted()
             )
         }
 

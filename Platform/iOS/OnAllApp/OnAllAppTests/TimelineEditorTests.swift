@@ -484,3 +484,83 @@ private func busyDay() -> [CalendarEvent] {
     #expect(EditHit.hit(top, frame: frame, canResizeStart: false, canResizeEnd: true) == .body)
     #expect(EditHit.hit(CGPoint(x: top.x, y: top.y - 12), frame: frame, canResizeStart: false, canResizeEnd: true) == nil)
 }
+
+
+// MARK: Opening an event in place
+
+@MainActor @Test func tappingAnEventOpensItInPlaceAndTappingAgainClosesIt() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    let browse = h.editor.geometry
+    h.editor.toggleExpanded(block)
+    #expect(h.editor.isExpanded(block) && h.editor.expandedKey == block.eventKey)
+    let opened = h.editor.geometry
+    // The block's own minutes are drawn tall enough for its content, and it takes the full width.
+    let height = opened.y(minute: block.displayEndMinute) - opened.y(minute: block.displayStartMinute)
+    #expect(height >= ExpandedBlockPlan.height(for: block) - 1)
+    let frame = opened.blockFrame(block, totalWidth: 400, expanded: true)
+    #expect(frame.minX == opened.gutterWidth && frame.width >= 400 - opened.gutterWidth - opened.markerRailWidth - opened.columnSpacing - 0.001)
+    // Opening only grows the event's own minutes, so everything above it, including its top edge, stays exactly where it
+    // was on screen and no scroll correction is needed.
+    #expect(abs(opened.y(minute: block.displayStartMinute) - browse.y(minute: block.displayStartMinute)) < 0.001)
+    #expect(h.editor.scrollRequest == nil)
+
+    h.editor.toggleExpanded(block)
+    #expect(h.editor.expandedKey == nil && h.editor.geometry == browse)
+}
+
+@MainActor @Test func openingAnotherEventClosesTheFirstSoOnlyOneIsOpen() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let first = try h.block("수업")
+    let second = try h.block("저녁")
+    h.editor.toggleExpanded(first)
+    h.editor.toggleExpanded(second)
+    #expect(h.editor.expandedKey == second.eventKey && !h.editor.isExpanded(first))
+    let geometry = h.editor.geometry
+    #expect(geometry.y(minute: first.displayEndMinute) - geometry.y(minute: first.displayStartMinute) < ExpandedBlockPlan.height(for: first))
+}
+
+@MainActor @Test func readingDetailsAndAdjustingTimeNeverHappenTogether() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    h.editor.toggleExpanded(block)
+    // A long press closes the opened event and enters time editing.
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    #expect(h.editor.expandedKey == nil && h.editor.isEditing && h.editor.isSelected(block))
+    // A tap closes time editing and opens the event instead.
+    h.editor.toggleExpanded(block)
+    #expect(h.editor.expandedKey == block.eventKey && !h.editor.isEditing && h.editor.selectedKey == nil)
+    // Placing a new event also closes it.
+    #expect(h.editor.focusForCreate(atMinute: 15 * 60))
+    #expect(h.editor.expandedKey == nil && h.editor.isEditing)
+}
+
+@MainActor @Test func tappingEmptyTimeFoldsEverythingBack() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let browse = h.editor.geometry
+    h.editor.toggleExpanded(try h.block("회의"))
+    h.editor.collapseAll()
+    #expect(h.editor.expandedKey == nil && h.editor.geometry == browse)
+    #expect(h.editor.enterEditMode(for: try h.block("회의"), pressMinute: 10 * 60 + 20))
+    h.editor.collapseAll()
+    #expect(!h.editor.isEditing && h.editor.geometry == browse)
+}
+
+@MainActor @Test func tapsAreIgnoredWhileAGestureOrADecisionIsInProgress() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    #expect(h.editor.begin(.move, block: block, timeline: h.timeline, geometry: h.editor.geometry))
+    h.editor.toggleExpanded(try h.block("저녁"))                  // mid-drag: nothing opens
+    #expect(h.editor.expandedKey == nil && h.editor.isEditing)
+    h.editor.cancel()
+}
+
+@MainActor @Test func anOpenedEventThatDisappearsElsewhereClosesQuietly() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("저녁")
+    h.editor.toggleExpanded(block)
+    await h.provider.removeExternally(block.eventKey)
+    await h.editorReload()
+    #expect(h.editor.expandedKey == nil)
+}
