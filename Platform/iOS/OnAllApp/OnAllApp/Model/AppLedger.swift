@@ -21,6 +21,11 @@ actor AppLedger {
         self.repository = repository
     }
 
+    /// The ledger as the command service reads it: consumption only, with per-entry time precision and titles.
+    func transactionSource() throws -> LedgerTransactionSource {
+        LedgerTransactionSource(processing: try repository.processingSnapshot())
+    }
+
     /// Spending and refunds for the timeline. Money movement (transfers, card bill payments, income) is excluded
     /// by the projection, not here.
     func transactions() throws -> [TransactionMarker] {

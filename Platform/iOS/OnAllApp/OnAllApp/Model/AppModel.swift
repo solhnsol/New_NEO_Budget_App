@@ -22,6 +22,9 @@ final class AppModel {
     private(set) var selectedDay: LocalDate
     private(set) var timeline: DayTimeline?
     private(set) var week: [WeekStripDay] = []
+    private(set) var calendars: [CalendarDescriptor] = []
+    /// Created once the command service exists (after the first successful start). Gestures go through it.
+    private(set) var editor: TimelineEditor?
 
     let dayZone: DisplayTimeZone
     let isDemo: Bool
@@ -29,6 +32,7 @@ final class AppModel {
     private let provider: any CalendarProvider
     private let eventKit: EventKitCalendarProvider?
     private let ledger: AppLedger
+    private var service: CalendarCommandService?
     private let prepare: (@Sendable () async -> Void)?
     private var generation = 0
     private var observer: Task<Void, Never>?
@@ -87,8 +91,37 @@ final class AppModel {
                 return
             }
         }
+        do {
+            try await makeService()
+        } catch {
+            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+            return
+        }
         await reload()
         observeChanges()
+    }
+
+    private func makeService() async throws {
+        guard service == nil else { return }
+        let source = try await ledger.transactionSource()
+        let service = CalendarCommandService(
+            provider: provider,
+            repository: InMemoryLifeRepository(),
+            transactions: source,
+            configuration: CalendarServiceConfiguration(displayTimeZone: dayZone),
+            makeID: { kind in "\(kind.rawValue)-\(UUID().uuidString)" },
+            now: { Int64(Date().timeIntervalSince1970 * 1_000) }
+        )
+        self.service = service
+        let environment = TimelineEditor.Environment(
+            perform: { await service.perform($0) },
+            reload: { [weak self] in await self?.reload() },
+            supportedScopes: provider.supportedRecurrenceScopes,
+            zone: dayZone,
+            policy: .standard,
+            calendars: { [weak self] in self?.calendars ?? [] }
+        )
+        editor = TimelineEditor(environment: environment)
     }
 
     func requestAccess() async {
@@ -118,26 +151,17 @@ final class AppModel {
     // MARK: Loading
 
     func reload() async {
+        guard let service else { return }
         generation += 1
         let mine = generation
-        let first = selectedDay.adding(days: -selectedDay.weekday)
-        let from = dayZone.startOfDay(first)
-        let to = dayZone.startOfDay(first.adding(days: 7))
         do {
-            async let calendars = provider.calendars()
-            async let events = provider.events(from: from, to: to, calendarIDs: nil)
-            async let ledgerTransactions = ledger.transactions()
-            let (loadedCalendars, loadedEvents, transactions) = try await (calendars, events, ledgerTransactions)
+            let loadedTimeline = try await service.dayTimeline(for: selectedDay)
+            let loadedWeek = try await service.weekStrip(containing: selectedDay, firstWeekday: 0)
+            let loadedCalendars = try await provider.calendars()
             guard mine == generation else { return }
-            let input = DayTimelineInput(
-                day: selectedDay, timeZone: dayZone, calendars: loadedCalendars, events: loadedEvents,
-                life: .empty, transactions: transactions
-            )
-            timeline = DayTimelineBuilder.build(input)
-            week = WeekStripBuilder.build(
-                containing: selectedDay, firstWeekday: 0, timeZone: dayZone,
-                events: loadedEvents, life: .empty, transactions: transactions
-            )
+            timeline = loadedTimeline
+            week = loadedWeek
+            calendars = loadedCalendars
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == generation else { return }

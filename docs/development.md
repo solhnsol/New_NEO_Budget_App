@@ -96,3 +96,26 @@ xcodebuild test -scheme OnAllApp -destination 'platform=iOS Simulator,name=iPhon
 - `-demo`: 합성 캘린더 + 합성 원장(UI 회귀 확인용). 거래는 아래와 같은 실제 파이프라인을 거친다.
 - `-ledger-sample`: 실제 기기 캘린더 + 합성 원장. 실제 캘린더 데이터 위에서 원장 파생 거래 표시를 확인한다.
 합성 원장은 draft → assembler → 원자 승격을 통해 소비, 카드 사용, 환불, 그리고 소비가 아닌 월급·이체·카드 대금을 모두 담는다.
+
+### 일정 편집 제스처
+
+타임라인에서 일정을 직접 편집한다. 제스처 중에는 캘린더에 아무것도 쓰지 않고 로컬 미리보기만 갱신하며, 손을 뗄 때 `TimelineEditPolicy`로 확정한 범위를 `CalendarCommandService`에 **한 번** 보낸다.
+
+| 동작 | 제스처 |
+|---|---|
+| 이동 | 일정을 길게 누른 뒤 위아래로 드래그 (15분 단위로 맞춤, 길이 유지) |
+| 시작/끝 조절 | 일정의 위/아래 가장자리 핸들을 드래그 (최소 15분, 하단은 그날 끝까지) |
+| 생성 | 빈 곳을 길게 누른 뒤 드래그 → 제목·캘린더를 정하고 저장 |
+| 반복 일정 | 손을 뗀 시점에 "이 일정만 / 전체 일정"을 묻는다. 날짜가 바뀌는 변경은 "이 일정만"만 가능. `thisAndFuture`는 노출하지 않는다 |
+
+이동과 생성이 "길게 누르기"를 거치는 이유는 일반 스크롤과 구분하기 위해서다. 이 인식기는 SwiftUI 제스처가 아니라 스크롤뷰에 붙인 `UILongPressGestureRecognizer`(`LongPressDragHost`)다. SwiftUI의 `LongPressGesture.sequenced(before: DragGesture)`는 스크롤을 막아서 쓰지 않는다.
+
+실패하면 미리보기를 되돌리고 이유를 알린다: 다른 곳에서 바뀐 일정(`conflict`, 최신 내용으로 새로 고침), 읽기 전용 일정/캘린더, 저장 실패(재시도 가능하면 "다시 시도"가 사용자가 닫을 때까지 남는다), 삭제된 일정, 접근 꺼짐. 충돌 감지는 타임라인을 그릴 때의 `revisionToken`(`EventBlock.revisionToken`)을 기대 revision으로 보낸다.
+
+데모 모드 전용 디버그 인자: `-demo-preview move|resize|create`(드래그 중 상태로 멈춤), `-demo-fail-next-write`(첫 번째 쓰기를 실패시킴). 데모에는 읽기 전용 캘린더의 일정과 반복 일정이 들어 있다.
+
+테스트:
+- `OnAllAppTests/TimelineEditorTests`: 실제 `CalendarCommandService` + in-memory provider로 이동/리사이즈/생성/반복 범위/충돌/읽기 전용/저장 실패와 재시도, 미리보기와 확정 결과의 일치.
+- `CommandFlowContract`: 같은 흐름을 provider에 독립적으로 검사한다. in-memory는 `swift test`, EventKit은 `Platform/iOS/EventKitContractHost/run-contract.sh`.
+
+아직 없는 것: 드래그 중 화면 가장자리 자동 스크롤, 종일 일정의 제스처 편집, VoiceOver용 편집 동작(현재 제스처만 있다), 일정 삭제.

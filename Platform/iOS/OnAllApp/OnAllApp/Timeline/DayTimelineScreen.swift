@@ -56,7 +56,7 @@ struct DayTimelineScreen: View {
                 AllDayRow(items: timeline.allDay) { selection = .allDay($0) }
                 Divider()
             }
-            TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday) { selection = $0 }
+            TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: model.editor) { selection = $0 }
             Divider()
             SummaryBar(summary: timeline.summary)
         }
@@ -64,6 +64,7 @@ struct DayTimelineScreen: View {
             EventDetailView(selection: item, zoneIdentifier: timeline.timeZoneIdentifier)
                 .presentationDetents([.medium, .large])
         }
+        .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: timeline.timeZoneIdentifier))
     }
 
     private func openSettings() async {
@@ -131,5 +132,59 @@ private struct SummaryBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// Banner, recurring-scope dialog and new-event sheet for the timeline editor. Each is driven by the editor's mode,
+/// so dismissing any of them without choosing rolls the preview back.
+private struct EditingPresentations: ViewModifier {
+    let editor: TimelineEditor?
+    let calendars: [CalendarDescriptor]
+    let zoneIdentifier: String
+
+    func body(content: Content) -> some View {
+        guard let editor else { return AnyView(content) }
+        let scopeBinding = Binding(
+            get: { editor.mode == .choosingScope },
+            set: { if !$0 && editor.mode == .choosingScope { editor.cancel() } }
+        )
+        let nameBinding = Binding(
+            get: { editor.mode == .namingEvent },
+            set: { if !$0 && editor.mode == .namingEvent { editor.cancel() } }
+        )
+        return AnyView(
+            content
+                .overlay(alignment: .top) {
+                    if let feedback = editor.feedback {
+                        FeedbackBanner(feedback: feedback, retry: { editor.retry() }, dismiss: { editor.feedback = nil })
+                            .padding(.top, 8)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .task(id: feedback.id) {
+                                // A message offering "다시 시도" stays until the user acts on it or dismisses it.
+                                guard !feedback.canRetry else { return }
+                                try? await Task.sleep(for: .seconds(6))
+                                if editor.feedback?.id == feedback.id { editor.feedback = nil }
+                            }
+                    }
+                }
+                .animation(.easeInOut(duration: 0.2), value: editor.feedback?.id)
+                .confirmationDialog("반복 일정", isPresented: scopeBinding, titleVisibility: .visible) {
+                    if editor.scopeOptions.contains(.thisOccurrence) { Button("이 일정만") { editor.chooseScope(.thisOccurrence) } }
+                    if editor.scopeOptions.contains(.allInSeries) { Button("전체 일정") { editor.chooseScope(.allInSeries) } }
+                    Button("취소", role: .cancel) { editor.chooseScope(nil) }
+                } message: {
+                    Text("이 변경을 어디까지 적용할까요?")
+                }
+                .sheet(isPresented: nameBinding) {
+                    if let preview = editor.preview {
+                        NewEventSheet(
+                            range: preview.range, zoneIdentifier: zoneIdentifier, calendars: calendars,
+                            onSave: { title, calendarID in editor.confirmCreate(title: title, calendarID: calendarID) },
+                            onCancel: { editor.cancel() }
+                        )
+                        .presentationDetents([.medium])
+                    }
+                }
+        )
     }
 }

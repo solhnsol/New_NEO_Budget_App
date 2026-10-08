@@ -14,17 +14,29 @@ enum DemoData {
         let life = CalendarID(rawValue: "demo-life")
         let appointments = CalendarID(rawValue: "demo-appt")
         let school = CalendarID(rawValue: "demo-school")
+        let holidays = CalendarID(rawValue: "demo-holidays")
+
+        func at(_ day: LocalDate, _ hour: Int, _ minute: Int = 0) -> Int64 { zone.instant(of: day, minuteOfDay: hour * 60 + minute) }
+
+        // A read-only calendar's event, to check that it cannot be picked up.
+        let readOnlyRange = try? TimedRange(startUnixMilliseconds: at(today, 17, 30), endUnixMilliseconds: at(today, 18, 15))
+        let readOnlyEvents = readOnlyRange.map {
+            [CalendarEvent(
+                id: CalendarEventID(rawValue: "demo-ro"), calendarID: holidays, title: "구독 일정", time: .timed($0),
+                isEditable: false, revisionToken: "ro0"
+            )]
+        } ?? []
         let provider = InMemoryCalendarProvider(
             calendars: [
                 CalendarDescriptor(id: life, title: "일상", colorHex: "#4C8DF6"),
                 CalendarDescriptor(id: appointments, title: "약속", colorHex: "#F28B30"),
                 CalendarDescriptor(id: school, title: "학교", colorHex: "#3FA66B"),
+                CalendarDescriptor(id: holidays, title: "구독 캘린더", colorHex: "#8E8E93", isWritable: false),
             ],
+            events: readOnlyEvents,
             supportedRecurrenceScopes: [.thisOccurrence, .allInSeries],
             dayZone: zone
         )
-
-        func at(_ day: LocalDate, _ hour: Int, _ minute: Int = 0) -> Int64 { zone.instant(of: day, minuteOfDay: hour * 60 + minute) }
         func draft(_ calendar: CalendarID, _ title: String, _ day: LocalDate, _ from: (Int, Int), _ to: (Int, Int), location: String? = nil) -> CalendarEventDraft {
             let range = try? TimedRange(startUnixMilliseconds: at(day, from.0, from.1), endUnixMilliseconds: at(day, to.0, to.1))
             return CalendarEventDraft(calendarID: calendar, title: title, time: .timed(range ?? TimedRange.placeholder), location: location)
@@ -43,6 +55,7 @@ enum DemoData {
         let weekRange = try? DayRange(firstDay: today, lastDay: tomorrow)
         let seriesStart = at(today.adding(days: -7), 16, 0)
 
+        let failFirstWrite = ProcessInfo.processInfo.arguments.contains("-demo-fail-next-write")
         let seed: @Sendable () async -> Void = {
             for item in drafts { _ = await provider.createEvent(item) }
             if let weekRange {
@@ -52,6 +65,8 @@ enum DemoData {
                 calendarID: school, title: "영어 회화",
                 firstStartUnixMilliseconds: seriesStart, durationMilliseconds: 3_600_000, count: 4
             )
+            // Debug hook: the user's first edit fails, to check rollback and the retry banner.
+            if failFirstWrite { await provider.failNextWrite(with: .saveFailed(retryable: true, reason: "demo")) }
         }
 
         return Bundle(provider: provider, seed: seed)
@@ -62,5 +77,29 @@ private extension TimedRange {
     /// Only used if a demo range fails to construct, which cannot happen for the fixed values above.
     static var placeholder: TimedRange {
         (try? TimedRange(startUnixMilliseconds: 0, endUnixMilliseconds: 60_000)) ?? { fatalError("unreachable") }()
+    }
+}
+
+/// Holds a gesture in its previewing state so the preview can be screenshotted (`-demo-preview move|resize|create`).
+/// Only used with `-demo`; it drives the same editor entry points a finger does.
+enum DemoPreview {
+    @MainActor
+    static func apply(_ mode: String, to model: AppModel) {
+        guard let editor = model.editor, let timeline = model.timeline else { return }
+        let geometry = TimelineGeometry(totalMinutes: timeline.totalMinutes)
+        switch mode {
+        case "move":
+            guard let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }) else { return }
+            if editor.begin(.move, block: block, timeline: timeline, geometry: geometry) { editor.update(translationY: 70 * geometry.pointsPerMinute) }
+        case "resize":
+            guard let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }) else { return }
+            if editor.begin(.resizeEnd, block: block, timeline: timeline, geometry: geometry) { editor.update(translationY: 50 * geometry.pointsPerMinute) }
+        case "create":
+            if editor.beginCreate(atY: (10 * 60 + 50) * geometry.pointsPerMinute, timeline: timeline, geometry: geometry) {
+                editor.updateCreate(toY: (11 * 60 + 55) * geometry.pointsPerMinute)
+            }
+        default:
+            break
+        }
     }
 }
