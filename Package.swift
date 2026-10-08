@@ -21,7 +21,7 @@ let package = Package(
         // CalendarProvider backed by EventKit. The file compiles to nothing where EventKit does not exist.
         .target(name: "NEOBudgetEventKit", dependencies: ["NEOBudgetCalendar"]),
         // Executable CalendarProvider contract. No test-framework dependency, so an iOS app host can run it too.
-        .target(name: "NEOBudgetCalendarContract", dependencies: ["NEOBudgetCalendar"]),
+        .target(name: "NEOBudgetCalendarContract", dependencies: ["NEOBudgetCalendar", "NEOBudgetInMemoryCalendar"]),
         .testTarget(
             name: "NEOBudgetCoreTests",
             dependencies: ["NEOBudgetCore", "NEOBudgetInMemoryStorage"],

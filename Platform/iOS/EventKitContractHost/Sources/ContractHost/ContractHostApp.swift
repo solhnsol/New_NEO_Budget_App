@@ -32,7 +32,7 @@ struct ContractHostApp: App {
             HostLog.line("access granted: \(granted)")
             guard granted else { HostLog.line("RESULT: no access"); HostLog.line("exit"); return }
             let rig = try EventKitRig(provider: provider)
-            let results = await CalendarProviderContract.run(rig: rig)
+            let results = await CalendarProviderContract.run(rig: rig) + (await CommandFlowContract.run(rig: rig))
             for result in results {
                 if let failure = result.failure { HostLog.line("FAIL  \(result.name)\n      \(failure)") }
                 else if let reason = result.skipped { HostLog.line("SKIP  \(result.name) (\(reason))") }

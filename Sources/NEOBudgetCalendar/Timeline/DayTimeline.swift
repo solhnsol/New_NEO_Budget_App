@@ -106,6 +106,10 @@ public struct EventBlock: Equatable, Sendable {
     public let allocatedRefunds: [AmountAggregate]
     public let isRecurringInstance: Bool
     public let isEditable: Bool
+    /// The provider's revision of the event as it was when this timeline was built. A write that passes it as the
+    /// expected revision is refused if the event changed since, so an edit never overwrites what the user did not see.
+    /// `nil` for events that no longer exist.
+    public let revisionToken: String?
     public let state: BlockState
 }
 
@@ -124,6 +128,7 @@ public struct AllDayItem: Equatable, Sendable {
     public let allocatedSpend: [AmountAggregate]
     public let allocatedRefunds: [AmountAggregate]
     public let isEditable: Bool
+    public let revisionToken: String?
     public let state: BlockState
 }
 

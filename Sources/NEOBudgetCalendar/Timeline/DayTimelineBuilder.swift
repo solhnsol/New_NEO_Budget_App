@@ -53,13 +53,14 @@ public enum DayTimelineBuilder {
                 guard range.overlaps(from: bounds.start, to: bounds.end) else { continue }
                 timed.append(TimedCandidate(
                     key: event.key, calendar: calendar, title: event.title, range: range, activity: activity,
-                    isRecurringInstance: event.isRecurringInstance, isEditable: event.isEditable, state: .normal
+                    isRecurringInstance: event.isRecurringInstance, isEditable: event.isEditable,
+                    revisionToken: event.revisionToken, state: .normal
                 ))
             case let .allDay(range):
                 guard range.contains(input.day) else { continue }
                 allDay.append(AllDayCandidate(
                     key: event.key, calendar: calendar, title: event.title, range: range, activity: activity,
-                    isEditable: event.isEditable, state: .normal
+                    isEditable: event.isEditable, revisionToken: event.revisionToken, state: .normal
                 ))
             }
         }
@@ -73,13 +74,13 @@ public enum DayTimelineBuilder {
                     guard range.overlaps(from: bounds.start, to: bounds.end) else { continue }
                     timed.append(TimedCandidate(
                         key: association.key, calendar: calendar, title: association.lastKnown.title, range: range,
-                        activity: activity, isRecurringInstance: false, isEditable: false, state: .eventMissing
+                        activity: activity, isRecurringInstance: false, isEditable: false, revisionToken: nil, state: .eventMissing
                     ))
                 case let .allDay(range):
                     guard range.contains(input.day) else { continue }
                     allDay.append(AllDayCandidate(
                         key: association.key, calendar: calendar, title: association.lastKnown.title, range: range,
-                        activity: activity, isEditable: false, state: .eventMissing
+                        activity: activity, isEditable: false, revisionToken: nil, state: .eventMissing
                     ))
                 }
             }
@@ -170,6 +171,7 @@ public enum DayTimelineBuilder {
                 allocatedRefunds: aggregates(items, flow: .refund),
                 isRecurringInstance: candidate.isRecurringInstance,
                 isEditable: candidate.isEditable,
+                revisionToken: candidate.revisionToken,
                 state: candidate.state
             ))
         }
@@ -194,6 +196,7 @@ public enum DayTimelineBuilder {
                 allocatedSpend: aggregates(items, flow: .spend),
                 allocatedRefunds: aggregates(items, flow: .refund),
                 isEditable: candidate.isEditable,
+                revisionToken: candidate.revisionToken,
                 state: candidate.state
             )
         }
@@ -309,6 +312,7 @@ public enum DayTimelineBuilder {
         let activity: Activity?
         let isRecurringInstance: Bool
         let isEditable: Bool
+        let revisionToken: String?
         let state: BlockState
     }
 
@@ -319,6 +323,7 @@ public enum DayTimelineBuilder {
         let range: DayRange
         let activity: Activity?
         let isEditable: Bool
+        let revisionToken: String?
         let state: BlockState
     }
 

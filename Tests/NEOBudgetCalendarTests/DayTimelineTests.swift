@@ -342,3 +342,13 @@ private extension Array {
         enumerated().sorted { ($0.offset * 7 + 3) % 11 < ($1.offset * 7 + 3) % 11 }.map(\.element)
     }
 }
+
+@Test func blocksCarryTheRevisionTheUserWasLookingAtAndGhostsCarryNone() throws {
+    let live = CalendarEvent(
+        id: eventID("live"), calendarID: calendarID("life"), title: "회의", time: .timed(timed(at(today, 10), at(today, 11))), revisionToken: "r7")
+    let allDay = CalendarEvent(
+        id: eventID("trip"), calendarID: calendarID("life"), title: "여행", time: .allDay(allDayRange(today, today)), revisionToken: "r9")
+    let result = DayTimelineBuilder.build(DayTimelineInput(day: today, timeZone: seoul, events: [live, allDay], life: .empty, transactions: []))
+    #expect(result.blocks.first?.revisionToken == "r7")
+    #expect(result.allDay.first?.revisionToken == "r9")
+}

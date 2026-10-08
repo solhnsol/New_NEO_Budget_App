@@ -19,6 +19,8 @@ public protocol CalendarProviderTestRig: Sendable {
     func editExternally(_ key: CalendarEventKey, update: CalendarEventUpdate) async throws
     func removeExternally(_ key: CalendarEventKey) async throws
     func removeCalendarExternally(_ id: CalendarID) async throws
+    /// Makes the provider's next write fail with a retryable save failure. Returns `false` if the platform cannot do that.
+    func failNextWrite() async -> Bool
     /// Revokes (`false`) or restores (`true`) access. Returns `false` if the platform cannot simulate it.
     func setAccess(available: Bool) async -> Bool
     /// Seeds a weekly series of `count` timed occurrences in a rig-owned calendar.

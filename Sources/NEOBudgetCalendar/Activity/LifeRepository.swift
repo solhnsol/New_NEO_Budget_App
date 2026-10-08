@@ -79,35 +79,30 @@ public protocol TransactionSource: Sendable {
     func transactions(occurringFrom from: Int64, to: Int64) -> [TransactionMarker]
 }
 
-/// Reads markers from a ledger snapshot. Only expenses and refunds are consumption, so income, transfers,
-/// and card-bill payments never appear. The ledger records no merchant text, so titles are optional input.
+/// Reads markers from a ledger snapshot through `LedgerTimelineProjection`, the single place that decides which ledger
+/// entries are consumption: only expenses and refunds, never income, transfers or card-bill payments.
 public struct LedgerTransactionSource: TransactionSource {
     private let markers: [LedgerEntryID: TransactionMarker]
 
+    /// `timePrecision` applies to every entry; use `init(processing:)` to take it per entry from the promoted candidates.
     public init(
         snapshot: LedgerSnapshot,
         titles: [LedgerEntryID: String] = [:],
         timePrecision: TimePrecision = .approximate
     ) {
-        var result: [LedgerEntryID: TransactionMarker] = [:]
-        for entry in snapshot.entries {
-            guard let impact = entry.budgetImpact else { continue }
-            let flow: TransactionFlow
-            switch (entry.kind, impact.kind) {
-            case (.expense, .expense): flow = .spend
-            case (.adjustment, .return): flow = .refund
-            default: continue
-            }
-            result[entry.id] = TransactionMarker(
-                id: entry.id,
-                occurredAtUnixMilliseconds: entry.occurredAtUnixMilliseconds,
-                amount: impact.amount,
-                flow: flow,
-                title: titles[entry.id],
-                timePrecision: timePrecision
-            )
-        }
-        markers = result
+        let precisions = Dictionary(snapshot.entries.map { ($0.id, timePrecision) }, uniquingKeysWith: { first, _ in first })
+        self.init(markers: LedgerTimelineProjection.transactions(
+            in: snapshot, details: LedgerTimelineProjection.EntryDetails(titles: titles, timePrecisions: precisions)
+        ))
+    }
+
+    /// Titles and per-entry time precision come from the promoted candidates.
+    public init(processing snapshot: CandidateProcessingSnapshot) {
+        self.init(markers: LedgerTimelineProjection.transactions(in: snapshot))
+    }
+
+    private init(markers: [TransactionMarker]) {
+        self.markers = Dictionary(markers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
     }
 
     public func transaction(_ id: LedgerEntryID) -> TransactionMarker? { markers[id] }

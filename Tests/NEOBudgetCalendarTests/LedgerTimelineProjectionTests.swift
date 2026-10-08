@@ -203,3 +203,17 @@ private let activityEvent = event("eA", title: "점심 약속", from: at(today, 
     #expect(Set(entries.map(\.kind)) == [.transfer, .cardPayment, .income])
     #expect(try ledger.markers().isEmpty)                             // and none of them is spending
 }
+
+@Test func theTransactionSourceAndTheProjectionAgreeBecauseTheSourceUsesTheProjection() throws {
+    let fixture = try representativeLedger()
+    let snapshot = try fixture.ledger.repository.processingSnapshot()
+    let source = LedgerTransactionSource(processing: snapshot)
+    let projected = LedgerTimelineProjection.transactions(in: snapshot)
+    let sourced = source.transactions(occurringFrom: 0, to: Int64.max)
+    #expect(sourced == projected)
+    // Per-entry time precision and titles survive, unlike the older single-precision initializer.
+    #expect(source.transaction(fixture.bankPurchase)?.timePrecision == .exact)
+    #expect(source.transaction(fixture.cardPurchase)?.timePrecision == .approximate)
+    #expect(source.transaction(fixture.bankPurchase)?.title == "성수 식당")
+    #expect(source.transactions(withIDs: [fixture.refund]).first?.title == "성수 식당")
+}

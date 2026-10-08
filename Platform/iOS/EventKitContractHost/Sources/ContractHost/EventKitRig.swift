@@ -53,6 +53,7 @@ actor EventKitRig: CalendarProviderTestRig {
         created.removeAll { $0 == id.rawValue }
     }
 
+    func failNextWrite() async -> Bool { false }
     func setAccess(available: Bool) async -> Bool { false }
 
     func seedWeeklySeries(calendarID: CalendarID, title: String, firstStartUnixMilliseconds: Int64, durationMilliseconds: Int64, count: Int) async throws {

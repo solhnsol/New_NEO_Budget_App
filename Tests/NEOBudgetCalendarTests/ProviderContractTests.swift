@@ -35,6 +35,11 @@ private actor InMemoryRig: CalendarProviderTestRig {
     func removeExternally(_ key: CalendarEventKey) async throws { await memory.removeExternally(key) }
     func removeCalendarExternally(_ id: CalendarID) async throws { await memory.removeCalendarExternally(id) }
 
+    func failNextWrite() async -> Bool {
+        await memory.failNextWrite(with: .saveFailed(retryable: true, reason: "injected"))
+        return true
+    }
+
     func setAccess(available: Bool) async -> Bool {
         await memory.setAccessAvailable(available)
         return true
@@ -55,4 +60,14 @@ private actor InMemoryRig: CalendarProviderTestRig {
     }
     #expect(results.count >= 15)
     #expect(results.filter { $0.skipped != nil }.isEmpty, "the in-memory rig exercises every check")
+}
+
+@Test func inMemoryProviderSatisfiesTheCommandFlowContract() async throws {
+    let rig = try InMemoryRig()
+    let results = await CommandFlowContract.run(rig: rig)
+    for result in results {
+        if let failure = result.failure { Issue.record("\(result.name): \(failure)") }
+    }
+    #expect(results.count == 9)
+    #expect(results.filter { $0.skipped != nil }.count == 0, "the in-memory rig exercises every flow check")
 }
