@@ -28,7 +28,7 @@ final class AppModel {
 
     private let provider: any CalendarProvider
     private let eventKit: EventKitCalendarProvider?
-    private let transactions: [TransactionMarker]
+    private let ledger: AppLedger
     private let prepare: (@Sendable () async -> Void)?
     private var generation = 0
     private var observer: Task<Void, Never>?
@@ -37,32 +37,38 @@ final class AppModel {
         provider: any CalendarProvider,
         eventKit: EventKitCalendarProvider?,
         dayZone: DisplayTimeZone,
-        transactions: [TransactionMarker],
+        ledger: AppLedger,
         isDemo: Bool,
         prepare: (@Sendable () async -> Void)?
     ) {
         self.provider = provider
         self.eventKit = eventKit
         self.dayZone = dayZone
-        self.transactions = transactions
+        self.ledger = ledger
         self.isDemo = isDemo
         self.prepare = prepare
         selectedDay = dayZone.localDate(of: Self.nowMilliseconds())
     }
 
-    /// The device calendar. Transactions are not wired to the ledger yet, so none are shown.
-    static func live() throws -> AppModel {
+    /// The device calendar and the app ledger. The ledger is empty until ingestion and durable storage exist, unless
+    /// `withSampleLedger` seeds the synthetic day (launch argument `-ledger-sample`) to check real calendar data
+    /// against ledger-derived transactions.
+    static func live(withSampleLedger: Bool = false) throws -> AppModel {
         let zone = try DisplayTimeZone(identifier: TimeZone.current.identifier)
         let provider = try EventKitCalendarProvider(dayZoneIdentifier: zone.identifier)
-        return AppModel(provider: provider, eventKit: provider, dayZone: zone, transactions: [], isDemo: false, prepare: nil)
+        let today = zone.localDate(of: nowMilliseconds())
+        let ledger = withSampleLedger ? try SampleLedger.make(today: today, zone: zone) : try AppLedger()
+        return AppModel(provider: provider, eventKit: provider, dayZone: zone, ledger: ledger, isDemo: false, prepare: nil)
     }
 
-    /// Synthetic data for screenshots and UI checks (`-demo`). It never reads or writes the device calendar.
+    /// Synthetic calendar and ledger for screenshots and UI regression checks (`-demo`). It never reads or writes the
+    /// device calendar. Its transactions come through the same ledger projection as real ones.
     static func demo() throws -> AppModel {
         let zone = try DisplayTimeZone(identifier: TimeZone.current.identifier)
         let today = zone.localDate(of: nowMilliseconds())
         let demo = DemoData.make(today: today, zone: zone)
-        return AppModel(provider: demo.provider, eventKit: nil, dayZone: zone, transactions: demo.transactions, isDemo: true, prepare: demo.seed)
+        let ledger = try SampleLedger.make(today: today, zone: zone)
+        return AppModel(provider: demo.provider, eventKit: nil, dayZone: zone, ledger: ledger, isDemo: true, prepare: demo.seed)
     }
 
     // MARK: Lifecycle
@@ -120,7 +126,8 @@ final class AppModel {
         do {
             async let calendars = provider.calendars()
             async let events = provider.events(from: from, to: to, calendarIDs: nil)
-            let (loadedCalendars, loadedEvents) = try await (calendars, events)
+            async let ledgerTransactions = ledger.transactions()
+            let (loadedCalendars, loadedEvents, transactions) = try await (calendars, events, ledgerTransactions)
             guard mine == generation else { return }
             let input = DayTimelineInput(
                 day: selectedDay, timeZone: dayZone, calendars: loadedCalendars, events: loadedEvents,
@@ -137,7 +144,7 @@ final class AppModel {
             phase = .denied
         } catch {
             guard mine == generation else { return }
-            phase = .failed("일정을 불러오지 못했습니다.")
+            phase = .failed("일정과 거래를 불러오지 못했습니다.")
         }
     }
 

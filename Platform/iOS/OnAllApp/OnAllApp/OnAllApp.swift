@@ -15,9 +15,10 @@ struct OnAllApp: App {
             }
             .task {
                 guard model == nil else { return }
-                let isDemo = ProcessInfo.processInfo.arguments.contains("-demo")
+                let arguments = ProcessInfo.processInfo.arguments
+                let isDemo = arguments.contains("-demo")
                 do {
-                    let created = isDemo ? try AppModel.demo() : try AppModel.live()
+                    let created = isDemo ? try AppModel.demo() : try AppModel.live(withSampleLedger: arguments.contains("-ledger-sample"))
                     model = created
                     await created.start()
                 } catch {

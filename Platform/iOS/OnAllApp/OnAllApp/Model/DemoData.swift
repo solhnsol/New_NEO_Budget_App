@@ -3,11 +3,10 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import NEOBudgetInMemoryCalendar
 
-/// Synthetic events and transactions around "today" for UI checks. Nothing here is real data.
+/// Synthetic calendar events around "today" for UI checks. Transactions come from `SampleLedger`. Nothing here is real data.
 enum DemoData {
     struct Bundle {
         let provider: InMemoryCalendarProvider
-        let transactions: [TransactionMarker]
         let seed: @Sendable () async -> Void
     }
 
@@ -55,20 +54,7 @@ enum DemoData {
             )
         }
 
-        func marker(_ id: String, _ day: LocalDate, _ hour: Int, _ minute: Int, _ won: Int64, _ title: String, exact: Bool = true) -> TransactionMarker? {
-            guard let money = try? Money(minorUnits: won, currency: "KRW") else { return nil }
-            return TransactionMarker(
-                id: LedgerEntryID(rawValue: id), occurredAtUnixMilliseconds: at(day, hour, minute), amount: money,
-                flow: .spend, title: title, timePrecision: exact ? .exact : .approximate
-            )
-        }
-        let transactions = [
-            marker("demo-t1", today, 12, 20, 12_000, "성수 식당"),
-            marker("demo-t2", today, 12, 30, 4_800, "카페", exact: false),
-            marker("demo-t3", today, 14, 5, 3_500, "편의점"),
-            marker("demo-t4", today, 21, 30, 6_200, "배달", exact: false),
-        ].compactMap { $0 }
-        return Bundle(provider: provider, transactions: transactions, seed: seed)
+        return Bundle(provider: provider, seed: seed)
     }
 }
 

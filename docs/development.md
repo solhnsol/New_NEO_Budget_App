@@ -90,4 +90,9 @@ xcodebuild test -scheme OnAllApp -destination 'platform=iOS Simulator,name=iPhon
 - 번들 ID는 `dev.onall.app`(임시). 정식 ID는 배포 전에 정한다.
 - 단위 테스트는 레이아웃 계산(`TimelineGeometry`)을 다룬다. 도메인 규칙은 Swift Package 쪽 테스트가 소유한다.
 
-현재 범위: 읽기 전용 Day Timeline(주간 스트립, 종일 행, 시간 격자, 겹침 열 배치, 지출 마커, 상세 시트, 권한 요청/거부 화면). 원장과는 아직 연결하지 않아 실제 실행에서는 지출이 비어 있다. 드래그/리사이즈 편집은 다음 단계다.
+현재 범위: 읽기 전용 Day Timeline(주간 스트립, 종일 행, 시간 격자, 겹침 열 배치, 지출 마커, 상세 시트, 권한 요청/거부 화면). 일정 편집(드래그/리사이즈/생성)은 다음 단계다.
+
+원장 연결: 앱은 `AppLedger`(in-memory 처리 저장소를 가진 actor)의 스냅샷을 `LedgerTimelineProjection`으로 투영해 거래 마커를 만든다. 영속 저장소와 알림 수집은 아직 앱에 없으므로 일반 실행의 원장은 비어 있다. 실행 인자:
+- `-demo`: 합성 캘린더 + 합성 원장(UI 회귀 확인용). 거래는 아래와 같은 실제 파이프라인을 거친다.
+- `-ledger-sample`: 실제 기기 캘린더 + 합성 원장. 실제 캘린더 데이터 위에서 원장 파생 거래 표시를 확인한다.
+합성 원장은 draft → assembler → 원자 승격을 통해 소비, 카드 사용, 환불, 그리고 소비가 아닌 월급·이체·카드 대금을 모두 담는다.
