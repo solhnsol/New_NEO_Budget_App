@@ -1,4 +1,4 @@
-public enum ResolvedLedgerBinding: Codable, Equatable, Sendable {
+public enum ResolvedLedgerBinding: Codable, Hashable, Sendable {
     case account(AccountID)
     case creditInstrument(CreditInstrumentID)
 }
