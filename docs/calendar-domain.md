@@ -438,3 +438,13 @@ requested             = raw share + policy adjustment
 ```
 
 `MoneyFlowAudit.audit(rawTransfers:in:)`는 첫 세 줄을, `ObligationBalance.isConserved`는 넷째 줄을 계산하며, `LifeState.conservationViolations()`는 모든 settlement·obligation·정정 그룹·거래 역할을 한 번에 점검해 위반을 문자열로 돌려준다(빈 배열이면 일관). 테스트는 결정론적 property-style sweep으로 300개의 무작위 obligation 조합에서 이 식들과 "미확정 obligation이 열려 있으면 residual 없음"을 검증한다.
+
+## 원장 → 타임라인 투영
+
+`LedgerTimelineProjection`(`Activity/LedgerTimelineProjection.swift`)이 원장 스냅샷을 타임라인이 보여줄 `TransactionMarker`로 바꾼다. 읽기 전용 순수 함수이며 원장을 바꾸지 않는다.
+
+- **무엇이 거래로 보이는가는 금액 부호가 아니라 원장 의미가 정한다.** `expense`(budgetImpact `expense`)는 지출, `adjustment`(budgetImpact `return`)는 환불로 보인다. `income`, `transfer`, `cardPayment`는 소비가 아닌 돈의 이동이라 보이지 않는다. 현금 인출과 지갑 충전도 원장에서 이체이므로 제외된다. 카드 대금 납부를 보이면 같은 구매가 두 번 집계된다.
+- **금액은 현금이 아니라 소비 금액(`budgetImpact.amount`)이다.** 카드 구매는 카드를 쓴 시각에 보이고 어느 계좌가 나중에 갚는지와 무관하다.
+- **환불은 돈이 실제로 돌아온 날에 보인다.** 지출 감소의 귀속은 원구매 월에 남는다(D004). 환불 알림에 상호가 없으면 원거래의 이름을 쓴다.
+- **시각의 정밀도**: 원장에는 시각을 어떻게 얻었는지가 없다. 승격된 후보의 `ObservedTimestamp`에서 구한다. 알림 본문이 분/초까지 말한 시각만 `exact`이고, 날짜만 있거나 알림 도착/수집 시각으로 대체한 경우는 `approximate`(점선 마커)다. 후보 정보가 없으면 항상 `approximate`다.
+- 승격되지 않은 후보(검토 필요 등)는 원장 사실이 아니므로 보이지 않는다.
