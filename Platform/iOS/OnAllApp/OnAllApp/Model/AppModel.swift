@@ -113,6 +113,7 @@ final class AppModel {
             now: { Int64(Date().timeIntervalSince1970 * 1_000) }
         )
         self.service = service
+        if isDemo { await DemoLinks.apply(service: service, provider: provider, zone: dayZone, day: selectedDay) }
         let environment = TimelineEditor.Environment(
             perform: { await service.perform($0) },
             reload: { [weak self] in await self?.reload() },
@@ -160,6 +161,7 @@ final class AppModel {
             let loadedCalendars = try await provider.calendars()
             guard mine == generation else { return }
             timeline = loadedTimeline
+            editor?.timelineDidChange(loadedTimeline)
             week = loadedWeek
             calendars = loadedCalendars
             phase = .ready

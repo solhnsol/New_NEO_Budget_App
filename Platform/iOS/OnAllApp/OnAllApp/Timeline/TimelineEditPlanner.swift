@@ -33,19 +33,23 @@ struct TimelineEditPlanner {
         try? TimedRange(startUnixMilliseconds: block.startUnixMilliseconds, endUnixMilliseconds: block.endUnixMilliseconds)
     }
 
-    private func milliseconds(forTranslation translationY: CGFloat) -> Int64 {
-        Int64((translationY / geometry.pointsPerMinute).rounded()) * 60_000
+    /// The minute an edge ends up at when it starts at `minute` and the finger moves `translationY` points. Goes through
+    /// the axis, so it is exact where the axis is enlarged and coarse inside a folded stretch.
+    private func minute(movedFrom minute: Int, by translationY: CGFloat) -> Int {
+        geometry.minute(atY: geometry.y(minute: minute) + translationY)
     }
 
     func preview(_ kind: Kind, block: EventBlock, translationY: CGFloat) -> TimedEdit? {
         guard let original = range(of: block) else { return nil }
-        let delta = milliseconds(forTranslation: translationY)
         switch kind {
         case .move:
+            let delta = Int64(minute(movedFrom: block.startMinute, by: translationY) - block.startMinute) * 60_000
             return TimedEdit(range: policy.move(original, toProposedStart: original.startUnixMilliseconds + delta, in: zone), wasClamped: false)
         case .resizeStart:
+            let delta = Int64(minute(movedFrom: block.startMinute, by: translationY) - block.startMinute) * 60_000
             return policy.resizeStart(original, toProposedStart: original.startUnixMilliseconds + delta, in: zone)
         case .resizeEnd:
+            let delta = Int64(minute(movedFrom: block.endMinute, by: translationY) - block.endMinute) * 60_000
             return policy.resizeEnd(original, toProposedEnd: original.endUnixMilliseconds + delta, in: zone, clampingToDayEnd: dayEndUnixMilliseconds)
         case .create:
             return nil
@@ -114,5 +118,28 @@ struct TimelineEditPlanner {
             width: max(0, columnWidth - geometry.columnSpacing),
             height: max(geometry.y(minute: policy.minimumDurationMinutes), geometry.y(minute: last) - geometry.y(minute: first) - 1)
         )
+    }
+}
+
+/// Where a touch landed on the event being edited. The handles are dots outside the corners, like the system calendar,
+/// so even a 15 minute event has something to grab.
+enum EditHit: Equatable {
+    case body
+    case resizeStart
+    case resizeEnd
+
+    static let handleRadius: CGFloat = 22
+    /// Distance of the handle dots from the block's corners, inward along the edge.
+    static let handleInset: CGFloat = 28
+
+    static func startHandle(of frame: CGRect) -> CGPoint { CGPoint(x: frame.maxX - handleInset, y: frame.minY) }
+    static func endHandle(of frame: CGRect) -> CGPoint { CGPoint(x: frame.minX + handleInset, y: frame.maxY) }
+
+    /// `nil` when the touch is not on the block or either handle. A handle wins over the body where they overlap.
+    static func hit(_ point: CGPoint, frame: CGRect, canResizeStart: Bool, canResizeEnd: Bool) -> EditHit? {
+        func near(_ center: CGPoint) -> Bool { hypot(point.x - center.x, point.y - center.y) <= handleRadius }
+        if canResizeStart, near(startHandle(of: frame)) { return .resizeStart }
+        if canResizeEnd, near(endHandle(of: frame)) { return .resizeEnd }
+        return frame.contains(point) ? .body : nil
     }
 }

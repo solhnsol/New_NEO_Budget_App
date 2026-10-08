@@ -62,14 +62,26 @@ private final class Harness {
         )
         let timeline = try await service.dayTimeline(for: day)
         let harness = Harness(provider: provider, service: service, timeline: timeline, scopes: scopes, calendars: calendars)
+        harness.editor.timelineDidChange(timeline)
         harness.box.reload = { [unowned harness] in
             harness.reloads += 1
-            if let fresh = try? await service.dayTimeline(for: day) { harness.timeline = fresh }
+            if let fresh = try? await service.dayTimeline(for: day) {
+                harness.timeline = fresh
+                harness.editor.timelineDidChange(fresh)      // what AppModel does after every reload
+            }
         }
         return harness
     }
 
     var geometry: TimelineGeometry { TimelineGeometry(totalMinutes: timeline.totalMinutes) }
+
+    /// A reload as AppModel does it: read the day again and tell the editor.
+    func editorReload() async {
+        if let fresh = try? await service.dayTimeline(for: day) {
+            timeline = fresh
+            editor.timelineDidChange(fresh)
+        }
+    }
 
     func block(_ title: String) throws -> EventBlock {
         try #require(timeline.blocks.first { $0.title == title })
@@ -321,4 +333,154 @@ private func meeting(_ id: String = "m", calendar: CalendarID = writable, editab
 
 private extension Int64 {
     func asTimed(to end: Int64) -> EventTimeRange { .timed(range(self, end)) }
+}
+
+
+// MARK: Browse and edit modes
+
+private func busyDay() -> [CalendarEvent] {
+    func event(_ id: String, _ title: String, _ from: Int64, _ to: Int64) -> CalendarEvent {
+        CalendarEvent(id: CalendarEventID(rawValue: id), calendarID: writable, title: title, time: .timed(range(from, to)), revisionToken: "r0")
+    }
+    return [event("a", "수업", at(9), at(10, 30)), event("b", "회의", at(10), at(11)), event("c", "저녁", at(19), at(20))]
+}
+
+@MainActor @Test func aLongPressEnlargesTheSurroundingsOfTheEventAndSelectsIt() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    let browse = h.editor.geometry
+    #expect(!h.editor.isEditing && h.editor.selectedKey == nil)
+    #expect(browse.axis.isFolded(minute: 14 * 60))                              // the quiet afternoon is folded in browse mode
+
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    #expect(h.editor.isEditing && h.editor.isSelected(block))
+    let editing = h.editor.geometry
+    #expect(h.editor.focus == (8 * 60 + 30)...(12 * 60 + 30))
+    #expect(editing.y(minute: 10 * 60 + 15) - editing.y(minute: 10 * 60) >= 24)       // a 15 minute step is easy to hit
+    #expect(editing.contentHeight > browse.contentHeight)
+    #expect(editing.axis.isFolded(minute: 14 * 60))                                     // far away stays folded: the enlargement is local
+    // The press stays under the finger: the scroll request equals how far that minute moved.
+    let request = try #require(h.editor.scrollRequest)
+    #expect(abs(request.delta - (editing.y(minute: 10 * 60 + 20) - browse.y(minute: 10 * 60 + 20))) < 0.001)
+}
+
+@MainActor @Test func leavingEditModeFoldsTheDayBackToExactlyTheBrowseShape() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let browse = h.editor.geometry
+    #expect(h.editor.enterEditMode(for: try h.block("회의"), pressMinute: 10 * 60 + 20))
+    let enlarged = h.editor.scrollRequest
+    h.editor.exitEditMode()
+    #expect(!h.editor.isEditing && h.editor.selectedKey == nil && h.editor.focus == nil)
+    #expect(h.editor.geometry == browse)                                                 // the browse axis was never mutated
+    let back = try #require(h.editor.scrollRequest)
+    #expect(back != enlarged && back.delta < 0)                                          // scrolls back by what was added
+}
+
+@MainActor @Test func aReadOnlyEventNeverEntersEditMode() async throws {
+    let h = try await Harness.make(events: [meeting("ro-event", calendar: readOnly, editable: false)])
+    #expect(h.editor.enterEditMode(for: try h.block("회의"), pressMinute: 10 * 60) == false)
+    #expect(!h.editor.isEditing && h.editor.focus == nil)
+    #expect(h.editor.feedback?.message.contains("읽기 전용") == true)
+}
+
+@MainActor @Test func draggingInsideTheEnlargedRegionMovesInExactFifteenMinuteSteps() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    let editing = h.editor.geometry
+    #expect(h.editor.begin(.move, block: block, timeline: h.timeline, geometry: editing))
+    let step = editing.y(minute: 10 * 60 + 15) - editing.y(minute: 10 * 60)
+    h.editor.update(translationY: step)
+    #expect(try #require(h.editor.preview).range == range(at(10, 15), at(11, 15)))
+    h.editor.update(translationY: step * 4)
+    #expect(try #require(h.editor.preview).range == range(at(11), at(12)))
+    h.editor.update(translationY: -step * 2)
+    #expect(try #require(h.editor.preview).range == range(at(9, 30), at(10, 30)))
+    h.editor.cancel()
+    #expect(h.editor.isEditing)                                                          // cancelling a drag keeps the event selected
+}
+
+@MainActor @Test func anEditedEventStaysSelectedAndTheEnlargedRegionFollowsItToItsNewTime() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    let editing = h.editor.geometry
+    #expect(h.editor.begin(.move, block: block, timeline: h.timeline, geometry: editing))
+    h.editor.update(translationY: editing.y(minute: 15 * 60) - editing.y(minute: 10 * 60))
+    h.editor.finish()
+    await h.editor.waitUntilSettled()
+    #expect(h.editor.feedback == nil)
+    #expect(try await h.stored(block.eventKey).time == .timed(range(at(15), at(16))))
+    // Still editing the same event, now around 15:00.
+    #expect(h.editor.isEditing && h.editor.selectedKey == block.eventKey)
+    let focus = try #require(h.editor.focus)
+    #expect(focus.contains(15 * 60) && focus.contains(16 * 60) && !focus.contains(10 * 60))
+    #expect(h.editor.scrollRequest != nil)
+}
+
+@MainActor @Test func placingANewEventEnlargesTheMinuteAndFoldsBackWhetherSavedOrCancelled() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let browse = h.editor.geometry
+    #expect(h.editor.focusForCreate(atMinute: 14 * 60))
+    #expect(h.editor.isEditing && h.editor.selectedKey == nil)
+    #expect(!h.editor.geometry.axis.isFolded(minute: 14 * 60))                           // the folded afternoon is opened where it matters
+    let editing = h.editor.geometry
+    #expect(h.editor.beginCreate(atY: editing.y(minute: 14 * 60), timeline: h.timeline, geometry: editing))
+    h.editor.updateCreate(toY: editing.y(minute: 14 * 60 + 45))
+    #expect(try #require(h.editor.preview).range == range(at(14), at(14, 45)))
+    h.editor.finish()
+    #expect(h.editor.mode == .namingEvent)
+    h.editor.cancel()
+    #expect(!h.editor.isEditing && h.editor.geometry == browse)                          // cancelled: folded back
+
+    #expect(h.editor.focusForCreate(atMinute: 14 * 60))
+    let again = h.editor.geometry
+    #expect(h.editor.beginCreate(atY: again.y(minute: 14 * 60), timeline: h.timeline, geometry: again))
+    h.editor.updateCreate(toY: again.y(minute: 15 * 60))
+    h.editor.finish()
+    h.editor.confirmCreate(title: "산책", calendarID: writable)
+    await h.editor.waitUntilSettled()
+    #expect(!h.editor.isEditing)                                                         // saved: folded back, nothing stays selected
+    #expect(h.timeline.blocks.contains { $0.title == "산책" })
+}
+
+@MainActor @Test func theSelectedEventIsFollowedWhenItChangesElsewhereAndEditModeEndsWhenItDisappears() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("저녁")
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 19 * 60 + 10))
+    await h.provider.editExternally(block.eventKey, update: CalendarEventUpdate(time: .timed(range(at(21), at(22)))))
+    await h.editorReload()
+    #expect(h.editor.isEditing && h.editor.focus?.contains(21 * 60) == true)
+    await h.provider.removeExternally(block.eventKey)
+    await h.editorReload()
+    #expect(!h.editor.isEditing && h.editor.selectedKey == nil)
+}
+
+@MainActor @Test func movesReportedWhileTheAxisIsStillSettlingAreIgnoredSoThePreviewDoesNotJump() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("회의")
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
+    #expect(h.editor.begin(.move, block: block, timeline: h.timeline, geometry: h.editor.geometry))
+    let before = try #require(h.editor.preview)
+    h.editor.setFingerAnchor(y: 0)
+    h.editor.update(fingerY: 5_000)               // the scroll offset is still animating: this reading is not a real drag
+    #expect(h.editor.preview == before)
+    h.editor.cancel()
+}
+
+// MARK: Touch targets
+
+@Test func aHandleBeatsTheBodyWhereTheyOverlapAndAnythingOutsideIsNotAHit() {
+    let frame = CGRect(x: 60, y: 200, width: 220, height: 40)
+    let top = EditHit.startHandle(of: frame)
+    let bottom = EditHit.endHandle(of: frame)
+    #expect(EditHit.hit(top, frame: frame, canResizeStart: true, canResizeEnd: true) == .resizeStart)
+    #expect(EditHit.hit(bottom, frame: frame, canResizeStart: true, canResizeEnd: true) == .resizeEnd)
+    #expect(EditHit.hit(CGPoint(x: 150, y: 220), frame: frame, canResizeStart: true, canResizeEnd: true) == .body)
+    // A dot sits half outside the block, so a short block still has something to grab.
+    #expect(EditHit.hit(CGPoint(x: top.x, y: top.y - 12), frame: frame, canResizeStart: true, canResizeEnd: true) == .resizeStart)
+    #expect(EditHit.hit(CGPoint(x: 20, y: 400), frame: frame, canResizeStart: true, canResizeEnd: true) == nil)
+    // An event that continues from yesterday has no start handle: that touch falls back to the body.
+    #expect(EditHit.hit(top, frame: frame, canResizeStart: false, canResizeEnd: true) == .body)
+    #expect(EditHit.hit(CGPoint(x: top.x, y: top.y - 12), frame: frame, canResizeStart: false, canResizeEnd: true) == nil)
 }

@@ -56,7 +56,10 @@ struct DayTimelineScreen: View {
                 AllDayRow(items: timeline.allDay) { selection = .allDay($0) }
                 Divider()
             }
-            TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: model.editor) { selection = $0 }
+            if let editor = model.editor {
+                TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: editor) { selection = $0 }
+                    .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
+            }
             Divider()
             SummaryBar(summary: timeline.summary)
         }
@@ -186,5 +189,21 @@ private struct EditingPresentations: ViewModifier {
                     }
                 }
         )
+    }
+}
+
+/// Leaves edit mode: the day folds back up. Tapping empty time does the same.
+private struct DonePill: View {
+    let editor: TimelineEditor
+
+    var body: some View {
+        Button { editor.exitEditMode() } label: {
+            Label("완료", systemImage: "checkmark").font(.footnote.weight(.semibold))
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(.thinMaterial, in: Capsule())
+        }
+        .padding(10)
+        .accessibilityLabel("편집 끝내기")
+        .transition(.opacity)
     }
 }

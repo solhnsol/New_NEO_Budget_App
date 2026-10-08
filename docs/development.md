@@ -97,25 +97,41 @@ xcodebuild test -scheme OnAllApp -destination 'platform=iOS Simulator,name=iPhon
 - `-ledger-sample`: 실제 기기 캘린더 + 합성 원장. 실제 캘린더 데이터 위에서 원장 파생 거래 표시를 확인한다.
 합성 원장은 draft → assembler → 원자 승격을 통해 소비, 카드 사용, 환불, 그리고 소비가 아닌 월급·이체·카드 대금을 모두 담는다.
 
-### 일정 편집 제스처
+### Day Timeline: browse / edit 모드
 
-타임라인에서 일정을 직접 편집한다. 제스처 중에는 캘린더에 아무것도 쓰지 않고 로컬 미리보기만 갱신하며, 손을 뗄 때 `TimelineEditPolicy`로 확정한 범위를 `CalendarCommandService`에 **한 번** 보낸다.
+타임라인은 두 가지 모양을 가진다. 둘 다 같은 `TimelineEditor.geometry`에서 나오며, 변하는 것은 시간축(`TimelineAxis`)뿐이다.
+
+| | browse (기본) | edit (길게 눌러 진입) |
+|---|---|---|
+| 목적 | 하루를 한눈에 | 15분 단위로 정확하게 |
+| 시간축 | 일정 경계와 지출 시각 주변은 원래 크기, 긴 빈 시간과 아주 긴 일정의 가운데는 접음(라벨에 길이 표시) | 선택한 일정 ±90분을 풀어서 크게(15분 ≥ 24pt). 멀리 있는 접힘은 그대로 |
+| 리사이즈 핸들 | 없음 | 선택한 일정의 위·아래 핸들(●) |
+| 전환 | 길게 누르면 부드럽게 확대(스크롤을 함께 보정해 손가락 아래 시각이 움직이지 않음), 손을 떼면 일정 전체가 보이게 맞춤 | "완료"나 빈 시간 탭으로 다시 접힘 |
+
+연결된 거래는 별도 레일이 아니라 **해당 일정 블록 안**에 표시한다. 한 블록에 최대 3줄, 넘치면 `+N건`으로 접고, 한 줄만 들어갈 때는 "N건 · 합계" 요약 행, 줄이 하나도 안 들어가면 제목 줄의 요약 칩으로 대체한다. 블록 높이는 시간만 반영하므로 거래가 많아도 커지지 않는다(`InlineAllocationPlan`). 일정에 속하지 않은 지출만 시간축의 독립 마커로 남는다(오른쪽 레일).
+
+편집은 제스처 중에는 캘린더에 쓰지 않고 로컬 미리보기만 갱신하며, 손을 뗄 때 `TimelineEditPolicy`로 확정한 범위를 `CalendarCommandService`에 **한 번** 보낸다.
 
 | 동작 | 제스처 |
 |---|---|
-| 이동 | 일정을 길게 누른 뒤 위아래로 드래그 (15분 단위로 맞춤, 길이 유지) |
-| 시작/끝 조절 | 일정의 위/아래 가장자리 핸들을 드래그 (최소 15분, 하단은 그날 끝까지) |
-| 생성 | 빈 곳을 길게 누른 뒤 드래그 → 제목·캘린더를 정하고 저장 |
-| 반복 일정 | 손을 뗀 시점에 "이 일정만 / 전체 일정"을 묻는다. 날짜가 바뀌는 변경은 "이 일정만"만 가능. `thisAndFuture`는 노출하지 않는다 |
+| 편집 모드 진입 | 일정을 길게 누르기. 누른 채 그대로 드래그하면 바로 이동 |
+| 이동 | 편집 모드에서 일정 본체를 바로 드래그 (15분 단위, 길이 유지) |
+| 시작/끝 조절 | 편집 모드의 핸들(●) 드래그 (최소 15분, 하단은 그날 끝까지) |
+| 생성 | 빈 곳을 길게 누른 뒤 드래그 → 그 주변이 펼쳐져 15분 단위로 범위를 잡고, 제목·캘린더를 정해 저장 |
+| 반복 일정 | 손을 뗀 시점에만 "이 일정만 / 전체 일정"을 묻는다. 날짜가 바뀌는 변경은 "이 일정만"만 가능. `thisAndFuture`는 노출하지 않는다 |
 
-이동과 생성이 "길게 누르기"를 거치는 이유는 일반 스크롤과 구분하기 위해서다. 이 인식기는 SwiftUI 제스처가 아니라 스크롤뷰에 붙인 `UILongPressGestureRecognizer`(`LongPressDragHost`)다. SwiftUI의 `LongPressGesture.sequenced(before: DragGesture)`는 스크롤을 막아서 쓰지 않는다.
+터치는 SwiftUI 제스처가 아니라 스크롤뷰에 붙인 UIKit 인식기(`EditGestureHost`)로 처리한다. 길게 누르기(0.3초)는 스크롤과 구분하고, 편집 모드의 pan은 **선택한 일정 영역에서 시작할 때만** 인식해서 나머지는 그대로 스크롤된다. SwiftUI의 `LongPressGesture.sequenced(before: DragGesture)`나 자식 뷰의 `DragGesture`는 스크롤을 막아서 쓰지 않는다.
 
-실패하면 미리보기를 되돌리고 이유를 알린다: 다른 곳에서 바뀐 일정(`conflict`, 최신 내용으로 새로 고침), 읽기 전용 일정/캘린더, 저장 실패(재시도 가능하면 "다시 시도"가 사용자가 닫을 때까지 남는다), 삭제된 일정, 접근 꺼짐. 충돌 감지는 타임라인을 그릴 때의 `revisionToken`(`EventBlock.revisionToken`)을 기대 revision으로 보낸다.
+실패하면 미리보기를 되돌리고 이유를 알린다: 다른 곳에서 바뀐 일정(`conflict`, 최신 내용으로 새로 고침), 읽기 전용 일정/캘린더, 저장 실패(재시도 가능하면 "다시 시도"가 사용자가 닫을 때까지 남는다), 삭제된 일정, 접근 꺼짐. 충돌 감지는 타임라인을 그릴 때의 `revisionToken`(`EventBlock.revisionToken`)을 기대 revision으로 보낸다. 편집 중인 일정이 다른 곳에서 바뀌면 확대 영역이 따라가고, 사라지면 편집 모드가 조용히 끝난다.
 
-데모 모드 전용 디버그 인자: `-demo-preview move|resize|create`(드래그 중 상태로 멈춤), `-demo-fail-next-write`(첫 번째 쓰기를 실패시킴). 데모에는 읽기 전용 캘린더의 일정과 반복 일정이 들어 있다.
+겹치는 일정의 열 배치(`OverlapLayout`)는 읽기 모델의 값을 그대로 쓰며, 좌표로 바뀌는 곳은 `TimelineGeometry.blockFrame` 한 곳이다. 다른 배치로 바꿀 때는 그 함수만 교체한다.
+
+데모 모드 전용 디버그 인자: `-demo-preview edit|move|resize|create`(해당 상태로 멈춤), `-demo-fail-next-write`(첫 번째 쓰기를 실패시킴). 데모에는 읽기 전용 캘린더의 일정, 반복 일정, 한 일정에 연결된 거래 4건(`+N` 확인용)이 들어 있다.
 
 테스트:
-- `OnAllAppTests/TimelineEditorTests`: 실제 `CalendarCommandService` + in-memory provider로 이동/리사이즈/생성/반복 범위/충돌/읽기 전용/저장 실패와 재시도, 미리보기와 확정 결과의 일치.
-- `CommandFlowContract`: 같은 흐름을 provider에 독립적으로 검사한다. in-memory는 `swift test`, EventKit은 `Platform/iOS/EventKitContractHost/run-contract.sh`.
+- `TimelineAxisTests`: 접기 규칙, 매핑의 단조성과 역변환, 확대 구간의 15분 높이, 접힘 라벨과 시각 라벨의 충돌, 화면용 설정값으로 하루가 한 화면에 가까운지.
+- `InlineAllocationPlanTests`: 인라인 3줄 한도, `+N`, 요약 행/칩.
+- `TimelineEditorTests`: 편집 모드 수명주기(진입·종료·스크롤 보정 요청·선택 유지·따라가기·생성 포커스), 확대 구간 안의 15분 단위 이동, 핸들 hit-test, 그리고 기존 이동/리사이즈/생성/반복 범위/충돌/읽기 전용/저장 실패(실제 `CalendarCommandService` + in-memory provider).
+- `CommandFlowContract`: 같은 편집 흐름을 provider에 독립적으로 검사. in-memory는 `swift test`, EventKit은 `Platform/iOS/EventKitContractHost/run-contract.sh`.
 
-아직 없는 것: 드래그 중 화면 가장자리 자동 스크롤, 종일 일정의 제스처 편집, VoiceOver용 편집 동작(현재 제스처만 있다), 일정 삭제.
+아직 없는 것: 드래그 중 화면 가장자리 자동 스크롤, 종일 일정의 제스처 편집, VoiceOver용 편집 동작(현재 제스처만 있다), 일정 삭제. 편집 모드의 멀리 이동은 접힌 구간에서 거칠다(그 구간은 1pt가 여러 분이다). 놓은 뒤 확대 영역이 새 위치로 따라오므로 거기서 다듬는다.

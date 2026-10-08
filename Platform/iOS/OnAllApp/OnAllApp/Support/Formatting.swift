@@ -57,6 +57,17 @@ enum Formatting {
         time(start, zoneIdentifier: zoneIdentifier) + " – " + time(end, zoneIdentifier: zoneIdentifier)
     }
 
+    /// "5시간 30분", "45분": how long a folded stretch of the day is.
+    static func duration(minutes: Int) -> String {
+        let hours = minutes / 60
+        let rest = minutes % 60
+        switch (hours, rest) {
+        case (0, _): return "\(rest)분"
+        case (_, 0): return "\(hours)시간"
+        default: return "\(hours)시간 \(rest)분"
+        }
+    }
+
     static func hourLabel(_ hour: Int) -> String {
         switch hour {
         case 0: return "오전 12시"

@@ -80,23 +80,59 @@ private extension TimedRange {
     }
 }
 
-/// Holds a gesture in its previewing state so the preview can be screenshotted (`-demo-preview move|resize|create`).
-/// Only used with `-demo`; it drives the same editor entry points a finger does.
+/// Links sample transactions to the demo events through the real command, so event blocks show linked spending inline.
+enum DemoLinks {
+    private static let links: [(event: String, transactions: [String])] = [
+        ("점심 약속", ["sample-restaurant", "sample-dessert", "sample-parking", "sample-snack"]),   // four: shows the "+N" fold
+        ("스터디", ["sample-cafe", "sample-convenience"]),
+        ("저녁 운동", ["sample-refund"]),
+    ]
+
+    static func apply(service: CalendarCommandService, provider: any CalendarProvider, zone: DisplayTimeZone, day: LocalDate) async {
+        let bounds = zone.dayBounds(day)
+        guard let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) else { return }
+        for link in links {
+            guard let event = events.first(where: { $0.title == link.event }) else { continue }
+            for raw in link.transactions {
+                _ = await service.perform(.linkTransaction(LinkTransactionInput(
+                    transactionID: SampleLedger.entryID(for: raw), target: .event(event.key), provenance: .user(at: 1, evidenceVersion: nil)
+                )))
+            }
+        }
+    }
+}
+
+/// Holds the timeline in a state worth screenshotting (`-demo-preview edit|move|resize|create`). Only used with `-demo`;
+/// it drives the same editor entry points a finger does.
 enum DemoPreview {
     @MainActor
     static func apply(_ mode: String, to model: AppModel) {
         guard let editor = model.editor, let timeline = model.timeline else { return }
-        let geometry = TimelineGeometry(totalMinutes: timeline.totalMinutes)
+        func selectClass() -> EventBlock? {
+            guard let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }),
+                  editor.enterEditMode(for: block, pressMinute: block.startMinute + 10) else { return nil }
+            return block
+        }
         switch mode {
+        case "edit":
+            _ = selectClass()
         case "move":
-            guard let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }) else { return }
-            if editor.begin(.move, block: block, timeline: timeline, geometry: geometry) { editor.update(translationY: 70 * geometry.pointsPerMinute) }
+            guard let block = selectClass() else { return }
+            let geometry = editor.geometry
+            if editor.begin(.move, block: block, timeline: timeline, geometry: geometry) {
+                editor.update(translationY: geometry.y(minute: block.startMinute + 70) - geometry.y(minute: block.startMinute))
+            }
         case "resize":
-            guard let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }) else { return }
-            if editor.begin(.resizeEnd, block: block, timeline: timeline, geometry: geometry) { editor.update(translationY: 50 * geometry.pointsPerMinute) }
+            guard let block = selectClass() else { return }
+            let geometry = editor.geometry
+            if editor.begin(.resizeEnd, block: block, timeline: timeline, geometry: geometry) {
+                editor.update(translationY: geometry.y(minute: block.endMinute + 50) - geometry.y(minute: block.endMinute))
+            }
         case "create":
-            if editor.beginCreate(atY: (10 * 60 + 50) * geometry.pointsPerMinute, timeline: timeline, geometry: geometry) {
-                editor.updateCreate(toY: (11 * 60 + 55) * geometry.pointsPerMinute)
+            guard editor.focusForCreate(atMinute: 10 * 60 + 50) else { return }
+            let geometry = editor.geometry
+            if editor.beginCreate(atY: geometry.y(minute: 10 * 60 + 50), timeline: timeline, geometry: geometry) {
+                editor.updateCreate(toY: geometry.y(minute: 11 * 60 + 55))
             }
         default:
             break

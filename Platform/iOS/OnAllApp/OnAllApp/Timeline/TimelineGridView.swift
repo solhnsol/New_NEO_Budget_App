@@ -21,163 +21,211 @@ enum Haptics {
     @MainActor static func snap() { UISelectionFeedbackGenerator().selectionChanged() }
 }
 
-/// The scrolling hour grid. Block geometry comes from `TimelineGeometry`; this view only draws it and forwards
-/// gestures to the `TimelineEditor`. Nothing here writes to the calendar.
+/// The scrolling hour grid. It has two shapes, both from `TimelineEditor.geometry`:
+/// - **browse**: the day folded so it reads at a glance; events and unlinked transactions at full size, quiet stretches folded.
+/// - **edit**: the surroundings of one event enlarged so 15 minute steps are comfortable to drag.
+/// This view only draws and forwards touches to the editor; nothing here writes to the calendar.
 struct TimelineGridView: View {
-    static let space = "timeline-grid"
-
     let timeline: DayTimeline
     let zone: DisplayTimeZone
     let isToday: Bool
-    let editor: TimelineEditor?
+    let editor: TimelineEditor
     let onSelect: (TimelineSelection) -> Void
-    @State private var pressStartY: CGFloat = 0
+    @State private var reveal: EditGestureHost.RevealRequest?
+
+    private static let transition = Animation.easeInOut(duration: 0.28)
 
     var body: some View {
-        let geometry = TimelineGeometry(totalMinutes: timeline.totalMinutes)
+        let geometry = editor.geometry
         let marks = geometry.hourMarks(dayStartUnixMilliseconds: timeline.dayStartUnixMilliseconds, zone: zone)
         ScrollViewReader { proxy in
             ScrollView {
                 GeometryReader { size in
+                    let width = size.size.width
                     ZStack(alignment: .topLeading) {
+                        Color.clear.contentShape(Rectangle())
+                            .onTapGesture { editor.exitEditMode() }
+                            .frame(width: width, height: geometry.contentHeight)
                         ForEach(marks, id: \.elapsedMinute) { mark in
-                            HourRow(mark: mark, geometry: geometry, width: size.size.width)
+                            HourRow(mark: mark, geometry: geometry, width: width)
+                        }
+                        ForEach(geometry.axis.foldedSegments, id: \.startMinute) { segment in
+                            FoldRow(segment: segment, geometry: geometry, width: width)
                         }
                         ForEach(timeline.blocks, id: \.id) { block in
-                            let frame = geometry.blockFrame(block, totalWidth: size.size.width)
-                            EditableBlockView(
-                                block: block, zoneIdentifier: timeline.timeZoneIdentifier, timeline: timeline,
-                                geometry: geometry, editor: editor, onTap: { onSelect(.block(block)) }
-                            )
-                            .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-                            .offset(x: frame.minX, y: frame.minY)
+                            let frame = geometry.blockFrame(block, totalWidth: width)
+                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onTap: { onSelect(.block(block)) })
                         }
-                        MarkerRail(timeline: timeline, geometry: geometry, width: size.size.width, onSelect: onSelect)
-                        if let editor, let preview = editor.preview, let frame = editor.previewFrame(totalWidth: size.size.width) {
+                        MarkerRail(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+                        if let frame = editor.previewFrame(totalWidth: width), let preview = editor.preview {
                             PreviewBlockView(preview: preview, zoneIdentifier: timeline.timeZoneIdentifier)
                                 .frame(width: frame.width, height: frame.height, alignment: .topLeading)
                                 .offset(x: frame.minX, y: frame.minY)
                                 .allowsHitTesting(false)
                         }
-                        if isToday { NowLine(timeline: timeline, geometry: geometry, width: size.size.width) }
+                        if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
                     }
-                    .coordinateSpace(name: Self.space)
+                    .background { gestureHost(width: width, geometry: geometry) }
                 }
                 .frame(height: geometry.contentHeight)
-                .background {
-                    if let editor { pickUpHost(editor: editor, geometry: geometry) }
-                }
+                .animation(Self.transition, value: editor.focus)
                 // Scroll anchors need real layout frames; `offset` does not move a view's frame.
                 .background(alignment: .top) {
                     VStack(spacing: 0) {
-                        ForEach(marks, id: \.elapsedMinute) { mark in
-                            Color.clear.frame(height: 60 * geometry.pointsPerMinute).id("minute-\(mark.elapsedMinute)")
+                        ForEach(geometry.axis.segments, id: \.startMinute) { segment in
+                            Color.clear.frame(height: segment.height).id("segment-\(segment.startMinute)")
                         }
                     }
                 }
             }
-            .scrollDisabled(editor?.isActive ?? false)
-            .onAppear { scroll(proxy, geometry: geometry) }
-            .onChange(of: timeline.day) { _, _ in scroll(proxy, geometry: geometry) }
+            .scrollDisabled(editor.isActive)
+            .onAppear { scrollToStart(proxy, geometry: geometry) }
+            .onChange(of: timeline.day) { _, _ in scrollToStart(proxy, geometry: editor.geometry) }
         }
     }
 
-    /// Long press then drag: on a block it picks the block up, on empty space it starts a new event.
-    private func pickUpHost(editor: TimelineEditor, geometry: TimelineGeometry) -> some View {
-        GeometryReader { size in
-            LongPressDragHost(
-                onBegan: { point in
-                    pressStartY = point.y
-                    if let block = block(at: point, width: size.size.width, geometry: geometry) {
-                        if editor.begin(.move, block: block, timeline: timeline, geometry: geometry) { Haptics.pickUp() }
-                    } else if editor.beginCreate(atY: point.y, timeline: timeline, geometry: geometry) {
-                        Haptics.pickUp()
-                    }
-                },
-                onMoved: { point in
-                    if editor.isCreating { editor.updateCreate(toY: point.y) } else { editor.update(translationY: point.y - pressStartY) }
-                },
-                onEnded: { editor.finish() }
-            )
+    // MARK: Gestures
+
+    private func gestureHost(width: CGFloat, geometry: TimelineGeometry) -> some View {
+        EditGestureHost(
+            panEnabled: editor.isEditing,
+            scrollRequest: editor.scrollRequest,
+            reveal: reveal,
+            longPress: { phase, point in longPress(phase, point, width: width) },
+            panStartsAt: { point in editHit(at: point, width: width) != nil },
+            pan: { phase, point in pan(phase, point, width: width) }
+        )
+    }
+
+    /// Long press: picks up an event (entering edit mode and enlarging its surroundings), or starts a new one.
+    private func longPress(_ phase: EditGestureHost.Phase, _ point: CGPoint, width: CGFloat) {
+        switch phase {
+        case .began:
+            let pressMinute = editor.geometry.minute(atY: point.y)
+            if let block = block(at: point, width: width) {
+                guard editor.enterEditMode(for: block, pressMinute: pressMinute) else { return }
+                let after = editor.geometry
+                editor.setFingerAnchor(y: after.y(minute: pressMinute))
+                if editor.begin(.move, block: block, timeline: timeline, geometry: after) { Haptics.pickUp() }
+            } else if editor.focusForCreate(atMinute: pressMinute) {
+                let after = editor.geometry
+                if editor.beginCreate(atY: after.y(minute: pressMinute), timeline: timeline, geometry: after) { Haptics.pickUp() }
+            }
+        case .moved:
+            if editor.isCreating { editor.updateCreate(toY: point.y) } else { editor.update(fingerY: point.y) }
+        case .ended:
+            editor.finish()
+            // The event may have grown past the screen edge when it was enlarged; show all of it.
+            if editor.isEditing, editor.mode == .idle, let block = selectedBlock {
+                reveal = EditGestureHost.RevealRequest(rect: editor.geometry.blockFrame(block, totalWidth: width))
+            }
         }
+    }
+
+    /// Pan, edit mode only: drags the selected event or one of its handles with no wait.
+    private func pan(_ phase: EditGestureHost.Phase, _ point: CGPoint, width: CGFloat) {
+        switch phase {
+        case .began:
+            guard let block = selectedBlock, let hit = editHit(at: point, width: width) else { return }
+            let kind: TimelineEditPlanner.Kind
+            switch hit {
+            case .body: kind = .move
+            case .resizeStart: kind = .resizeStart
+            case .resizeEnd: kind = .resizeEnd
+            }
+            editor.setFingerAnchor(y: point.y)
+            if editor.begin(kind, block: block, timeline: timeline, geometry: editor.geometry) { Haptics.pickUp() }
+        case .moved:
+            editor.update(fingerY: point.y)
+        case .ended:
+            editor.finish()
+        }
+    }
+
+    private var selectedBlock: EventBlock? { timeline.blocks.first { editor.isSelected($0) } }
+
+    private func editHit(at point: CGPoint, width: CGFloat) -> EditHit? {
+        guard editor.isEditing, let block = selectedBlock else { return nil }
+        let frame = editor.geometry.blockFrame(block, width: width)
+        return EditHit.hit(point, frame: frame, canResizeStart: !block.continuesFromPreviousDay, canResizeEnd: !block.continuesToNextDay)
     }
 
     /// The topmost block under a point in grid coordinates.
-    private func block(at point: CGPoint, width: CGFloat, geometry: TimelineGeometry) -> EventBlock? {
-        timeline.blocks.last { geometry.blockFrame($0, totalWidth: width).contains(point) }
+    private func block(at point: CGPoint, width: CGFloat) -> EventBlock? {
+        timeline.blocks.last { editor.geometry.blockFrame($0, totalWidth: width).contains(point) }
     }
 
-    /// Starts near the first block, or the working day if the day is empty, so the screen does not open on 00:00.
-    private func scroll(_ proxy: ScrollViewProxy, geometry: TimelineGeometry) {
-        let target = max(0, (timeline.blocks.map(\.displayStartMinute).min() ?? 8 * 60) - 60)
-        let hour = (target / 60) * 60
-        proxy.scrollTo("minute-\(hour)", anchor: .top)
+    /// A day that already fits about one screen stays at the top. A taller one opens near the current time (today).
+    private func scrollToStart(_ proxy: ScrollViewProxy, geometry: TimelineGeometry) {
+        guard isToday, geometry.contentHeight > 760 else { return }
+        let nowMinute = Int((Date().timeIntervalSince1970 * 1_000 - Double(timeline.dayStartUnixMilliseconds)) / 60_000)
+        guard let segment = geometry.axis.segments.last(where: { $0.startMinute <= max(0, nowMinute - 60) }) else { return }
+        proxy.scrollTo("segment-\(segment.startMinute)", anchor: .top)
     }
 }
 
-// MARK: Gestures
-// Moving and creating use `LongPressDragHost` (see `TimelineGridView.pickUpHost`); resize handles are plain drags.
+private extension TimelineGeometry {
+    func blockFrame(_ block: EventBlock, width: CGFloat) -> CGRect { blockFrame(block, totalWidth: width) }
+}
 
-private struct EditableBlockView: View {
+// MARK: Pieces
+
+/// One event. In edit mode the selected event also shows its two resize handles; otherwise there are none.
+private struct BlockCell: View {
     let block: EventBlock
+    let frame: CGRect
     let zoneIdentifier: String
-    let timeline: DayTimeline
-    let geometry: TimelineGeometry
-    let editor: TimelineEditor?
+    let editor: TimelineEditor
     let onTap: () -> Void
 
-    @GestureState private var resizingTop = false
-    @GestureState private var resizingBottom = false
+    var body: some View {
+        let selected = editor.isSelected(block)
+        EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height)
+            .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
+            .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
+            .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+            .overlay(alignment: .topLeading) {
+                if selected && !block.continuesFromPreviousDay { HandleDot().position(x: frame.width - EditHit.handleInset, y: 0) }
+            }
+            .overlay(alignment: .topLeading) {
+                if selected && !block.continuesToNextDay { HandleDot().position(x: EditHit.handleInset, y: frame.height) }
+            }
+            .offset(x: frame.minX, y: frame.minY)
+            .onTapGesture(perform: onTap)
+    }
+}
+
+private struct HandleDot: View {
+    var body: some View {
+        Circle().fill(.white).frame(width: 12, height: 12)
+            .overlay(Circle().stroke(Color.accentColor, lineWidth: 2))
+            .shadow(color: .black.opacity(0.2), radius: 2, y: 1)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A stretch of the day drawn small: a dashed rule and how long it is, in the hour gutter.
+private struct FoldRow: View {
+    let segment: TimelineAxis.Segment
+    let geometry: TimelineGeometry
+    let width: CGFloat
 
     var body: some View {
-        EventBlockView(block: block, zoneIdentifier: zoneIdentifier)
-            .opacity(editor?.activeBlockID == block.id ? 0.3 : 1)
-            .overlay { if let editor, block.isEditable, block.state == .normal { handles(editor) } }
-            .onTapGesture(perform: onTap)
-            .onChange(of: resizingTop) { _, isActive in if !isActive { editor?.finish() } }
-            .onChange(of: resizingBottom) { _, isActive in if !isActive { editor?.finish() } }
-    }
-
-    private func handles(_ editor: TimelineEditor) -> some View {
-        let height = geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute)
-        let zone = max(10, min(18, height / 3))
-        return VStack(spacing: 0) {
-            if !block.continuesFromPreviousDay {
-                handle(.resizeStart, editor: editor, height: zone, state: $resizingTop, alignment: .top)
-            } else {
-                Color.clear.frame(height: zone)
+        let top = geometry.axis.top(of: segment)
+        ZStack(alignment: .topLeading) {
+            Rectangle().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
+                .frame(width: max(0, width - geometry.gutterWidth), height: 0)
+                .offset(x: geometry.gutterWidth, y: segment.height / 2)
+            VStack(spacing: 1) {
+                Image(systemName: "ellipsis").font(.system(size: 10)).rotationEffect(.degrees(90))
+                Text(Formatting.duration(minutes: segment.minutes)).font(.system(size: 9).monospacedDigit()).lineLimit(1).minimumScaleFactor(0.6)
             }
-            Spacer(minLength: 0)
-            if !block.continuesToNextDay {
-                handle(.resizeEnd, editor: editor, height: zone, state: $resizingBottom, alignment: .bottom)
-            } else {
-                Color.clear.frame(height: zone)
-            }
+            .foregroundStyle(.secondary)
+            .frame(width: geometry.gutterWidth - 6, height: segment.height)
         }
-    }
-
-    private func handle(
-        _ kind: TimelineEditPlanner.Kind, editor: TimelineEditor, height: CGFloat, state: GestureState<Bool>, alignment: Alignment
-    ) -> some View {
-        Color.clear
-            .frame(height: height)
-            .contentShape(Rectangle())
-            .overlay(alignment: alignment) {
-                Capsule().fill(.white).overlay(Capsule().stroke(Color.secondary.opacity(0.6), lineWidth: 0.5))
-                    .frame(width: 26, height: 4).padding(.vertical, 2)
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .named(TimelineGridView.space))
-                    .updating(state) { _, flag, _ in flag = true }
-                    .onChanged { drag in
-                        if editor.mode == .idle {
-                            guard editor.begin(kind, block: block, timeline: timeline, geometry: geometry) else { return }
-                            Haptics.pickUp()
-                        }
-                        editor.update(translationY: drag.location.y - drag.startLocation.y)
-                    }
-            )
-            .accessibilityHidden(true)
+        .frame(width: width, height: segment.height, alignment: .topLeading)
+        .offset(y: top)
+        .accessibilityLabel("접힌 시간 \(Formatting.duration(minutes: segment.minutes))")
     }
 }
 
@@ -243,6 +291,7 @@ private struct NowLine: View {
     }
 }
 
+/// Transactions that are not wholly accounted for inside an event block: they stay on the time axis as their own markers.
 private struct MarkerRail: View {
     let timeline: DayTimeline
     let geometry: TimelineGeometry

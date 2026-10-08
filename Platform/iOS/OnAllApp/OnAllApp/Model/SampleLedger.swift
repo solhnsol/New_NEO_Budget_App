@@ -21,7 +21,7 @@ enum SampleLedger {
         let month = try BudgetMonth(year: today.year, month: today.month)
 
         func instant(_ hour: Int, _ minute: Int) -> Int64 { zone.instant(of: today, minuteOfDay: hour * 60 + minute) }
-        let restaurantEntry = LedgerEntryID(rawValue: "entry/\(entryKey("sample-restaurant"))")
+        let restaurantEntry = entryID(for: "sample-restaurant")
 
         func candidate(
             _ id: String, _ kind: DraftEventKind, _ direction: TransactionDirection, _ amount: Int64, _ time: Int64,
@@ -50,6 +50,9 @@ enum SampleLedger {
         let candidates = [
             try candidate("sample-salary", .deposit, .inflow, 2_000_000, instant(9, 0)),
             try candidate("sample-restaurant", .purchase, .outflow, 12_000, instant(12, 20), merchant: "성수 식당"),
+            try candidate("sample-dessert", .purchase, .outflow, 3_000, instant(12, 50), merchant: "디저트"),
+            try candidate("sample-parking", .purchase, .outflow, 2_000, instant(12, 55), merchant: "주차"),
+            try candidate("sample-snack", .purchase, .outflow, 3_200, instant(13, 20), merchant: "분식"),
             try candidate("sample-cafe", .purchase, .outflow, 4_800, instant(12, 30), merchant: "카페", card: true, exact: false),
             try candidate("sample-convenience", .purchase, .outflow, 3_500, instant(14, 5), merchant: "편의점"),
             try candidate("sample-transfer", .transferOut, .outflow, 100_000, instant(15, 0)),
@@ -60,6 +63,7 @@ enum SampleLedger {
         return try AppLedger(configuration: configuration, promoting: candidates)
     }
 
-    /// Mirrors the assembler's id scheme (`prefix/<utf8 length>:<raw id>/<event index>`) so the refund can name its original.
-    private static func entryKey(_ rawID: String) -> String { "\(rawID.utf8.count):\(rawID)/0" }
+    /// Mirrors the assembler's id scheme (`prefix/<utf8 length>:<raw id>/<event index>`) so the refund can name its
+    /// original and a demo can link a transaction to an event.
+    static func entryID(for rawID: String) -> LedgerEntryID { LedgerEntryID(rawValue: "entry/\(rawID.utf8.count):\(rawID)/0") }
 }
