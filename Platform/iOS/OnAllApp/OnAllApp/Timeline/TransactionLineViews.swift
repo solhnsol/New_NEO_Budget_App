@@ -242,6 +242,7 @@ struct OverlapSummaryView: View {
                     }
                     Text(summary.items.count > 1 ? "일정 \(summary.items.count)개" : (summary.items.first?.title ?? ""))
                         .font(.system(size: 10 * scale, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                        .fixedSize()
                 } else {
                     Image(systemName: "square.on.square").font(.system(size: 9 * scale))
                     Text("일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
@@ -250,46 +251,14 @@ struct OverlapSummaryView: View {
                 Spacer(minLength: 0)
             }
             .foregroundStyle(.primary)
-            .padding(.horizontal, summary.countOnly ? 0 : 6)
+            .padding(.horizontal, summary.countOnly ? 6 : 6)
+            .background { if summary.countOnly { Capsule().fill(Color(.systemBackground).opacity(0.85)) } }
             .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
         }
         .tint(Color.primary)
-        .opacity(summary.opacity)
-        .allowsHitTesting(summary.opacity > 0.3)
         .offset(x: summary.frame.minX, y: summary.frame.minY)
         .accessibilityLabel(summary.countOnly ? "일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", ") : "겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
         .accessibilityHint("일정을 고릅니다")
-    }
-}
-
-/// An event with too little room for a card: a thin bar in its calendar's colour at its true start and end. As its room grows it opens up
-/// (`openness` 0 to 1) into the card it will be: wider, paler, outlined, its title coming in, so there is no moment where one thing is
-/// swapped for another.
-struct EventMarkerBar: View {
-    let block: EventBlock
-    let frame: CGRect
-    /// 0 when the event has only the thinnest room, 1 when it has room for a card (its title row).
-    let openness: CGFloat
-
-    var body: some View {
-        let color = Color(hex: block.calendarColorHex) ?? .accentColor
-        let t = openness * openness * (3 - 2 * openness)
-        let shape = RoundedRectangle(cornerRadius: 2 + 4 * t)
-        ZStack(alignment: .topLeading) {
-            shape.fill(Color(.systemBackground))
-            shape.fill(color.opacity(1 - 0.78 * t))
-            Rectangle().fill(color).frame(width: 3)
-            Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
-                .padding(.leading, 9).padding(.top, 3).padding(.trailing, 6)
-                .opacity(max(0, (openness - 0.6) / 0.4))
-        }
-        // The size is fixed before anything is clipped, so a title longer than the room is cut by the card and never runs out of it.
-        .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-        .clipShape(shape)
-        .overlay(shape.stroke(color.opacity(0.5 * t), lineWidth: 1))
-        .offset(x: frame.minX, y: frame.minY)
-        .accessibilityElement()
-        .accessibilityLabel(block.title)
     }
 }
 

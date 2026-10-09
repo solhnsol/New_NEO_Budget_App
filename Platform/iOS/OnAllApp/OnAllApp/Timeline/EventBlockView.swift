@@ -158,6 +158,8 @@ struct EventBlockView: View {
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
+    /// Too short for a title row of its own: the title is written inside the card, in one smaller line, and nothing else is.
+    var compactTitle = false
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
 
@@ -192,7 +194,7 @@ struct EventBlockView: View {
             // The end, in the bottom right corner, when the rows above leave the room.
             let rowsUsed = CGFloat(shownRows + (hiddenRows > 0 && shownRows > 0 ? 1 : 0)) * InlineAllocationPlan.rowHeight * scale
             let used = (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + rowsUsed + 6
-            if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
+            if !compactTitle, !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
                 CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
                     .padding(.horizontal, 6).padding(.bottom, 5 * scale)
             }
@@ -202,6 +204,16 @@ struct EventBlockView: View {
             if hasHeader, !startIsCovered, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty {
                 CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
                     .padding(.horizontal, 6).padding(.top, 5 * scale)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if compactTitle {
+                HStack(spacing: 3) {
+                    if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 7)) }
+                    Text(block.title).font(.system(size: 10 * scale, weight: .semibold)).lineLimit(1)
+                    if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 7)) }
+                }
+                .padding(.leading, 9).padding(.trailing, 6)
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }

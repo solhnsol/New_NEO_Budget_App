@@ -63,6 +63,18 @@ enum SampleLedger {
             // A burst of purchases a few minutes apart, to see transaction lines that cannot all keep apart.
             ? try (0..<5).map { try candidate("sample-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(16, 30 + $0 * 2), merchant: "상점 \($0)") }
             : [])
+        // `-demo-trans`: a burst of purchases on each of the days around today (a few minutes apart), for the days that slide in.
+        var transBurst: [TransactionCandidate] = []
+        if ProcessInfo.processInfo.arguments.contains("-demo-trans") {
+            for (offset, minute) in [(-1, 11 * 60 + 5), (1, 14 * 60 + 2), (2, 9 * 60 + 40)] {
+                for index in 0..<6 {
+                    transBurst.append(try candidate(
+                        "trans-\(offset)-\(index)", .purchase, .outflow, 1_000 + Int64(index) * 500,
+                        zone.instant(of: today.adding(days: offset), minuteOfDay: minute + index * 3), merchant: "상점 \(index)"
+                    ))
+                }
+            }
+        }
         // `-demo-txn`: synthetic spending for checking how transactions are written (see DemoData's `-demo-txn` events and DemoLinks).
         let txnCandidates: [TransactionCandidate] = [
             try candidate("txn-a1", .purchase, .outflow, 4_500, instant(8, 40), merchant: "커피 가"),
@@ -78,8 +90,8 @@ enum SampleLedger {
             try candidate("txn-ext", .purchase, .outflow, 3_500, instant(16, 30), merchant: "편의점 비"),
             try candidate("txn-late", .purchase, .outflow, 7_700, instant(20, 5), merchant: "야식"),
         ] + (try (0..<5).map { try candidate("txn-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(18, $0 * 2), merchant: "상점 \($0)") })
-        return try AppLedger(configuration: configuration, promoting: ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnCandidates.prefix(11))
-            : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnCandidates : candidates)
+        return try AppLedger(configuration: configuration, promoting: transBurst + (ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnCandidates.prefix(11))
+            : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnCandidates : candidates))
     }
 
     /// Mirrors the assembler's id scheme (`prefix/<utf8 length>:<raw id>/<event index>`) so the refund can name its

@@ -39,10 +39,8 @@ struct DayRenderPlan {
         var titleMaxWidth: CGFloat?
         /// Where on the axis each shown inside transaction happened (absolute y), in the order of the rows.
         var insideAnchors: [CGFloat] = []
-        /// The event has no room for a card at its true size: it is a thin bar at its true start and end, named by a label beside the bars.
-        var isMarker = false
-        /// 0 for a bar, 1 for a card: how far a bar has opened up as its room grows (see `isMarker`).
-        var openness: CGFloat = 0
+        /// Too short for a title row but tall enough to hold its title in a line of its own: the card writes it inside, centred, smaller.
+        var isCompact = false
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -54,8 +52,6 @@ struct DayRenderPlan {
         var countOnly = false
         /// The calendar colour of each of its events, so a crowd of different colours is still readable at a glance.
         var colors: [String?] = []
-        /// How visible the label is: it fades out as its bars open up into cards.
-        var opacity: CGFloat = 1
     }
 
     struct LineItem {
@@ -137,12 +133,16 @@ struct DayRenderPlan {
             }.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) }
         )
 
-        // A day the engine did not lay out (one sliding in during a swipe) is drawn on the axis the two days on screen already have: every
-        // event keeps its true start and end, never stretched to a minimum height, and what does not fit in its true height is cut back.
-        // The same goes for any day while the axis is still changing shape under it: the engine's decisions are for the axis it is heading
-        // to, and the room an event has on the way there is only what the axis gives it at that moment.
+        // How an event looks depends only on the room it has, never on whether anything is moving. A card is as tall as the axis makes it
+        // (its start and end are never moved to suit a minimum), and what does not fit in that height is cut back in steps:
+        //   a title row (≥ 19pt): the card as it is;
+        //   less (≥ 11pt): the same card, thin, with its title in one smaller line inside it and nothing else;
+        //   less than that: a sliver of the same card, its title taken out; where slivers follow one another they are named by one count.
+        // The selected or opened event keeps the size its handles are drawn for.
         let incoming = role == nil || layout == nil || !settled
         let trueMinimumHeight: CGFloat = 3
+        let titleRowHeight = (InlineAllocationPlan.titleHeight + 3) * scale
+        let compactHeight = 11 * scale
 
         // Frames. An overlapping event keeps the full width, indented by at most one step; an inner one is also pulled in on the right.
         var frames: [BlockID: CGRect] = [:]
@@ -150,13 +150,13 @@ struct DayRenderPlan {
             let shape = realOverlap[block.id.rawValue] ?? overlap(block)
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
             var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
-            if incoming, expanded != block.id {
+            if expanded != block.id, block.id != focused {
                 frame.size.height = max(trueMinimumHeight, geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute) - 1)
             }
             frames[block.id] = frame
         }
-        // A card that is only as tall as it is because of the minimum height does not run on over an event that begins after it ends: it stops
-        // short of that event's start (never above its own true end).
+        // A card that is only as tall as it is because of the minimum duration does not run on over an event that begins after it ends: it
+        // stops short of that event's start (never above its own true end).
         for block in blocks where expanded != block.id {
             guard var frame = frames[block.id], block.id != focused else { continue }
             let realEnd = max(block.endMinute, block.startMinute + 1)
@@ -167,16 +167,32 @@ struct DayRenderPlan {
             frames[block.id] = frame
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        // An event with less room than a title needs is not given a card it cannot fill: it becomes a bar (below), and the others' titles
-        // are placed as if it were not there.
-        let titleRowHeight = (InlineAllocationPlan.titleHeight + 3) * scale
-        var markerIDs = Set<BlockID>()
-        if incoming {
-            for block in blocks {
-                if let frame = frames[block.id], frame.height < titleRowHeight, block.id != focused, block.id != expanded { markerIDs.insert(block.id) }
+
+        // Which events are compact (title inside, smaller) and which are slivers; runs of slivers are one count.
+        var compactIDs = Set<BlockID>()
+        var slivers: [EventBlock] = []
+        for block in blocks where block.id != focused && block.id != expanded {
+            guard let frame = frames[block.id], placement(block)?.header == nil else { continue }
+            if frame.height < compactHeight { slivers.append(block) } else if frame.height < titleRowHeight { compactIDs.insert(block.id) }
+        }
+        slivers.sort { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
+        var crowdRuns: [[EventBlock]] = []
+        var runBottom: CGFloat = -.infinity
+        var runNeighbours: [[EventBlock]] = []
+        for block in slivers {
+            guard let frame = frames[block.id] else { continue }
+            if crowdRuns.isEmpty || frame.minY > runBottom + titleRowHeight {
+                crowdRuns.append([block])
+                runBottom = frame.maxY
+            } else {
+                crowdRuns[crowdRuns.count - 1].append(block)
+                runBottom = max(runBottom, frame.maxY)
             }
         }
-        let titleContent = markerIDs.isEmpty ? content : DayContentLayout(blocks: blocks.filter { !markerIDs.contains($0.id) })
+        _ = runNeighbours
+        runNeighbours = []
+        let crowdIDs = Set(crowdRuns.filter { $0.count >= 2 }.flatMap { $0.map(\.id) })
+        let titleContent = (compactIDs.isEmpty && crowdIDs.isEmpty) ? content : DayContentLayout(blocks: blocks.filter { !compactIDs.contains($0.id) && !crowdIDs.contains($0.id) })
         let places = titleContent.titlePlacements(
             top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
             bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
@@ -184,15 +200,15 @@ struct DayRenderPlan {
             right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
             width: { titleWidth(byID[$0]?.title ?? "") },
             columnRight: contentLeft + contentWidth - EventTitleLayer.horizontalPadding,
-            minimumHeight: incoming ? trueMinimumHeight : geometry.minimumBlockHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
-            titlesOnly: incoming
+            minimumHeight: trueMinimumHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
+            titlesOnly: true
         )
 
         // Overlap groups of three or more: their titles become one summary at the group's first card.
         var hiddenByGroup = Set<BlockID>()
         var summaries: [Summary] = []
         var groupMembers: [Int: [EventBlock]] = [:]
-        for block in blocks where !markerIDs.contains(block.id) {
+        for block in blocks where !compactIDs.contains(block.id) && !crowdIDs.contains(block.id) {
             if let shape = overlap(block), shape.summarisesTitles { groupMembers[shape.groupIndex, default: []].append(block) }
         }
         for index in groupMembers.keys.sorted() {
@@ -213,85 +229,35 @@ struct DayRenderPlan {
             for member in members where member.id != focused && member.id != expanded { hiddenByGroup.insert(member.id) }
         }
 
-        // Events too short for a card on this axis are bars at their true times, in lanes side by side where they overlap, with one label
-        // to their right per run: the title if there is one event, else how many (and their colours).
-        var markerFrames: [BlockID: CGRect] = [:]
-        var markerOpenness: [BlockID: CGFloat] = [:]
-        if !markerIDs.isEmpty {
-            let marked = blocks.filter { markerIDs.contains($0.id) }
-                .sorted { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
-            var runs: [[EventBlock]] = []
-            var runBottom: CGFloat = -.infinity
-            for block in marked {
-                guard let frame = frames[block.id] else { continue }
-                if runs.isEmpty || frame.minY > runBottom + titleRowHeight {
-                    runs.append([block])
-                    runBottom = frame.maxY
-                } else {
-                    runs[runs.count - 1].append(block)
-                    runBottom = max(runBottom, frame.maxY)
-                }
-            }
-            let barWidth: CGFloat = 4, laneStep: CGFloat = 6
-            for run in runs {
-                var laneEnds: [CGFloat] = []
-                var lanes: [BlockID: Int] = [:]
-                for block in run {
-                    guard let frame = frames[block.id] else { continue }
-                    if let lane = laneEnds.firstIndex(where: { $0 <= frame.minY }) {
-                        lanes[block.id] = lane
-                        laneEnds[lane] = frame.maxY
-                    } else {
-                        lanes[block.id] = laneEnds.count
-                        laneEnds.append(frame.maxY)
-                    }
-                }
-                var maxOpen: CGFloat = 0
-                for block in run {
-                    guard let frame = frames[block.id] else { continue }
-                    // As the room grows the bar opens up into the card it will be, from its lane to the card's own place and width, so the
-                    // move from a thin mark to a card is one continuous change and not a swap.
-                    let t = min(max((frame.height - trueMinimumHeight) / max(1, titleRowHeight - trueMinimumHeight), 0), 1)
-                    // A bar stays a bar (named by the label beside it) until it is tall enough to carry its title, then opens to the card's width
-                    // over a short range of height, so what is on screen is a named bar or a card with its title, never a bare strip.
-                    let wide = min(max((t - 0.5) / 0.3, 0), 1)
-                    let widen = wide * wide * (3 - 2 * wide)
-                    maxOpen = max(maxOpen, widen)
-                    let laneX = contentLeft + CGFloat(lanes[block.id] ?? 0) * laneStep
-                    markerFrames[block.id] = CGRect(
-                        x: laneX + (frame.minX - laneX) * widen, y: frame.minY,
-                        width: barWidth + (frame.width - barWidth) * widen, height: frame.height
-                    )
-                    markerOpenness[block.id] = t
-                }
-                let labelX = contentLeft + CGFloat(laneEnds.count) * laneStep + 4
-                let top = run.compactMap { frames[$0.id]?.minY }.min() ?? 0
-                summaries.append(Summary(
-                    frame: CGRect(x: labelX, y: top - 3 * scale, width: max(0, contentLeft + contentWidth - labelX), height: 16 * scale),
-                    items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex), opacity: max(0, 1 - maxOpen * 1.6)
-                ))
-                for member in run { hiddenByGroup.insert(member.id) }
-            }
+        // Slivers that follow one another are named by one count, written over them in the card's own text place, with a dot per calendar
+        // colour; the cards themselves stay, thin, at their true times.
+        for run in crowdRuns where run.count >= 2 {
+            let union = run.compactMap { frames[$0.id] }.reduce(CGRect.null) { $0.union($1) }
+            let height = 14 * scale
+            summaries.append(Summary(
+                frame: CGRect(x: union.minX + EventTitleLayer.horizontalPadding, y: union.midY - height / 2, width: max(0, union.width - 2 * EventTitleLayer.horizontalPadding), height: height),
+                items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex)
+            ))
+            for member in run { hiddenByGroup.insert(member.id) }
         }
 
         // Events, back to front.
         let ordered = content.hitOrder(focused: focused ?? expanded).reversed()
         var eventItems: [EventItem] = []
         for id in ordered {
-            guard let block = byID[id], let cardFrame = frames[id] else { continue }
-            let isMarker = markerFrames[id] != nil
-            let frame = markerFrames[id] ?? cardFrame
+            guard let block = byID[id], let frame = frames[id] else { continue }
+            let isCompact = compactIDs.contains(id)
             let placed = placement(block)
             var header: CGRect?
-            if !isMarker, let spec = placed?.header, expanded != block.id {
+            if let spec = placed?.header, expanded != block.id {
                 header = CGRect(x: frame.minX, y: frame.minY - spec.height, width: frame.width, height: spec.height)
             }
-            let inside = isMarker ? (rows: [AllocationItem](), shown: 0, hidden: 0) : Self.insideAllocations(of: block, placement: placed, blockHeight: frame.height)
+            let inside = (isCompact || crowdIDs.contains(id)) ? (rows: [AllocationItem](), shown: 0, hidden: 0) : Self.insideAllocations(of: block, placement: placed, blockHeight: frame.height)
             let touchMissing = max(0, parameters.minimumTouchHeight - frame.height)
             eventItems.append(EventItem(
                 block: block, placement: placed, frame: frame,
-                touchFrame: frame.insetBy(dx: isMarker ? -6 : 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
-                header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id),
+                touchFrame: frame.insetBy(dx: 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
+                header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id) && !isCompact,
                 insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden,
                 titleMaxWidth: {
                     switch placed?.titleResolution {
@@ -300,8 +266,8 @@ struct DayRenderPlan {
                     default: return nil
                     }
                 }(),
-                insideAnchors: isMarker ? [] : inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
-                isMarker: isMarker, openness: markerOpenness[id] ?? 0
+                insideAnchors: inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
+                isCompact: isCompact
             ))
         }
 
@@ -326,22 +292,52 @@ struct DayRenderPlan {
         if let role, let layout {
             sourceLines = layout.lines.filter { $0.role == role }
             sourceOverflows = layout.overflows.filter { $0.role == role }
-            for (i, line) in sourceLines.enumerated() { placedUnits.append(Placed(anchor: line.minute, id: line.transactionID, height: parameters.transactionRow * scale, kind: 0, index: i)) }
-            for (i, overflow) in sourceOverflows.enumerated() {
-                placedUnits.append(Placed(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, height: overflow.requiredHeight, kind: 1, index: i))
-            }
         } else {
-            // A day the engine did not lay out: every transaction on its own line.
-            for (i, marker) in timeline.markers.enumerated() {
-                let line = TransactionLine(
+            // A day the engine did not lay out: every transaction is a line to begin with.
+            for marker in timeline.markers {
+                sourceLines.append(TransactionLine(
                     key: ItemKey(role: .secondary, kind: .transactionLink, id: marker.transactionID.rawValue), role: .secondary,
                     transactionID: marker.transactionID.rawValue, minute: marker.positionMinute,
                     kind: marker.flow == .refund ? .refund : .spend, currency: marker.amount.currency, minorUnits: marker.amount.minorUnits,
                     link: nil, isPartlyLinked: false
-                )
-                sourceLines.append(line)
-                placedUnits.append(Placed(anchor: marker.positionMinute, id: marker.transactionID.rawValue, height: parameters.transactionRow * scale, kind: 0, index: i))
+                ))
             }
+        }
+        // The same rule as for events: what is written depends on the room the axis gives it right now. Where the engine's decision was made
+        // for another axis (a day it did not lay out, or an axis still changing), transactions that would be closer together than a row
+        // are one summary, not rows pushed apart down the day.
+        if incoming {
+            let pitch = (parameters.transactionRow + parameters.lineGap) * scale
+            let flat: [TransactionLine] = sourceLines + sourceOverflows.flatMap { overflow in
+                overflow.members.map {
+                    TransactionLine(
+                        key: ItemKey(role: overflow.role, kind: .transactionLink, id: $0.transactionID), role: overflow.role, transactionID: $0.transactionID,
+                        minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits, link: $0.link, isPartlyLinked: false
+                    )
+                }
+            }
+            var clusters: [[TransactionLine]] = []
+            var lastY: CGFloat = -.infinity
+            for line in flat.sorted(by: { ($0.minute, $0.transactionID) < ($1.minute, $1.transactionID) }) {
+                let y = geometry.y(minute: line.minute)
+                if clusters.isEmpty || y - lastY >= pitch { clusters.append([line]) } else { clusters[clusters.count - 1].append(line) }
+                lastY = y
+            }
+            sourceLines = clusters.filter { $0.count == 1 }.map { $0[0] }
+            sourceOverflows = clusters.filter { $0.count > 1 }.map { cluster in
+                let members = cluster.map { OverflowMember(transactionID: $0.transactionID, minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits, link: $0.link) }
+                let totals = AmountSum.totals(of: cluster.map { AllocationTransaction(id: $0.transactionID, minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits) })
+                let kinds = Dictionary(grouping: cluster, by: \.kind).map { KindCount(kind: $0.key, count: $0.value.count) }.sorted { $0.kind < $1.kind }
+                return TransactionOverflow(
+                    id: "overflow-\(cluster[0].minute)-\(cluster[0].transactionID)", role: cluster[0].role, members: members,
+                    startMinute: cluster.first?.minute ?? 0, endMinute: cluster.last?.minute ?? 0, countsByKind: kinds, amountTotals: totals,
+                    showsAmountTotal: totals.count == 1, requiredHeight: parameters.overflowCard * scale
+                )
+            }
+        }
+        for (i, line) in sourceLines.enumerated() { placedUnits.append(Placed(anchor: line.minute, id: line.transactionID, height: parameters.transactionRow * scale, kind: 0, index: i)) }
+        for (i, overflow) in sourceOverflows.enumerated() {
+            placedUnits.append(Placed(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, height: overflow.requiredHeight, kind: 1, index: i))
         }
         placedUnits.sort { ($0.anchor, $0.id) < ($1.anchor, $1.id) }
         var previousCenter: CGFloat?
@@ -349,6 +345,11 @@ struct DayRenderPlan {
         for unit in placedUnits {
             var center = geometry.y(minute: unit.anchor)
             if let previousCenter { center = max(center, previousCenter + (previousHeight + unit.height) / 2 + gap) }
+            // A row never lands on the name of a crowd of events: it moves below it (its leader bends back to the time it happened).
+            for _ in 0..<4 {
+                guard let label = summaries.first(where: { abs(center - $0.frame.midY) < (unit.height + $0.frame.height) / 2 }) else { break }
+                center = label.frame.maxY + unit.height / 2 + gap
+            }
             previousCenter = center
             previousHeight = unit.height
             // A row writes from the day's left edge, like the text of an event, unless the title of an event is on its row: then it keeps to
