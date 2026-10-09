@@ -12,6 +12,8 @@ struct EventDetailView: View {
                 switch selection {
                 case let .allDay(item): allDaySections(item)
                 case let .marker(marker): markerSections(marker)
+                case let .allocation(item, eventTitle): allocationSection(item, eventTitle: eventTitle)
+                case let .overflow(selection): overflowSections(selection)
                 }
             }
             .navigationTitle(title)
@@ -23,6 +25,8 @@ struct EventDetailView: View {
         switch selection {
         case let .allDay(item): return item.title
         case let .marker(marker): return marker.title ?? "지출"
+        case let .allocation(item, _): return item.title ?? "거래"
+        case let .overflow(selection): return selection.counts
         }
     }
 
@@ -36,6 +40,36 @@ struct EventDetailView: View {
             if !item.isEditable { row("편집", "읽기 전용") }
         }
         allocationSections(item.allocations, spend: item.allocatedSpend, refunds: item.allocatedRefunds)
+    }
+
+    @ViewBuilder
+    private func allocationSection(_ item: AllocationItem, eventTitle: String?) -> some View {
+        Section {
+            row(item.flow == .refund ? "환불" : "지출", Formatting.money(item.transactionAmount.minorUnits, currency: item.transactionAmount.currency))
+            row("시각", Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (item.timePrecision == .approximate ? " (알림 기준)" : ""))
+            if let eventTitle { row("연결된 일정", eventTitle) }
+        } footer: {
+            Text("거래가 일어난 시각은 일정 시간 밖이라 일정과 별개의 줄로 보입니다. 일정과의 연결은 그대로입니다.")
+        }
+    }
+
+    /// The transactions an overflow stands for, in time order. Nothing is merged: each is listed as it is.
+    @ViewBuilder
+    private func overflowSections(_ selection: OverflowSelection) -> some View {
+        Section {
+            ForEach(selection.rows) { item in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title ?? "거래")
+                        Text(Formatting.clock(minute: item.minute) + " · " + AmountKindNames.name(item.kind)).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(item.amount).monospacedDigit()
+                }
+            }
+        } footer: {
+            Text("공간이 모자라 한 카드로 보인 거래입니다. 서로 관련된 거래라는 뜻은 아닙니다.")
+        }
     }
 
     @ViewBuilder

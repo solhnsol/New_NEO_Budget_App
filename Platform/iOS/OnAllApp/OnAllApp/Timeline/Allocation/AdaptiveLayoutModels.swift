@@ -212,6 +212,9 @@ struct AllocationInput: Sendable {
     /// The detail levels of the layout this one replaces, so small changes of data keep what was already chosen.
     var previous: [ItemKey: Int]?
     var focus: FocusRequest?
+    /// Real widths of event titles at the current font and Dynamic Type, by title text, measured by the caller (once per change of
+    /// content or text size, never per frame). A title missing here is estimated from its characters.
+    var titleWidths: [String: CGFloat] = [:]
     var parameters = AllocationParameters()
 }
 
@@ -243,6 +246,8 @@ struct EventOverlap: Equatable, Sendable {
     let pullsInOnRight: Bool
     /// The events that overlap one another (directly or through a chain) share a group.
     let groupSize: Int
+    /// Which group of the day (0, 1, ...), so the renderer can find the events that summarise their titles together.
+    var groupIndex: Int = 0
     /// Three or more overlapping: boundaries cannot all be shown, so each shows as a title in a summary.
     let summarisesTitles: Bool
 }

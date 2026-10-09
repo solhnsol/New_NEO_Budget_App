@@ -109,11 +109,11 @@ struct DayContentLayout {
     /// its title stays at its own top and the others do not need to clear it.
     func titlePlacements(
         top: (BlockID) -> CGFloat, bottom: (BlockID) -> CGFloat, left: (BlockID) -> CGFloat, right: (BlockID) -> CGFloat,
-        width: (BlockID) -> CGFloat, columnRight: CGFloat, minimumHeight: CGFloat, focused: BlockID?
+        width: (BlockID) -> CGFloat, columnRight: CGFloat, minimumHeight: CGFloat, focused: BlockID?, rowHeight: CGFloat = DayContentLayout.titleRowHeight
     ) -> [BlockID: TitlePlacement] {
         var result: [BlockID: TitlePlacement] = [:]
         var placed: [(rect: CGRect, bottom: CGFloat)] = []
-        let row = Self.titleRowHeight
+        let row = rowHeight
         for id in order {
             let trueTop = top(id)
             let trueBottom = max(bottom(id), trueTop + minimumHeight)

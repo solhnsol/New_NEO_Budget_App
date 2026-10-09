@@ -6,13 +6,58 @@ import UIKit
 enum TimelineSelection: Identifiable {
     case allDay(AllDayItem)
     case marker(TransactionMarkerItem)
+    /// A transaction linked to an event, drawn on its own line because it happened outside the event's time.
+    case allocation(AllocationItem, eventTitle: String?)
+    /// An overflow's transactions. `target` is the stable id a later focus view will be opened with.
+    case overflow(OverflowSelection)
 
     var id: String {
         switch self {
         case let .allDay(item): return "allday-" + item.id.rawValue
         case let .marker(marker): return "marker-" + marker.transactionID.rawValue
+        case let .allocation(item, _): return "allocation-" + item.allocationID.rawValue
+        case let .overflow(selection): return "overflow-" + selection.overflowID
         }
     }
+}
+
+/// What an overflow stands for, in a form a list (now) or a focus view (later) can show. Nothing is dropped or merged.
+struct OverflowSelection {
+    struct Row: Identifiable {
+        let id: String
+        let minute: Int
+        let kind: AmountKind
+        let title: String?
+        let amount: String
+    }
+    let overflowID: String
+    let target: FocusTarget
+    let rows: [Row]
+    let counts: String
+
+    init(_ item: DayRenderPlan.OverflowItem, displays: [String: DayRenderPlan.TransactionDisplay]) {
+        overflowID = item.id
+        target = item.focusTarget
+        counts = OverflowCardView.summary(item)
+        rows = item.members.map { member in
+            let display = displays[member.transactionID]
+            return Row(
+                id: member.transactionID, minute: member.minute, kind: member.kind, title: display?.title,
+                amount: member.minorUnits.map { Formatting.money($0, currency: member.currency) } ?? "금액 미정"
+            )
+        }
+    }
+}
+
+/// Things that could each be meant by one touch: shown as a choice, never silently picked between.
+struct TouchChoice: Identifiable {
+    struct Option: Identifiable {
+        let id: String
+        let label: String
+        let action: () -> Void
+    }
+    let id = UUID()
+    let options: [Option]
 }
 
 enum Haptics {
@@ -49,6 +94,8 @@ struct TimelineGridView: View {
     /// How far the strip of days is dragged sideways of its resting place, during a swipe and while it settles.
     @State private var swipeOffset: CGFloat = 0
     @State private var settling = false
+    @State private var choice: TouchChoice?
+    @Environment(\.dynamicTypeSize) private var dynamicType
 
     private static let transition = Animation.easeInOut(duration: 0.28)
     private static let settleDuration = 0.22
@@ -65,9 +112,28 @@ struct TimelineGridView: View {
             Divider()
             scrollingGrid
         }
+        .confirmationDialog("무엇을 선택할까요?", isPresented: Binding(get: { choice != nil }, set: { if !$0 { choice = nil } }), titleVisibility: .visible, presenting: choice) { choice in
+            ForEach(choice.options) { option in Button(option.label) { option.action() } }
+            Button("취소", role: .cancel) {}
+        }
+    }
+
+    /// Tells the editor how much room there is and how large the text is. Only when one of them changes: scrolling is not among them, so a
+    /// scroll never asks the layout engine for anything.
+    private func reportEnvironment(_ size: CGSize) {
+        let columns = DayColumns(count: 2, gutterWidth: 60, trailingPadding: 6, totalWidth: size.width)
+        let contentWidth = TimelineGeometry(totalMinutes: 1440).contentWidth(totalWidth: columns.dayLayoutWidth)
+        editor.updateEnvironment(.init(
+            viewportHeight: max(0, size.height - 2 * Self.edgePadding), contentWidth: contentWidth,
+            textScale: TextMeasurer.textScale(), contentSize: "\(dynamicType)"
+        ))
     }
 
     private var scrollingGrid: some View {
+        GeometryReader { outer in scrollView.onAppear { reportEnvironment(outer.size) }.onChange(of: outer.size) { _, size in reportEnvironment(size) }.onChange(of: dynamicType) { _, _ in reportEnvironment(outer.size) } }
+    }
+
+    private var scrollView: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 // While the axis changes shape the clock, not an animation, says how far along it is (`AxisTransition.progress`):
@@ -115,13 +181,7 @@ struct TimelineGridView: View {
             let width = size.size.width
             let columns = columns(width: width, geometry: geometry)
             ZStack(alignment: .topLeading) {
-                Color.clear.contentShape(Rectangle())
-                    .onTapGesture { location in
-                        if TimelineGestureRouter.tapEndsEditing(on: .emptyTime) {
-                            editor.collapseAll(anchorMinute: editor.geometry.minute(atY: location.y))
-                        }
-                    }
-                    .frame(width: width, height: geometry.contentHeight)
+                Color.clear.frame(width: width, height: geometry.contentHeight)
                 ForEach(marks, id: \.elapsedMinute) { mark in
                     HourRow(mark: mark, geometry: geometry, width: width, coveredBy: covered)
                 }
@@ -171,6 +231,8 @@ struct TimelineGridView: View {
                     EditTimeBadge(text: badge.text, y: badge.y, width: geometry.gutterWidth)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture { location in handleTap(at: location, columns: columns) }
             .background { gestureHost(width: width, geometry: geometry) }
             .offset(y: -shift)
             .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width, geometry: geometry) }
@@ -193,29 +255,62 @@ struct TimelineGridView: View {
         .padding(.bottom, editor.needsScrollRoom ? Self.editScrollRoom : 0)
     }
 
-    /// Everything of one day: events stacked in its column, then its transactions as cards in the same column.
+    /// The roles the two days on screen have. A day sliding in during a swipe has none: the engine did not lay it out.
+    private func role(of timeline: DayTimeline) -> DayRole? {
+        if visible[0]?.day == timeline.day { return .main }
+        if visible[1]?.day == timeline.day { return .secondary }
+        return nil
+    }
+
+    private var textScale: CGFloat { TextMeasurer.textScale() }
+
+    /// Where everything of a day goes, from the engine's layout and the axis. Drawing and hit-testing both use it.
+    private func plan(_ timeline: DayTimeline, geometry: TimelineGeometry, width: CGFloat) -> DayRenderPlan {
+        DayRenderPlan(
+            timeline: timeline, role: role(of: timeline), layout: editor.adaptive, geometry: geometry, layoutWidth: width, textScale: textScale,
+            expanded: timeline.blocks.first { editor.isExpanded($0) }?.id, focused: focusedID(in: timeline),
+            titleWidth: { editor.titleWidth(for: $0) }
+        )
+    }
+
+    /// Everything of one day, drawn from its plan: event cards back to front, their titles (or headers, or one summary) above them, then
+    /// the transaction lines and overflow cards, which sit over the events but are never part of one.
     private func dayContent(_ timeline: DayTimeline, geometry: TimelineGeometry, layoutWidth width: CGFloat) -> some View {
-        let layout = DayContentLayout(blocks: timeline.blocks)
+        let plan = plan(timeline, geometry: geometry, width: width)
+        let scale = textScale
+        let frames = Dictionary(plan.events.map { ($0.block.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
         let focus = focusedID(in: timeline)
-        let frames = cardFrames(layout: layout, in: timeline, geometry: geometry, width: width)
-        let places = titlePlacements(layout: layout, in: timeline, geometry: geometry, frames: frames, width: width, focused: focus)
-        let drawOrder = self.drawOrder(layout: layout, in: timeline, focused: focus)
         return ZStack(alignment: .topLeading) {
-            // Back to front; the opened event is drawn last so it sits over its neighbours.
-            ForEach(drawOrder, id: \.id) { block in
-                let frame = frames[block.id] ?? .zero
-                if editor.isExpanded(block) { QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone) }
-                BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onEditInfo: onEditInfo)
+            ForEach(plan.events, id: \.block.id) { item in
+                if editor.isExpanded(item.block) { QuarterMarks(block: item.block, geometry: geometry, timeline: timeline, zone: zone) }
+                BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo)
             }
             // Titles are drawn over every card, so a card stacked on another never hides the title under it.
-            ForEach(drawOrder.filter { !editor.isExpanded($0) }, id: \.id) { block in
-                if let frame = frames[block.id], !titleIsCovered(block, frame: frame, place: places[block.id] ?? .init(), frames: frames, focused: focus) {
-                    EventTitleLayer(block: block, frame: frame, place: places[block.id] ?? .init(), columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width))
+            ForEach(plan.events.filter { !editor.isExpanded($0.block) }, id: \.block.id) { item in
+                if let header = item.header {
+                    EventHeaderView(block: item.block, rect: header)
+                } else if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
+                    EventTitleLayer(
+                        block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
+                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale
+                    )
                 }
             }
-            TransactionCards(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+            ForEach(Array(plan.summaries.enumerated()), id: \.offset) { _, summary in
+                OverlapSummaryView(summary: summary, scale: scale) { id in
+                    if let block = timeline.blocks.first(where: { $0.id == id }) { editor.toggleExpanded(block) }
+                }
+            }
+            ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale) }
+            ForEach(plan.overflows, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale) }
             if timeline.day == today { NowLine(timeline: timeline, geometry: geometry, width: width) }
         }
+    }
+
+    /// A title is hidden while the opened or selected event, which is drawn over everything, sits on top of it.
+    private func titleIsCovered(_ item: DayRenderPlan.EventItem, frames: [BlockID: CGRect], focused: BlockID?) -> Bool {
+        guard let focus = focused, focus != item.block.id, let cover = frames[focus] else { return false }
+        return cover.intersects(CGRect(x: item.frame.minX + item.title.dx, y: item.frame.minY + item.title.dy, width: max(0, item.frame.width - item.title.dx), height: DayContentLayout.titleRowHeight))
     }
 
     /// The time of each edge being changed, and where it is on the axis. A resize shows the edge that moves; a move or a new event shows
@@ -298,6 +393,8 @@ struct TimelineGridView: View {
             let column = columns.column(atX: point.x)
             let target = touchTarget(at: point, columns: columns)
             let hit = located(at: point, columns: columns)
+            // A transaction line or an overflow is not empty time and not an event: a long press on it starts nothing.
+            if hit == nil, otherHit(at: point, columns: columns) != .nothing { return }
             switch TimelineGestureRouter.longPress(on: target, isEditing: editor.isEditing) {
             case .ignore:
                 return
@@ -361,16 +458,23 @@ struct TimelineGridView: View {
         return nil
     }
 
-    /// The topmost event under a point in grid coordinates, and the day it is on.
+    /// The topmost event under a point in grid coordinates, and the day it is on. A transaction line or overflow under the point is not an event.
     private func located(at point: CGPoint, columns: DayColumns) -> (block: EventBlock, timeline: DayTimeline, column: Int)? {
         let column = columns.column(atX: point.x)
         guard let timeline = visible[column] else { return nil }
         let local = columns.localPoint(point, column: column)
-        let layout = DayContentLayout(blocks: timeline.blocks)
-        let frames = cardFrames(layout: layout, in: timeline, geometry: editor.geometry, width: columns.dayLayoutWidth)
-        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        guard let id = layout.topmost(at: local, frames: frames, focused: focusedID(in: timeline)), let block = byID[id] else { return nil }
+        guard case let .event(id) = plan(timeline, geometry: editor.geometry, width: columns.dayLayoutWidth).hit(at: local),
+              let block = timeline.blocks.first(where: { $0.id == id }) else { return nil }
         return (block, timeline, column)
+    }
+
+    /// What is under a point that is not an event: a transaction line, an overflow, or a choice between several things.
+    private func otherHit(at point: CGPoint, columns: DayColumns) -> DayRenderPlan.Hit {
+        let column = columns.column(atX: point.x)
+        guard let timeline = visible[column] else { return .nothing }
+        let hit = plan(timeline, geometry: editor.geometry, width: columns.dayLayoutWidth).hit(at: columns.localPoint(point, column: column))
+        if case .event = hit { return .nothing }
+        return hit
     }
 
     /// The block id that is drawn on top of everything in a day: the opened event, else the selected one.
@@ -378,50 +482,65 @@ struct TimelineGridView: View {
         timeline.blocks.first { editor.isExpanded($0) }?.id ?? timeline.blocks.first { editor.isSelected($0) }?.id
     }
 
-    /// Blocks back to front: stacking order, with the focused one last.
-    private func drawOrder(layout: DayContentLayout, in timeline: DayTimeline, focused: BlockID?) -> [EventBlock] {
-        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return layout.hitOrder(focused: focused).reversed().compactMap { byID[$0] }
-    }
-
-    /// Where every block of a day is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
-    private func cardFrames(layout: DayContentLayout, in timeline: DayTimeline, geometry: TimelineGeometry, width: CGFloat) -> [BlockID: CGRect] {
-        let available = geometry.contentWidth(totalWidth: width)
-        var result: [BlockID: CGRect] = [:]
-        for block in timeline.blocks {
-            result[block.id] = geometry.blockFrame(
-                block, totalWidth: width, expanded: editor.isExpanded(block),
-                insets: DayContentLayout.insets(for: layout.slot(of: block.id), available: available)
-            )
-        }
-        return result
-    }
-
-    /// A title is hidden while the opened or selected event, which is drawn over everything, sits on top of it.
-    private func titleIsCovered(_ block: EventBlock, frame: CGRect, place: DayContentLayout.TitlePlacement, frames: [BlockID: CGRect], focused: BlockID?) -> Bool {
-        guard let focus = focused, focus != block.id, let cover = frames[focus] else { return false }
-        return cover.intersects(CGRect(x: frame.minX + place.dx, y: frame.minY + place.dy, width: max(0, frame.width - place.dx), height: DayContentLayout.titleRowHeight))
-    }
-
-    /// Where each title is drawn, so overlapping events keep every title readable.
-    private func titlePlacements(layout: DayContentLayout, in timeline: DayTimeline, geometry: TimelineGeometry, frames: [BlockID: CGRect], width: CGFloat, focused: BlockID?) -> [BlockID: DayContentLayout.TitlePlacement] {
-        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return layout.titlePlacements(
-            top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
-            bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
-            left: { (frames[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
-            right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
-            width: { DayContentLayout.estimatedTitleWidth(byID[$0]?.title ?? "", extra: 14) },
-            columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width) - EventTitleLayer.horizontalPadding,
-            minimumHeight: geometry.minimumBlockHeight,
-            focused: focused
-        )
-    }
-
     /// Where a block is in `geometry`, in its day's own layout.
     private func frame(of block: EventBlock, in timeline: DayTimeline, width: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect {
-        let layout = DayContentLayout(blocks: timeline.blocks)
-        return cardFrames(layout: layout, in: timeline, geometry: geometry ?? editor.geometry, width: width)[block.id] ?? .zero
+        plan(timeline, geometry: geometry ?? editor.geometry, width: width).events.first { $0.block.id == block.id }?.frame ?? .zero
+    }
+
+    // MARK: Taps
+
+    /// One tap handler for everything of the days, so what is touched is decided by the same plan that was drawn. A transaction line or
+    /// an overflow is touched where it is drawn, an event on its card or its header, and where touch areas meet (or something is covered)
+    /// the person chooses.
+    private func handleTap(at point: CGPoint, columns: DayColumns) {
+        let column = columns.column(atX: point.x)
+        guard point.x >= columns.gutterWidth, let timeline = visible[column] else { return emptyTap(at: point) }
+        let local = columns.localPoint(point, column: column)
+        let plan = plan(timeline, geometry: editor.geometry, width: columns.dayLayoutWidth)
+        switch plan.hit(at: local) {
+        case .nothing: emptyTap(at: point)
+        case let .event(id): perform(.event(id), in: timeline, plan: plan)
+        case let .line(id): perform(.line(id), in: timeline, plan: plan)
+        case let .overflow(id): perform(.overflow(id), in: timeline, plan: plan)
+        case let .choose(candidates):
+            choice = TouchChoice(options: candidates.map { candidate in
+                TouchChoice.Option(id: "\(candidate)", label: label(of: candidate, in: timeline, plan: plan)) {
+                    perform(candidate, in: timeline, plan: plan)
+                }
+            })
+        }
+    }
+
+    private func emptyTap(at point: CGPoint) {
+        if TimelineGestureRouter.tapEndsEditing(on: .emptyTime) { editor.collapseAll(anchorMinute: editor.geometry.minute(atY: point.y)) }
+    }
+
+    private func perform(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
+        switch candidate {
+        case let .event(id):
+            if let block = timeline.blocks.first(where: { $0.id == id }) { editor.toggleExpanded(block) }
+        case let .line(id):
+            if let marker = timeline.markers.first(where: { $0.transactionID.rawValue == id }) {
+                onSelect(.marker(marker))
+            } else if let item = timeline.blocks.flatMap(\.allocations).first(where: { $0.transactionID.rawValue == id }) {
+                let title = plan.lines.first { $0.id == id }?.linkedEventTitle
+                onSelect(.allocation(item, eventTitle: title))
+            }
+        case let .overflow(id):
+            if let overflow = plan.overflows.first(where: { $0.id == id }) {
+                onSelect(.overflow(OverflowSelection(overflow, displays: DayRenderPlan.displays(of: timeline))))
+            }
+        }
+    }
+
+    private func label(of candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) -> String {
+        switch candidate {
+        case let .event(id): return "일정 " + (timeline.blocks.first { $0.id == id }?.title ?? "")
+        case let .line(id):
+            let display = plan.lines.first { $0.id == id }?.display
+            return "거래 " + (display?.title ?? "") + " " + (display.map { Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? "")
+        case let .overflow(id): return plan.overflows.first { $0.id == id }.map { OverflowCardView.summary($0) } ?? "거래 묶음"
+        }
     }
 
     /// After an event opens, bring all of it into view; its content is taller than the block was.
@@ -455,31 +574,37 @@ private extension Array {
 
 // MARK: Pieces
 
-/// One event. A tap opens it in place (or closes it). In edit mode the selected event also shows its two resize
-/// handles; otherwise there are none. The two never happen together.
+/// One event card. A tap opens it in place (or closes it); the grid's single tap handler decides that from the same plan this is drawn
+/// from, so the card carries no tap of its own while collapsed (an opened card does, to close itself). In edit mode the selected event
+/// also shows its two resize handles. The card and the header above it are the same event: either one selects it.
 private struct BlockCell: View {
-    let block: EventBlock
-    let frame: CGRect
-    let title: DayContentLayout.TitlePlacement
+    let item: DayRenderPlan.EventItem
     let zoneIdentifier: String
     let editor: TimelineEditor
+    let scale: CGFloat
     let onEditInfo: (EventBlock) -> Void
 
     var body: some View {
+        let block = item.block
+        let frame = item.frame
         let selected = editor.isSelected(block)
         let expanded = editor.isExpanded(block)
         Group {
             if expanded {
                 ExpandedBlockView(block: block, zoneIdentifier: zoneIdentifier, onEditInfo: { onEditInfo(block) })
+                    .onTapGesture { editor.toggleExpanded(block) }
             } else {
-                EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height, titleOffset: title.dy)
-                    .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
-                    .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
+                EventBlockView(
+                    block: block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
+                    shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil
+                )
+                .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
+                .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
             }
         }
         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
         .offset(x: frame.minX, y: frame.minY)
-        .onTapGesture { editor.toggleExpanded(block) }
+        .accessibilityAction(.default) { editor.toggleExpanded(block) }
         .accessibilityAction(named: "시간 조정") { editor.enterEditMode(for: block, pressMinute: block.startMinute) }
     }
 }

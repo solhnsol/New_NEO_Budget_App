@@ -186,48 +186,7 @@ private extension AdaptiveLayoutEngine {
             return DayContext(role: role, day: day, events: events, heights: heights, overlaps: overlaps(of: events), lines: lines, links: links)
         }
 
-        /// Roles of overlapping events. At most one step of indent, whatever the depth of the overlap.
-        static func overlaps(of events: [AllocationEvent]) -> [String: EventOverlap] {
-            var result: [String: EventOverlap] = [:]
-            var placed: [AllocationEvent] = []
-            var groups: [[String]] = []
-            var groupEnd = Int.min
-            for event in events {
-                let end = event.effectiveEnd
-                let active = placed.filter { $0.effectiveEnd > event.startMinute }
-                let containing = active.filter { $0.startMinute <= event.startMinute && $0.effectiveEnd >= end }
-                let role: EventOverlap.Role
-                if let parent = containing.min(by: { ($0.endMinute - $0.startMinute, $0.id) < ($1.endMinute - $1.startMinute, $1.id) }) {
-                    role = .contained(in: parent.id)
-                } else if let other = active.first {
-                    role = .partial(with: other.id)
-                } else {
-                    role = .none
-                }
-                result[event.id] = EventOverlap(
-                    role: role, indent: role == .none ? 0 : 1, pullsInOnRight: { if case .contained = role { return true } else { return false } }(),
-                    groupSize: 1, summarisesTitles: false
-                )
-                if event.startMinute >= groupEnd {
-                    groups.append([event.id])
-                    groupEnd = end
-                } else {
-                    groups[groups.count - 1].append(event.id)
-                    groupEnd = max(groupEnd, end)
-                }
-                placed.append(event)
-            }
-            for group in groups {
-                for id in group {
-                    guard let old = result[id] else { continue }
-                    result[id] = EventOverlap(
-                        role: old.role, indent: old.indent, pullsInOnRight: old.pullsInOnRight,
-                        groupSize: group.count, summarisesTitles: group.count >= 3
-                    )
-                }
-            }
-            return result
-        }
+        static func overlaps(of events: [AllocationEvent]) -> [String: EventOverlap] { EventOverlapAnalysis.analyse(events) }
 
         // MARK: State
 
@@ -464,7 +423,7 @@ private extension AdaptiveLayoutEngine {
                 let key = ItemKey(role: day.role, kind: .event, id: event.id)
                 guard let overlap = day.overlaps[event.id], let own = eventIntervals.first(where: { $0.id == event.id }) else { continue }
                 let indent = CGFloat(overlap.indent) * p.indentStep
-                let titleEnd = indent + titleWidth(event.title, scale: scale)
+                let titleEnd = indent + (context.input.titleWidths[event.title] ?? titleWidth(event.title, scale: scale))
                 let titleBottom = own.minY + p.titleRow * scale
                 let conflicting = unitIntervals.filter { $0.maxY > own.minY + 0.01 && $0.minY < titleBottom - 0.01 }
                 guard !conflicting.isEmpty, titleEnd > width - lineWidth - 4 else { resolutions[key] = TitleResolution.none; continue }
@@ -684,5 +643,52 @@ private extension AdaptiveLayoutEngine {
         context.previous = nil
         context.viewportHeight = p.focusContext * scale
         return compute(context, focus: focusLayout)
+    }
+}
+
+/// How events relate to the ones they overlap, for any day. At most one step of indent, whatever the depth of the overlap. Shared by the
+/// engine and by the renderer, so a day the engine did not lay out (one sliding in) is drawn by the same rule.
+enum EventOverlapAnalysis {
+    /// Events must be sorted by (start, end descending, id).
+    static func analyse(_ events: [AllocationEvent]) -> [String: EventOverlap] {
+        var result: [String: EventOverlap] = [:]
+        var placed: [AllocationEvent] = []
+        var groups: [[String]] = []
+        var groupEnd = Int.min
+        for event in events {
+            let end = event.effectiveEnd
+            let active = placed.filter { $0.effectiveEnd > event.startMinute }
+            let containing = active.filter { $0.startMinute <= event.startMinute && $0.effectiveEnd >= end }
+            let role: EventOverlap.Role
+            if let parent = containing.min(by: { ($0.endMinute - $0.startMinute, $0.id) < ($1.endMinute - $1.startMinute, $1.id) }) {
+                role = .contained(in: parent.id)
+            } else if let other = active.first {
+                role = .partial(with: other.id)
+            } else {
+                role = .none
+            }
+            result[event.id] = EventOverlap(
+                role: role, indent: role == .none ? 0 : 1, pullsInOnRight: { if case .contained = role { return true } else { return false } }(),
+                groupSize: 1, summarisesTitles: false
+            )
+            if event.startMinute >= groupEnd {
+                groups.append([event.id])
+                groupEnd = end
+            } else {
+                groups[groups.count - 1].append(event.id)
+                groupEnd = max(groupEnd, end)
+            }
+            placed.append(event)
+        }
+        for (groupIndex, group) in groups.enumerated() {
+            for id in group {
+                guard let old = result[id] else { continue }
+                result[id] = EventOverlap(
+                    role: old.role, indent: old.indent, pullsInOnRight: old.pullsInOnRight,
+                    groupSize: group.count, groupIndex: groupIndex, summarisesTitles: group.count >= 3
+                )
+            }
+        }
+        return result
     }
 }

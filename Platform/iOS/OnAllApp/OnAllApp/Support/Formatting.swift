@@ -77,6 +77,8 @@ enum Formatting {
         }
     }
 
+    /// "13:05" for a minute of the day, as a short label for lists.
+    static func clock(minute: Int) -> String { String(format: "%d:%02d", minute / 60, minute % 60) }
     static func hourLabel(_ hour: Int) -> String {
         switch hour {
         case 0: return "오전 12시"

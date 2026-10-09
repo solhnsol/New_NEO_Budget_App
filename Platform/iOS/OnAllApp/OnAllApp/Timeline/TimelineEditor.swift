@@ -168,6 +168,74 @@ final class TimelineEditor {
     /// The browse axis held fixed for as long as an event is being edited, so what is under the finger never reshapes. Dropped (and
     /// the axis recomputed, as a smooth change) when editing ends.
     private var frozenBrowse: TimelineAxis?
+    // MARK: Adaptive space allocation
+
+    /// What the layout engine needs besides the days: the room there is and the text size. Set by the grid when its size or the text
+    /// size changes. The scroll position is deliberately not part of it.
+    struct AdaptiveEnvironment: Equatable {
+        var viewportHeight: CGFloat
+        var contentWidth: CGFloat
+        var textScale: CGFloat
+        /// Identifies the Dynamic Type setting the widths were measured at.
+        var contentSize: String = ""
+    }
+
+    /// The engine's decision for the days on screen: the shared axis, how much of each event is shown, which transactions overflow,
+    /// which titles move to a header. `nil` until the grid has told the editor its environment (until then the axis is the plain
+    /// browse axis).
+    private(set) var adaptive: AdaptiveLayout?
+    /// How many times the engine has run. A scroll must never add to it.
+    private(set) var adaptiveRuns = 0
+    private var layoutEnvironment: AdaptiveEnvironment?
+    private var adaptiveKey: AdaptiveKey?
+    private var adaptiveIsStale = false
+    /// Measured title widths, by title text, as of the last time the engine ran. Looked up (never measured) while drawing.
+    private(set) var titleWidths: [String: CGFloat] = [:]
+    func titleWidth(for title: String) -> CGFloat { titleWidths[title] ?? DayContentLayout.estimatedTitleWidth(title, extra: 14) }
+    /// Real widths of titles for the engine. Replaceable so tests need no fonts.
+    var measureTitle: (String, AdaptiveEnvironment) -> CGFloat = { title, _ in TextMeasurer.titleWidth(title) }
+
+    private struct AdaptiveKey: Equatable {
+        let timelines: [DayTimeline]
+        let environment: AdaptiveEnvironment
+    }
+
+    /// The grid reports its room and text size. Nothing happens unless one of them really changed.
+    func updateEnvironment(_ new: AdaptiveEnvironment) {
+        guard new != layoutEnvironment else { return }
+        layoutEnvironment = new
+        guard !timelines.isEmpty else { return }
+        refreshAdaptive(animated: adaptive != nil)
+    }
+
+    /// Runs the engine if its inputs changed. The result is kept until they change again; while an event is edited it is kept even
+    /// then, so the layout does not reshape under the finger.
+    private func recomputeAdaptive() {
+        guard let environment = layoutEnvironment, let main = timelines.first else { adaptive = nil; return }
+        guard frozenBrowse == nil else { adaptiveIsStale = true; return }
+        let key = AdaptiveKey(timelines: timelines, environment: environment)
+        guard key != adaptiveKey else { return }
+        adaptiveKey = key
+        adaptiveIsStale = false
+        var input = AllocationInput(
+            main: AllocationDay(main), secondary: timelines.count > 1 ? AllocationDay(timelines[1]) : nil,
+            viewportHeight: environment.viewportHeight, contentWidth: environment.contentWidth, textScale: environment.textScale
+        )
+        input.previous = adaptive?.state
+        for day in timelines { for block in day.blocks { input.titleWidths[block.title] = measureTitle(block.title, environment) } }
+        titleWidths = input.titleWidths
+        adaptive = AdaptiveLayoutEngine.layout(input)
+        adaptiveRuns += 1
+    }
+
+    /// Recomputes and, if the axis changed shape and nothing is happening, changes it smoothly around the centre of the screen.
+    private func refreshAdaptive(animated: Bool) {
+        let before = currentAxis
+        recomputeAdaptive()
+        guard animated, mode == .idle, frozenBrowse == nil, let visible = visibleRange?() else { return }
+        publishAxisChange(from: before, anchorMinute: before.minute(atY: (visible.lowerBound + visible.upperBound) / 2))
+    }
+
     /// The first day on screen.
     var timeline: DayTimeline? { timelines.first }
     /// The longest of the days, in minutes (a daylight-saving day is shorter or longer than 24 hours).
@@ -247,6 +315,7 @@ final class TimelineEditor {
 
     /// Browse axis for the current day, or the uniform fallback before a timeline is known.
     private var liveBrowseAxis: TimelineAxis {
+        if let adaptive { return adaptive.axis }
         guard let main = timelines.first else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
         return TimelineAxis.browse(main: main, secondary: timelines.count > 1 ? timelines[1] : nil, parameters: parameters)
     }
@@ -292,6 +361,7 @@ final class TimelineEditor {
         let before = currentAxis
         let daysChanged = new.map(\.day) != timelines.map(\.day)
         timelines = new
+        recomputeAdaptive()
         func found(_ key: CalendarEventKey) -> EventBlock? { block(forKey: key) }
         if let key = expandedKey, found(key) == nil { expandedKey = nil }      // it is gone
         guard let key = selectedKey else {
@@ -324,7 +394,12 @@ final class TimelineEditor {
         forcedDelta: CGFloat? = nil
     ) {
         // Editing holds the browse axis as it is; leaving it lets the axis follow the days again.
-        if new != nil, frozenBrowse == nil { frozenBrowse = liveBrowseAxis } else if new == nil { frozenBrowse = nil }
+        if new != nil, frozenBrowse == nil {
+            frozenBrowse = liveBrowseAxis
+        } else if new == nil, frozenBrowse != nil {
+            frozenBrowse = nil
+            recomputeAdaptive()                                  // what changed while editing is taken in now, as one smooth change
+        }
         editAnchors = new
         if new == nil { createFocus = nil }
         selectedKey = selected

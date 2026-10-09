@@ -99,57 +99,54 @@ struct EventTitleLayer: View {
     var columnRight: CGFloat = 0
     static let horizontalPadding: CGFloat = 6
 
+    /// Linked transactions of the card that are shown / summed up, so a card too short for rows still says how many there are.
+    var shownRows = 0
+    var hiddenRows = 0
+    var scale: CGFloat = 1
+
     var body: some View {
-        let titleOffset = place.dy
-        let available = max(0, frame.height - titleOffset)
-        let plan = InlineAllocationPlan.make(
-            allocationCount: block.allocations.count, blockHeight: available,
-            showsTime: InlineAllocationPlan.showsTime(blockHeight: available)
-        )
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         HStack(spacing: 3) {
             if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
             if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
             Spacer(minLength: 2)
-            if plan.showsSummaryChip, let total { SummaryChip(count: block.allocations.count, total: total) }
+            if shownRows == 0, hiddenRows > 0, let total { SummaryChip(count: hiddenRows, total: total) }
         }
         .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
-        .frame(width: max(0, place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx), height: InlineAllocationPlan.titleHeight + 3, alignment: .leading)
+        .frame(width: max(0, place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
         .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 }
 
+/// An event's card: its colour, its linked transactions that happened within its time, and nothing else. The title is drawn in a layer
+/// above all cards (`EventTitleLayer`), and the start and end times are not repeated here: the hour axis beside the card already
+/// says them. Which rows show, and how many are summed up, is the layout engine's decision.
 struct EventBlockView: View {
     let block: EventBlock
-    let zoneIdentifier: String
     let height: CGFloat
     /// How far down the title is drawn (see `DayContentLayout.titlePlacements`); the rows below follow it.
     var titleOffset: CGFloat = 0
+    var rows: [AllocationItem] = []
+    var shownRows = 0
+    var hiddenRows = 0
+    var scale: CGFloat = 1
+    /// The title is in a header above the card: the card's own top edge is then drawn firmly, as the real start.
+    var hasHeader = false
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
         let missing = block.state == .eventMissing
-        let available = max(0, height - titleOffset)
-        let showsTime = InlineAllocationPlan.showsTime(blockHeight: available)
-        let plan = InlineAllocationPlan.make(allocationCount: block.allocations.count, blockHeight: available, showsTime: showsTime)
-        let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         VStack(alignment: .leading, spacing: 1) {
-            // The title itself is in `EventTitleLayer`; this keeps its room.
-            Color.clear.frame(height: InlineAllocationPlan.titleHeight + titleOffset)
-            if showsTime {
-                Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
-                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+            // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
+            Color.clear.frame(height: hasHeader ? 2 : (InlineAllocationPlan.titleHeight * scale + titleOffset))
+            ForEach(Array(rows.prefix(shownRows)), id: \.allocationID) { item in
+                AllocationRow(item: item, scale: scale)
             }
-            ForEach(Array(AllocationOrdering.byAmountDescending(block.allocations).prefix(plan.shown)), id: \.allocationID) { item in
-                AllocationRow(item: item)
-            }
-            if plan.showsSummaryRow {
-                MoreRow(label: "\(plan.hidden)건", total: total, color: .orange)
-            } else if plan.hidden > 0 {
-                MoreRow(label: "+\(plan.hidden)건", total: total, color: .secondary)
+            if hiddenRows > 0 && shownRows > 0 {
+                MoreRow(label: "+\(hiddenRows)건", total: nil, color: .secondary, scale: scale)
             }
             Spacer(minLength: 0)
         }
@@ -158,6 +155,7 @@ struct EventBlockView: View {
         .background(color.opacity(missing ? 0.08 : 0.22), in: RoundedRectangle(cornerRadius: 6))
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 6))
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 2)) }
+        .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
         .opacity(missing ? 0.7 : 1)
         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -167,7 +165,7 @@ struct EventBlockView: View {
     }
 
     private var accessibilityText: String {
-        var text = "\(block.title), \(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))"
+        var text = block.title
         if !block.allocations.isEmpty { text += ", 연결된 거래 \(block.allocations.count)건" }
         return text
     }
@@ -176,18 +174,19 @@ struct EventBlockView: View {
 /// One linked transaction inside its event: what it was and how much of it belongs here.
 private struct AllocationRow: View {
     let item: AllocationItem
+    var scale: CGFloat = 1
 
     var body: some View {
         HStack(spacing: 3) {
-            Image(systemName: item.flow == .refund ? "arrow.uturn.backward" : "creditcard").font(.system(size: 8))
+            Image(systemName: item.flow == .refund ? "arrow.uturn.backward" : "creditcard").font(.system(size: 8 * scale))
             Text(item.title ?? "거래").lineLimit(1)
             Spacer(minLength: 2)
             Text((item.flow == .refund ? "−" : "") + Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency))
                 .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
         }
-        .font(.system(size: 10))
-        .foregroundStyle(item.flow == .refund ? Color.green : Color.orange)
-        .frame(height: InlineAllocationPlan.rowHeight - 2)
+        .font(.system(size: 10 * scale))
+        .foregroundStyle(item.flow == .refund ? Color.green : Color.primary)          // a transaction keeps full contrast
+        .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
     }
 }
 
@@ -196,17 +195,18 @@ private struct MoreRow: View {
     let label: String
     let total: String?
     let color: Color
+    var scale: CGFloat = 1
 
     var body: some View {
         HStack(spacing: 3) {
-            Text(label).font(.system(size: 10).weight(.semibold))
+            Text(label).font(.system(size: 10 * scale).weight(.semibold))
             Spacer(minLength: 2)
             if let total {
-                Text("합계 \(total)").font(.system(size: 10)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                Text("합계 \(total)").font(.system(size: 10 * scale)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
             }
         }
         .foregroundStyle(color)
-        .frame(height: InlineAllocationPlan.rowHeight - 2)
+        .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
     }
 }
 
