@@ -692,3 +692,62 @@ enum EventOverlapAnalysis {
         return result
     }
 }
+
+// MARK: - Read-only views of what the engine asks for (used to plan an axis that is stable between days; nothing here changes a layout)
+
+extension AdaptiveLayoutEngine {
+    /// The axes one day asks for by itself at three amounts of detail: everything in its smallest form (`minimum`), events with their
+    /// first rows and close transactions kept apart (`preferred`), and every row shown (`expanded`). The same demand rules as `layout`,
+    /// with no budget applied, so they are the room the day wants and not the room it was given.
+    static func soloAxes(of day: AllocationDay, parameters: AllocationParameters = AllocationParameters(), textScale: CGFloat = 1)
+        -> (minimum: TimelineAxis, preferred: TimelineAxis, expanded: TimelineAxis) {
+        let scale = max(0.5, textScale)
+        let input = AllocationInput(main: day, secondary: nil, viewportHeight: 0, contentWidth: 300, textScale: scale, parameters: parameters)
+        let context = Context(input: input, scale: scale)
+        let minimum = context.initialState(previous: nil)
+        var preferred = minimum
+        var expanded = minimum
+        for step in context.steps {
+            switch step.action {
+            case .eventTo(.preview), .separate:
+                _ = context.apply(step, in: &preferred)
+                _ = context.apply(step, in: &expanded)
+            case .eventTo:
+                _ = context.apply(step, in: &expanded)
+            }
+        }
+        return (context.axis(for: minimum), context.axis(for: preferred), context.axis(for: expanded))
+    }
+
+    /// The axis two days need together in their smallest form: the least the engine's own layout can ever be asked to show.
+    static func floorAxis(main: AllocationDay, secondary: AllocationDay?, parameters: AllocationParameters = AllocationParameters(), textScale: CGFloat = 1) -> TimelineAxis {
+        let scale = max(0.5, textScale)
+        let input = AllocationInput(main: main, secondary: secondary, viewportHeight: 0, contentWidth: 300, textScale: scale, parameters: parameters)
+        let context = Context(input: input, scale: scale)
+        return context.axis(for: context.initialState(previous: nil))
+    }
+
+    /// What an event needs at each level and what a pair of neighbouring transaction lines needs to stay apart, for judging what a given
+    /// axis lets a day show.
+    struct DemandHeights: Equatable, Sendable {
+        var events: [String: (title: CGFloat, preview: CGFloat, full: CGFloat)] = [:]
+        var mergeableLinks: [(first: Int, second: Int, key: String)] = []
+        var pitch: CGFloat = 0
+        static func == (lhs: DemandHeights, rhs: DemandHeights) -> Bool {
+            lhs.pitch == rhs.pitch && lhs.mergeableLinks.map(\.key) == rhs.mergeableLinks.map(\.key)
+                && lhs.events.keys.sorted() == rhs.events.keys.sorted()
+        }
+    }
+
+    static func demandHeights(of day: AllocationDay, parameters: AllocationParameters = AllocationParameters(), textScale: CGFloat = 1) -> DemandHeights {
+        let scale = max(0.5, textScale)
+        let built = Context.makeDay(.main, day, parameters: parameters, scale: scale)
+        var result = DemandHeights()
+        result.pitch = (parameters.transactionRow + parameters.lineGap) * scale
+        for (id, heights) in built.heights { result.events[id] = (heights.title, heights.preview, heights.full) }
+        for link in built.links where link.isMergeable {
+            result.mergeableLinks.append((built.lines[link.index].transaction.minute, built.lines[link.index + 1].transaction.minute, link.key.id))
+        }
+        return result
+    }
+}
