@@ -86,6 +86,8 @@ struct TimelineGridView: View {
     /// anchor minute stays put while the scroll view itself stays where it is.
     private func grid(geometry: TimelineGeometry, shift: CGFloat) -> some View {
         let marks = geometry.hourMarks(dayStartUnixMilliseconds: timeline.dayStartUnixMilliseconds, zone: zone)
+        let badges = editBadges(geometry: geometry)
+        let covered = badges.map(\.y)
         return GeometryReader { size in
             let width = size.size.width
             ZStack(alignment: .topLeading) {
@@ -97,10 +99,10 @@ struct TimelineGridView: View {
                     }
                     .frame(width: width, height: geometry.contentHeight)
                 ForEach(marks, id: \.elapsedMinute) { mark in
-                    HourRow(mark: mark, geometry: geometry, width: width)
+                    HourRow(mark: mark, geometry: geometry, width: width, coveredBy: covered)
                 }
                 ForEach(geometry.foldMarks, id: \.startMinute) { fold in
-                    FoldRow(fold: fold, geometry: geometry, width: width)
+                    FoldRow(fold: fold, geometry: geometry, width: width, coveredBy: covered)
                 }
                 ForEach(timeline.blocks.filter { !editor.isExpanded($0) }, id: \.id) { block in
                     let frame = frame(of: block, width: width, geometry: geometry)
@@ -130,6 +132,10 @@ struct TimelineGridView: View {
                         .allowsHitTesting(false)
                 }
                 if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
+                // The times being set, on the hour axis, where a finger over the block cannot hide them.
+                ForEach(badges, id: \.minute) { badge in
+                    EditTimeBadge(text: badge.text, y: badge.y, width: geometry.gutterWidth)
+                }
             }
             .background { gestureHost(width: width, geometry: geometry) }
             .offset(y: -shift)
@@ -151,6 +157,28 @@ struct TimelineGridView: View {
         .padding(.vertical, Self.edgePadding)
         // Room to scroll past the end while a zone is open under a finger, so a short day can still follow it.
         .padding(.bottom, editor.needsScrollRoom ? Self.editScrollRoom : 0)
+    }
+
+    /// The time of each edge being changed, and where it is on the axis. A resize shows the edge that moves; a move or a new event shows
+    /// both. The hour labels and folds under a badge are hidden while it is there, so nothing is drawn over anything else.
+    private struct EditBadge {
+        let minute: Int
+        let y: CGFloat
+        let text: String
+    }
+
+    private func editBadges(geometry: TimelineGeometry) -> [EditBadge] {
+        guard let preview = editor.preview else { return [] }
+        let instants: [Int64]
+        switch preview.kind {
+        case .resizeStart: instants = [preview.range.startUnixMilliseconds]
+        case .resizeEnd: instants = [preview.range.endUnixMilliseconds]
+        case .move, .create: instants = [preview.range.startUnixMilliseconds, preview.range.endUnixMilliseconds]
+        }
+        return instants.map { instant in
+            let minute = min(max(Int((instant - timeline.dayStartUnixMilliseconds) / 60_000), 0), timeline.totalMinutes)
+            return EditBadge(minute: minute, y: geometry.y(minute: minute), text: Formatting.time(instant, zoneIdentifier: timeline.timeZoneIdentifier))
+        }
     }
 
     // MARK: Gestures
@@ -337,6 +365,7 @@ private struct FoldRow: View {
     let fold: TimelineGeometry.FoldMark
     let geometry: TimelineGeometry
     let width: CGFloat
+    var coveredBy: [CGFloat] = []
 
     var body: some View {
         let top = geometry.y(minute: fold.startMinute)
@@ -349,6 +378,7 @@ private struct FoldRow: View {
             Image(systemName: "ellipsis").font(.system(size: 10)).rotationEffect(.degrees(90))
                 .foregroundStyle(.secondary)
                 .frame(width: geometry.gutterWidth - 6, height: height)
+                .opacity(coveredBy.contains { abs($0 - (top + height / 2)) < 17 } ? 0 : 1)
         }
         .frame(width: width, height: height, alignment: .topLeading)
         .offset(y: top)
@@ -401,6 +431,27 @@ private struct PreviewBlockView: View {
     }
 }
 
+/// The time an edge is at right now, in the hour gutter. It sits on the axis at the edge's own position, so it is readable
+/// when the finger is over the block, and it takes the place of the hour label that would be under it.
+private struct EditTimeBadge: View {
+    let text: String
+    let y: CGFloat
+    let width: CGFloat
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold).monospacedDigit())
+            .foregroundStyle(.white)
+            .lineLimit(1).minimumScaleFactor(0.7)
+            .padding(.horizontal, 3)
+            .frame(width: width - 4, height: 18)
+            .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 5))
+            .offset(x: 2, y: y - 9)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 private struct DraggedHandleDot: View {
     var body: some View {
         Circle().fill(Color.accentColor).frame(width: 14, height: 14)
@@ -413,6 +464,8 @@ private struct HourRow: View {
     let mark: TimelineGeometry.HourMark
     let geometry: TimelineGeometry
     let width: CGFloat
+    /// Positions of time badges: a label this close to one is hidden for as long as it is there.
+    var coveredBy: [CGFloat] = []
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -425,7 +478,7 @@ private struct HourRow: View {
         }
         .frame(width: width, alignment: .topLeading)
         .offset(y: geometry.y(minute: mark.elapsedMinute))
-        .opacity(mark.opacity)
+        .opacity(mark.opacity * (coveredBy.contains { abs($0 - geometry.y(minute: mark.elapsedMinute)) < 17 } ? 0 : 1))
         .accessibilityHidden(true)
     }
 }

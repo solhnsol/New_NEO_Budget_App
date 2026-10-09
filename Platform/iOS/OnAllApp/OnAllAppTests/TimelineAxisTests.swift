@@ -152,9 +152,9 @@ private let lengths = [
         // A step towards the inside of the day, whichever side of the handle has room (the edge of the day has one side only).
         let neighbour = handle + 15 <= day ? handle + 15 : handle - 15
         let step = abs(shapes.editing.y(minute: neighbour) - shapes.editing.y(minute: handle))
-        #expect(step >= 24 - 0.001, "\(length.name) at \(handle): \(step)")
+        #expect(step >= 15 * standard.editScale - 0.001, "\(length.name) at \(handle): \(step)")
         let other = handle - 15 >= 0 ? handle - 15 : handle + 15
-        #expect(abs(shapes.editing.y(minute: handle) - shapes.editing.y(minute: other)) >= 24 - 0.001, "\(length.name) other side of \(handle)")
+        #expect(abs(shapes.editing.y(minute: handle) - shapes.editing.y(minute: other)) >= 15 * standard.editScale - 0.001, "\(length.name) other side of \(handle)")
         // A round trip through the enlarged region is exact.
         #expect(shapes.editing.minute(atY: shapes.editing.y(minute: handle)) == handle)
     }
@@ -181,10 +181,11 @@ private let lengths = [
 @Test func zonesMergeWhenTheHandlesAreCloseAndStaySeparateWhenTheyAreFar() {
     let standard = TimelineAxis.Parameters.standard
     let axis = TimelineAxis.browse(totalMinutes: day, anchors: [10 * 60, 18 * 60], parameters: standard)
-    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 30], parameters: standard).count == 1)          // 30 minutes: one zone
-    #expect(axis.handleZones(around: [10 * 60, 12 * 60], parameters: standard).count == 2)               // 2 hours: two
-    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 100], parameters: standard).count == 1)         // 100 min: windows 10 apart, merged
-    #expect(axis.handleZones(around: [0, day], parameters: standard) == [0...45, (day - 45)...day])      // clamped to the day
+    let radius = standard.handleRadius, gap = standard.zoneMergeGap
+    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 30], parameters: standard).count == 1)                  // 30 minutes: one zone
+    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 2 * radius + gap], parameters: standard).count == 1)    // windows exactly a gap apart: merged
+    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 2 * radius + gap + 1], parameters: standard).count == 2)   // one minute more: separate
+    #expect(axis.handleZones(around: [0, day], parameters: standard) == [0...radius, (day - radius)...day])      // clamped to the day
     #expect(axis.handleZones(around: [], parameters: standard).isEmpty)
 }
 
@@ -214,7 +215,7 @@ private let lengths = [
     #expect(axis.height < 640)
     // Editing: a 15 minute step is big enough to hit.
     let editing = axis.expandedLocally(around: [9 * 60, 10 * 60 + 30], parameters: standard)
-    #expect(editing.y(minute: 9 * 60 + 15) - editing.y(minute: 9 * 60) >= 24)
+    #expect(editing.y(minute: 9 * 60 + 15) - editing.y(minute: 9 * 60) >= 15 * standard.editScale)
 }
 
 @Test func aVeryLongEventAndALongQuietStretchBothFoldUnderTheScreenSettings() {

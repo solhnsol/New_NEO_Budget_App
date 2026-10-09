@@ -210,7 +210,7 @@ extension DemoPreview {
             await pause(0.03)
         }
         await pause(1.2)                                         // rest: the zone opens here by itself
-        editor.update(fingerY: editor.fingerContentY - 24)       // exactly one 15 minute step in the zoomed zone
+        editor.update(fingerY: editor.fingerContentY - 15 * TimelineAxis.Parameters.standard.editScale)   // one 15 minute step in the zoomed zone
         await pause(0.8)
         editor.finish()
         await pause(1.5)

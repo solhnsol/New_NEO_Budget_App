@@ -16,6 +16,8 @@ private let readOnly = CalendarID(rawValue: "ro")
 private func at(_ hour: Int, _ minute: Int = 0) -> Int64 { zone.instant(of: day, minuteOfDay: hour * 60 + minute) }
 private func range(_ from: Int64, _ to: Int64) -> TimedRange { (try? TimedRange(startUnixMilliseconds: from, endUnixMilliseconds: to)) ?? { fatalError("range") }() }
 private let pointsPerMinute = TimelineGeometry(totalMinutes: 1440).pointsPerMinute
+/// What 15 minutes are in an enlarged zone, in points.
+private let quarterHour = 15 * TimelineAxis.Parameters.standard.editScale
 
 @MainActor
 private final class Harness {
@@ -585,7 +587,7 @@ private func longEvent(_ id: String, _ title: String, from start: Int64, to end:
     let delta = try #require(h.editor.scrollRequest).delta
     h.editor.endSettling()
     #expect(try previewEnd(h.editor) == at(0) + 86_400_000)
-    h.editor.update(fingerY: y0 + delta - 24)
+    h.editor.update(fingerY: y0 + delta - quarterHour)
     #expect(try previewEnd(h.editor) == at(0) + 86_400_000 - 15 * 60_000)
     h.editor.cancel()
     // Releasing folds the zone away and a tap outside has nothing left to undo.
@@ -784,8 +786,8 @@ private func grabHandle(_ h: Harness, _ kind: TimelineEditPlanner.Kind, _ block:
     h.editor.update(fingerY: finger)
     #expect(try #require(h.editor.preview).range == before)                       // resting finger: nothing changes
 
-    // Now a small movement is a precise one: 24 points are exactly 15 minutes.
-    h.editor.update(fingerY: finger - 24)
+    // Now a small movement is a precise one: a quarter hour's points are exactly 15 minutes.
+    h.editor.update(fingerY: finger - quarterHour)
     #expect(try previewEnd(h.editor) == at(13))
     h.editor.finish()
     await h.editor.waitUntilSettled()
@@ -793,7 +795,7 @@ private func grabHandle(_ h: Harness, _ kind: TimelineEditPlanner.Kind, _ block:
     #expect(h.editor.dwellCenter == nil && h.editor.isEditing && h.editor.feedback == nil)
 }
 
-@MainActor @Test func insideTheZoomedZoneEveryTwentyFourPointsIsOneFifteenMinuteStep() async throws {
+@MainActor @Test func insideTheZoomedZoneEveryQuarterHoursPointsIsOneFifteenMinuteStep() async throws {
     let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
     let block = try h.block("워크숍")
     _ = try grabHandle(h, .resizeEnd, block)
@@ -804,7 +806,7 @@ private func grabHandle(_ h: Harness, _ kind: TimelineEditPlanner.Kind, _ block:
     let finger = fast.y(minute: 13 * 60) + delta
     h.editor.endSettling()
     for steps in -2...2 {
-        h.editor.update(fingerY: finger + CGFloat(steps) * 24)
+        h.editor.update(fingerY: finger + CGFloat(steps) * quarterHour)
         #expect(try previewEnd(h.editor) == at(13) + Int64(steps) * 15 * 60_000, "\(steps) steps")
     }
     h.editor.cancel()
@@ -920,7 +922,7 @@ private func grabHandle(_ h: Harness, _ kind: TimelineEditPlanner.Kind, _ block:
     let delta = try #require(h.editor.scrollRequest).delta
     h.editor.endSettling()
     let finger = fast.y(minute: 13 * 60 - 1) + delta
-    h.editor.update(fingerY: finger + 48)                                         // two steps later
+    h.editor.update(fingerY: finger + 2 * quarterHour)                           // two steps later
     #expect(try #require(h.editor.preview).range.startUnixMilliseconds == at(13, 30))
     h.editor.finish()
     await h.editor.waitUntilSettled()

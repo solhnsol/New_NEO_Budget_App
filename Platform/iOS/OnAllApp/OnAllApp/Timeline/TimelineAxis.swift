@@ -31,15 +31,15 @@ struct TimelineAxis: Equatable {
         var padding: Int = 30
         /// A stretch shorter than this is not worth folding.
         var minimumFoldMinutes: Int = 60
-        /// Points per minute while editing. 15 minutes should be at least about 24 points.
-        var editScale: CGFloat = 1.6
+        /// Points per minute in an enlarged zone: 15 minutes are 12 points, a comfortable step for a finger that is moving slowly.
+        var editScale: CGFloat = 0.8
         /// Where an empty day keeps its full-size stretch.
         var emptyDayFocus: ClosedRange<Int> = (9 * 60)...(18 * 60)
         /// Minutes enlarged on each side of an edge handle.
-        var handleRadius: Int = 45
+        var handleRadius: Int = 90
         /// Minutes of transition on each side of an enlarged zone, drawn between browse scale and edit scale.
         var handleRamp: Int = 15
-        var rampScale: CGFloat = 1.1
+        var rampScale: CGFloat = 0.7
         /// Two enlarged zones closer than this are drawn as one.
         var zoneMergeGap: Int = 20
 
