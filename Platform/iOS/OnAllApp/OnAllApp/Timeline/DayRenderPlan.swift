@@ -41,6 +41,8 @@ struct DayRenderPlan {
         var insideAnchors: [CGFloat] = []
         /// Too short for a title row but tall enough to hold its title in a line of its own: the card writes it inside, centred, smaller.
         var isCompact = false
+        /// Drawn by a crowd's one card (see `Summary.segments`), not on its own.
+        var isGrouped = false
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -52,6 +54,8 @@ struct DayRenderPlan {
         var countOnly = false
         /// The calendar colour of each of its events, so a crowd of different colours is still readable at a glance.
         var colors: [String?] = []
+        /// For a crowd: each event's colour over the part of the card (offset from its top, height) its time covers.
+        var segments: [(offset: CGFloat, height: CGFloat, colorHex: String?)] = []
     }
 
     struct LineItem {
@@ -155,16 +159,60 @@ struct DayRenderPlan {
             }
             frames[block.id] = frame
         }
-        // A card that is only as tall as it is because of the minimum duration does not run on over an event that begins after it ends: it
-        // stops short of that event's start (never above its own true end).
+        // A card never runs on over an event that begins after it ends, and two events with a gap in time never look joined: it stops 2pt
+        // short of the next one's start (at most that much above its own true end, never below 3pt).
         for block in blocks where expanded != block.id {
             guard var frame = frames[block.id], block.id != focused else { continue }
             let realEnd = max(block.endMinute, block.startMinute + 1)
-            let nextStarts = blocks.filter { $0.id != block.id && $0.startMinute >= realEnd && frames[$0.id].map { $0.minY > frame.minY + 0.5 && $0.minY < frame.maxY - 1 } == true && abs((frames[$0.id]?.minX ?? 0) - frame.minX) < 1 }
-            guard let next = nextStarts.min(by: { (frames[$0.id]?.minY ?? 0) < (frames[$1.id]?.minY ?? 0) }), let nextY = frames[next.id]?.minY else { continue }
-            let trueHeight = max(trueMinimumHeight, geometry.y(minute: realEnd) - frame.minY - 1)
-            frame.size.height = max(trueHeight, nextY - frame.minY - 1)
+            let nextTops = blocks.compactMap { other -> CGFloat? in
+                guard other.id != block.id, other.startMinute >= realEnd, let top = frames[other.id]?.minY, top > frame.minY + 0.5 else { return nil }
+                return top
+            }
+            guard let nextTop = nextTops.min(), frame.maxY > nextTop - 2 else { continue }
+            frame.size.height = max(trueMinimumHeight, nextTop - frame.minY - 2)
             frames[block.id] = frame
+        }
+        // Events that start within a title row of one another and share time cannot be stacked without one's edge crossing the other's title:
+        // they go side by side, each in its own lane of the column (every other overlap keeps its indent).
+        do {
+            let movable = blocks.filter { $0.id != expanded && $0.id != focused && frames[$0.id] != nil }
+                .sorted { (frames[$0.id]?.minY ?? 0, -(frames[$0.id]?.maxY ?? 0), $0.id) < (frames[$1.id]?.minY ?? 0, -(frames[$1.id]?.maxY ?? 0), $1.id) }
+            var components: [[EventBlock]] = []
+            var bottom: CGFloat = -.infinity
+            for block in movable {
+                guard let frame = frames[block.id] else { continue }
+                if components.isEmpty || frame.minY >= bottom { components.append([block]); bottom = frame.maxY } else { components[components.count - 1].append(block); bottom = max(bottom, frame.maxY) }
+            }
+            let titleRow = (InlineAllocationPlan.titleHeight + 3) * scale
+            for component in components where component.count >= 2 {
+                let crowdedStarts = component.enumerated().contains { index, block in
+                    guard let top = frames[block.id]?.minY else { return false }
+                    return component.dropFirst(index + 1).contains { other in
+                        guard let otherTop = frames[other.id]?.minY, let frame = frames[block.id] else { return false }
+                        return otherTop - top < titleRow && otherTop < frame.maxY - 0.5
+                    }
+                }
+                guard crowdedStarts else { continue }
+                var laneEnds: [CGFloat] = []
+                var lanes: [BlockID: Int] = [:]
+                for block in component {
+                    guard let frame = frames[block.id] else { continue }
+                    if let lane = laneEnds.firstIndex(where: { $0 <= frame.minY }) { lanes[block.id] = lane; laneEnds[lane] = frame.maxY } else { lanes[block.id] = laneEnds.count; laneEnds.append(frame.maxY) }
+                }
+                // Two lanes are still wide enough for a title each; three or more at one moment keep the stacked indent and the one summary.
+                guard laneEnds.count == 2 else { continue }
+                let count = 2
+                let base = geometry.blockFrame(component[0], totalWidth: layoutWidth)
+                let gap: CGFloat = 3
+                let width = (base.width - gap * CGFloat(count - 1)) / CGFloat(count)
+                for block in component {
+                    guard var frame = frames[block.id] else { continue }
+                    let lane = min(lanes[block.id] ?? 0, count - 1)
+                    frame.origin.x = base.minX + CGFloat(lane) * (width + gap)
+                    frame.size.width = width
+                    frames[block.id] = frame
+                }
+            }
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
@@ -178,7 +226,6 @@ struct DayRenderPlan {
         slivers.sort { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
         var crowdRuns: [[EventBlock]] = []
         var runBottom: CGFloat = -.infinity
-        var runNeighbours: [[EventBlock]] = []
         for block in slivers {
             guard let frame = frames[block.id] else { continue }
             if crowdRuns.isEmpty || frame.minY > runBottom + titleRowHeight {
@@ -189,8 +236,6 @@ struct DayRenderPlan {
                 runBottom = max(runBottom, frame.maxY)
             }
         }
-        _ = runNeighbours
-        runNeighbours = []
         let crowdIDs = Set(crowdRuns.filter { $0.count >= 2 }.flatMap { $0.map(\.id) })
         let titleContent = (compactIDs.isEmpty && crowdIDs.isEmpty) ? content : DayContentLayout(blocks: blocks.filter { !compactIDs.contains($0.id) && !crowdIDs.contains($0.id) })
         let places = titleContent.titlePlacements(
@@ -234,9 +279,12 @@ struct DayRenderPlan {
         for run in crowdRuns where run.count >= 2 {
             let union = run.compactMap { frames[$0.id] }.reduce(CGRect.null) { $0.union($1) }
             let height = 14 * scale
+            // One card stands for the run: its left edge is a stripe of each event's colour over the time that event covers, and its text is
+            // the count. The events inside are not drawn on top of it.
+            let card = CGRect(x: union.minX, y: union.minY, width: union.width, height: max(union.height, 16 * scale))
             summaries.append(Summary(
-                frame: CGRect(x: union.minX + EventTitleLayer.horizontalPadding, y: union.midY - height / 2, width: max(0, union.width - 2 * EventTitleLayer.horizontalPadding), height: height),
-                items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex)
+                frame: card, items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex),
+                segments: run.compactMap { block in frames[block.id].map { ($0.minY - card.minY, $0.height, block.calendarColorHex) } }
             ))
             for member in run { hiddenByGroup.insert(member.id) }
         }
@@ -267,7 +315,7 @@ struct DayRenderPlan {
                     }
                 }(),
                 insideAnchors: inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
-                isCompact: isCompact
+                isCompact: isCompact, isGrouped: crowdIDs.contains(id)
             ))
         }
 

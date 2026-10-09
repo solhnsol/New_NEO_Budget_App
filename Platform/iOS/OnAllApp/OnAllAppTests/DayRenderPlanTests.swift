@@ -318,3 +318,27 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let first = try item(r, "가"), second = try item(r, "나")
     #expect(second.frame.minX > first.frame.minX)
 }
+
+@Test func twoEventsThatStartTogetherGoSideBySideSoNoTitleCrossesAnEdge() throws {
+    let r = render(try timeline([event(0, "Push", 8 * 60, 10 * 60), event(1, "인바디 측정", 8 * 60, 8 * 60 + 30)]))
+    let a = try item(r, "Push"), b = try item(r, "인바디 측정")
+    #expect(!a.frame.intersects(b.frame))                                         // two lanes: neither card lies on the other
+    #expect(a.showsTitleInCard && b.showsTitleInCard)                             // each title is in its own lane
+    #expect(a.frame.width < r.geometry.contentWidth(totalWidth: layoutWidth))
+}
+
+@Test func eventsWithAGapInTimeNeverTouchOnScreen() throws {
+    // 16:35-17:30 and 21:00-22:00: the stretch between is squeezed on the axis, but the two cards are still two cards.
+    let r = render(try timeline([event(0, "이동", 16 * 60 + 35, 17 * 60 + 30), event(1, "스크림", 21 * 60, 22 * 60)]))
+    let first = try item(r, "이동"), second = try item(r, "스크림")
+    #expect(second.frame.minY - first.frame.maxY >= 2 - 0.01 || second.frame.minY >= first.frame.maxY + 2)
+}
+
+@Test func slivers_thatFollowOneAnotherAreOneCardWithACountAndNoneIsDrawnOnTop() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
+    let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
+    let plan = incomingPlan(incoming, on: current)
+    let crowd = try #require(plan.summaries.first { $0.countOnly })
+    #expect(crowd.items.count == 3 && crowd.segments.count == 3)                    // the colour of each, over the time it covers
+    #expect(plan.events.allSatisfy { $0.isGrouped })                                // the events are the card's, not drawn again
+}

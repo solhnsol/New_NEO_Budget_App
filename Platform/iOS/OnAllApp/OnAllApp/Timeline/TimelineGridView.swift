@@ -287,7 +287,7 @@ struct TimelineGridView: View {
         return ZStack(alignment: .topLeading) {
             ForEach(plan.events, id: \.block.id) { item in
                 if editor.isExpanded(item.block) { QuarterMarks(block: item.block, geometry: geometry, timeline: timeline, zone: zone) }
-                BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.map(\.frame) + plan.overflows.map(\.frame))
+                if !item.isGrouped { BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.map(\.frame) + plan.overflows.map(\.frame)) }
             }
             // Titles are drawn over every card, so a card stacked on another never hides the title under it.
             ForEach(plan.events.filter { !editor.isExpanded($0.block) }, id: \.block.id) { item in

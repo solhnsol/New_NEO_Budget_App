@@ -230,35 +230,43 @@ struct OverlapSummaryView: View {
                 Button(item.title) { onSelect(item.id) }
             }
         } label: {
-            HStack(spacing: 4) {
-                if summary.countOnly {
-                    // Beside its bar(s): the title when there is one event; else a dot in each event's own colour, and how many.
-                    if summary.items.count > 1 {
-                        HStack(spacing: 2) {
-                            ForEach(Array(summary.colors.prefix(4).enumerated()), id: \.offset) { _, hex in
-                                Circle().fill(Color(hex: hex) ?? .accentColor).frame(width: 6 * scale, height: 6 * scale)
-                            }
-                        }
-                    }
-                    Text(summary.items.count > 1 ? "일정 \(summary.items.count)개" : (summary.items.first?.title ?? ""))
-                        .font(.system(size: 10 * scale, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
-                        .fixedSize()
-                } else {
+            if summary.countOnly {
+                crowdCard
+            } else {
+                HStack(spacing: 3) {
                     Image(systemName: "square.on.square").font(.system(size: 9 * scale))
                     Text("일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
                         .font(.system(size: 11 * scale, weight: .semibold)).lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .foregroundStyle(.primary)
+                .padding(.horizontal, 6)
+                .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
             }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, summary.countOnly ? 6 : 6)
-            .background { if summary.countOnly { Capsule().fill(Color(.systemBackground).opacity(0.85)) } }
-            .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
         }
         .tint(Color.primary)
         .offset(x: summary.frame.minX, y: summary.frame.minY)
-        .accessibilityLabel(summary.countOnly ? "일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", ") : "겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
+        .accessibilityLabel((summary.countOnly ? "일정 " : "겹치는 일정 ") + "\(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
         .accessibilityHint("일정을 고릅니다")
+    }
+
+    /// One card for a run of events with no room each: a neutral card whose left edge shows each event's colour over its own time, and the count.
+    private var crowdCard: some View {
+        let shape = RoundedRectangle(cornerRadius: 6)
+        return ZStack(alignment: .topLeading) {
+            shape.fill(Color(.systemBackground))
+            shape.fill(Color.secondary.opacity(0.16))
+            ForEach(Array(summary.segments.enumerated()), id: \.offset) { _, segment in
+                Rectangle().fill(Color(hex: segment.colorHex) ?? .accentColor)
+                    .frame(width: 3, height: max(1.5, segment.height))
+                    .offset(y: segment.offset)
+            }
+            Text("일정 \(summary.items.count)개").font(.system(size: 10 * scale, weight: .semibold)).lineLimit(1)
+                .padding(.leading, 9).frame(maxHeight: .infinity, alignment: .center)
+        }
+        .frame(width: summary.frame.width, height: summary.frame.height, alignment: .topLeading)
+        .clipShape(shape)
+        .overlay(shape.stroke(Color.secondary.opacity(0.4), lineWidth: 1))
     }
 }
 

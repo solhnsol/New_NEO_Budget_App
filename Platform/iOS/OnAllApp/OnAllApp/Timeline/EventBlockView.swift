@@ -129,7 +129,7 @@ struct EventTitleLayer: View {
                 .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
             }
             // The start, in the top right corner; a title that has been moved aside leaves it out rather than crowd the line.
-            if !summarises, !startIsCovered, maxTitleWidth == nil, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
+            if !summarises, !startIsCovered, maxTitleWidth == nil, frame.width >= 150 * scale, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
                 CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier))
             }
         }

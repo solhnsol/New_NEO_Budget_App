@@ -119,6 +119,16 @@ enum DemoData {
             draft(life, "커피 챗", day2, (10, 0), (10, 15)),
         ]
         for hour in 8..<20 { transDrafts.append(draft(life, "일정 \(hour)시", day3, (hour, 0), (hour, 50))) }
+        // The days before today (4th-7th when today is the 9th): the cases seen on a phone with real data.
+        let d7 = today.adding(days: -2), d6 = today.adding(days: -3), d5 = today.adding(days: -4), d4 = today.adding(days: -5)
+        transDrafts += [
+            draft(school, "세미나", d4, (9, 30), (9, 50)), draft(school, "랩 미팅", d4, (9, 50), (10, 10)), draft(school, "점검", d4, (10, 10), (10, 30)),
+            draft(life, "경민 커피챗", d4, (19, 0), (23, 0)),
+            draft(school, "유성복합 → 센트럴시티", d5, (16, 35), (17, 30)), draft(life, "RCK Scrim", d5, (21, 0), (22, 0)), draft(life, "Scrim", d5, (22, 0), (23, 59)),
+            draft(appointments, "Push", d6, (8, 0), (10, 0)), draft(school, "인바디 측정", d6, (8, 0), (8, 30)),
+            draft(life, "Date", d6, (16, 0), (17, 0)), draft(school, "자연어처리와RAG", d6, (19, 0), (21, 50)),
+            draft(appointments, "Upper", d7, (16, 0), (16, 30)), draft(life, "데이트", d7, (16, 20), (21, 0)),
+        ]
         let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-trans") ? transDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
             : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnDrafts
