@@ -177,7 +177,7 @@ final class AppModel {
     func moveTo(_ day: LocalDate) -> Bool {
         guard day != selectedDay else { return false }
         selectedDay = day
-        if visibleTimelines.count == 2 { editor?.timelinesDidChange(visibleTimelines) }
+        if visibleTimelines.count == 2 { editor?.timelinesDidChange(visibleTimelines, axisDays: strip.compactMap(\.timeline)) }
         return true
     }
 
@@ -205,7 +205,7 @@ final class AppModel {
             guard mine == generation else { return }
             cache = loaded
             let shown = visibleTimelines
-            if shown.count == 2 { editor?.timelinesDidChange(shown) }
+            if shown.count == 2 { editor?.timelinesDidChange(shown, axisDays: strip.compactMap(\.timeline)) }
             week = loadedWeek
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }

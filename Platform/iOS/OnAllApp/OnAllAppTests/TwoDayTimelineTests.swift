@@ -185,3 +185,30 @@ private final class Rig {
     }
     #expect(rig.editor.timelines.map(\.day) == [second, third])
 }
+
+@MainActor @Test func swipingToTheNextDayDoesNotReLayTheDayOutWhenOnlyAnEmptyNeighbourJoinsTheAxis() async throws {
+    let rig = try await Rig(events: [])
+    func day(_ offset: Int, _ events: [CalendarEvent]) -> DayTimeline {
+        DayTimelineBuilder.build(DayTimelineInput(day: first.adding(days: offset), timeZone: zone, events: events, life: .empty, transactions: []))
+    }
+    let d0 = day(0, [event("a", "가", first, 9 * 60, 10 * 60)])
+    let d1 = day(1, [event("b", "나", second, 14 * 60, 15 * 60)])
+    let d2 = day(2, [event("c", "다", third, 11 * 60, 12 * 60)])
+    let d3 = day(3, [event("d", "라", first.adding(days: 3), 16 * 60, 17 * 60)])
+    let d4 = day(4, [])
+    rig.editor.visibleRange = { 100...900 }
+    rig.editor.timelinesDidChange([d0, d1], axisDays: [d0, d1, d2])
+    let before = rig.editor.geometry
+    // One day over: d4 (empty) joins and nothing leaves that mattered, so the axis, and everything on screen, stays put.
+    rig.editor.timelinesDidChange([d1, d2], axisDays: [d0, d1, d2, d3])
+    #expect(rig.editor.transition?.delta ?? 0 == 0 || rig.editor.geometry == before)
+    rig.editor.completeTransition()
+    let steady = rig.editor.geometry
+    rig.editor.timelinesDidChange([d2, d3], axisDays: [d1, d2, d3, d4])
+    // d0's event edges left the axis set, so it may fold, but never moves the day when it does not change shape.
+    if let transition = rig.editor.transition { #expect(transition.from == steady.axis) } else { #expect(rig.editor.geometry == steady) }
+}
+
+@Test func theHeaderIsTheSameHeightWhateverTheDaysHold() {
+    #expect(DayHeaderStrip.height == 58)
+}

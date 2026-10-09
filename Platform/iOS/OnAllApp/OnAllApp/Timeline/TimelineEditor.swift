@@ -165,6 +165,10 @@ final class TimelineEditor {
     }
     /// The days on screen, in order. They share one time axis, so the same minute is at the same height in every one.
     private(set) var timelines: [DayTimeline] = []
+    /// The days the shared axis is fitted to: the ones on screen and the neighbours a swipe brings in. Fitting to more than what is
+    /// on screen is what keeps a swipe from re-laying the whole day out: the axis changes only when a neighbour joining or leaving
+    /// the set actually adds or removes an event edge.
+    private var axisTimelines: [DayTimeline] = []
     /// The first day on screen.
     var timeline: DayTimeline? { timelines.first }
     /// The longest of the days, in minutes (a daylight-saving day is shorter or longer than 24 hours).
@@ -245,7 +249,7 @@ final class TimelineEditor {
     /// Browse axis for the current day, or the uniform fallback before a timeline is known.
     private var browseAxis: TimelineAxis {
         guard !timelines.isEmpty else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
-        return TimelineAxis.browse(for: timelines, parameters: parameters)
+        return TimelineAxis.browse(for: axisTimelines.isEmpty ? timelines : axisTimelines, parameters: parameters)
     }
 
     /// The axis for a view shape: the browse axis, with the neighbourhood of each handle enlarged and/or one event opened
@@ -279,10 +283,11 @@ final class TimelineEditor {
 
     /// Several days at once. When the set of days changes (a swipe moved one over) and nothing is selected, the shared axis may
     /// change shape; that is a transition anchored at the minute at the top of the screen, so nothing visible jumps.
-    func timelinesDidChange(_ new: [DayTimeline]) {
+    func timelinesDidChange(_ new: [DayTimeline], axisDays: [DayTimeline]? = nil) {
         let before = currentAxis
         let daysChanged = new.map(\.day) != timelines.map(\.day)
         timelines = new
+        axisTimelines = axisDays ?? new
         func found(_ key: CalendarEventKey) -> EventBlock? { block(forKey: key) }
         if let key = expandedKey, found(key) == nil { expandedKey = nil }      // it is gone
         guard let key = selectedKey else {

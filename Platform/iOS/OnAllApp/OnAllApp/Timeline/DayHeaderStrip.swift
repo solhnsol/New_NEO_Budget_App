@@ -11,12 +11,12 @@ struct DayHeaderStrip: View {
     private static let gutter: CGFloat = 60
     private static let labelHeight: CGFloat = 30
     private static let chipHeight: CGFloat = 22
-    private static let maximumChips = 2
+    /// Always the same height, whatever the days hold. A header that grows or shrinks with the all-day events of the days around
+    /// would move the whole grid up or down at the moment a swipe lands on such a day.
+    static let height: CGFloat = labelHeight + chipHeight + 6
 
     var body: some View {
-        // All days share a height so the columns line up whatever each one holds.
-        let chips = min(strip.compactMap(\.timeline).map { $0.allDay.count }.max() ?? 0, Self.maximumChips + 1)
-        let height = Self.labelHeight + CGFloat(chips) * (Self.chipHeight + 2) + (chips > 0 ? 4 : 0)
+        let height = Self.height
         GeometryReader { size in
             let columnWidth = max(0, (size.size.width - Self.gutter) / 2)
             // Cut at the gutter, like the days below, so a day sliding out never shows over the hour labels' column.
@@ -52,24 +52,34 @@ private struct DayHeaderCell: View {
             }
             .frame(height: 30, alignment: .leading)
             .padding(.leading, 4)
-            if let timeline = entry.timeline {
-                ForEach(Array(timeline.allDay.prefix(2)), id: \.id) { item in
-                    let color = Color(hex: item.calendarColorHex) ?? .accentColor
-                    Button { onSelect(item) } label: {
-                        Text(item.title).font(.caption2.weight(.medium)).lineLimit(1)
-                            .padding(.horizontal, 6)
-                            .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                            .background(color.opacity(item.state == .eventMissing ? 0.10 : 0.22), in: RoundedRectangle(cornerRadius: 5))
+            if let timeline = entry.timeline, let first = timeline.allDay.first {
+                HStack(spacing: 4) {
+                    chip(first)
+                    if timeline.allDay.count > 1 {
+                        Menu {
+                            ForEach(Array(timeline.allDay.dropFirst()), id: \.id) { item in Button(item.title) { onSelect(item) } }
+                        } label: {
+                            Text("+\(timeline.allDay.count - 1)").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 5).frame(minHeight: 22)
+                        }
+                        .accessibilityLabel("종일 일정 \(timeline.allDay.count - 1)개 더 보기")
                     }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 2)
-                    .accessibilityLabel("종일 일정 \(item.title)")
                 }
-                if timeline.allDay.count > 2 {
-                    Text("+\(timeline.allDay.count - 2)개").font(.caption2).foregroundStyle(.secondary).padding(.leading, 6)
-                }
+                .padding(.horizontal, 2)
             }
         }
         .accessibilityElement(children: .contain)
+    }
+
+    private func chip(_ item: AllDayItem) -> some View {
+        let color = Color(hex: item.calendarColorHex) ?? .accentColor
+        return Button { onSelect(item) } label: {
+            Text(item.title).font(.caption2.weight(.medium)).lineLimit(1)
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
+                .background(color.opacity(item.state == .eventMissing ? 0.10 : 0.22), in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("종일 일정 \(item.title)")
     }
 }
