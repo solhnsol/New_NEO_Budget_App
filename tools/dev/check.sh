@@ -9,7 +9,7 @@
 #   tools/dev/check.sh ui [launch args...]   build, install and launch on the simulator with launch args (default: -demo), then screenshot.
 #   tools/dev/check.sh full                  everything: package tests + all app tests. Run before merging, not after each edit.
 #
-# One derived-data folder and one simulator are reused; nothing is cleaned. Set CHECK_TIMEOUT (seconds, default 600) to bound a run.
+# One derived-data folder and one simulator are reused; nothing is cleaned. Set CHECK_TIMEOUT (seconds, default 240) to bound a run.
 set -u
 export DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}
 ROOT=${0:A:h:h:h}
@@ -18,7 +18,7 @@ SIM=${SIM:-E72C623A-60D2-4052-B1D4-64A7E33E34AB}        # iPhone 18 Pro; find yo
 DD=${DD:-${TMPDIR:-/tmp}/onall-dd}
 LOGS=${LOGS:-${TMPDIR:-/tmp}/onall-check-logs}
 BID=dev.onall.app
-LIMIT=${CHECK_TIMEOUT:-600}
+LIMIT=${CHECK_TIMEOUT:-240}
 mkdir -p $LOGS
 DEST="platform=iOS Simulator,id=$SIM"
 
