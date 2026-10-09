@@ -106,6 +106,8 @@ enum DemoData {
             draft(life, "조회 다", yesterday, (9, 40), (10, 0)),
             draft(life, "조회 라", yesterday, (10, 0), (10, 15)),
             draft(school, "오후 수업", yesterday, (14, 0), (17, 0)),
+            draft(appointments, "짧은 준비", yesterday, (20, 0), (20, 10)),
+            draft(life, "밤 작업", yesterday, (20, 10), (23, 0)),
             draft(appointments, "오후 미팅 가", tomorrow, (14, 0), (14, 30)),
             draft(appointments, "오후 미팅 나", tomorrow, (14, 30), (15, 0)),
             draft(appointments, "오후 미팅 다", tomorrow, (15, 0), (15, 30)),

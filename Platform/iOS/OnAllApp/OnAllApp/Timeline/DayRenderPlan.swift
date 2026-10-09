@@ -39,6 +39,8 @@ struct DayRenderPlan {
         var titleMaxWidth: CGFloat?
         /// Where on the axis each shown inside transaction happened (absolute y), in the order of the rows.
         var insideAnchors: [CGFloat] = []
+        /// The event has no room for a card at its true size: it is a thin bar at its true start and end, named by a label beside the bars.
+        var isMarker = false
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -48,6 +50,8 @@ struct DayRenderPlan {
         /// A crowd of events that cannot each be named at the room the axis gives them (a day sliding in): only how many, and the events
         /// themselves stay in view as thin cards at their true times.
         var countOnly = false
+        /// The calendar colour of each of its events, so a crowd of different colours is still readable at a glance.
+        var colors: [String?] = []
     }
 
     struct LineItem {
@@ -139,7 +143,17 @@ struct DayRenderPlan {
             frames[block.id] = frame
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let places = content.titlePlacements(
+        // An event with less room than a title needs is not given a card it cannot fill: it becomes a bar (below), and the others' titles
+        // are placed as if it were not there.
+        let titleRowHeight = (InlineAllocationPlan.titleHeight + 3) * scale
+        var markerIDs = Set<BlockID>()
+        if incoming {
+            for block in blocks {
+                if let frame = frames[block.id], frame.height < titleRowHeight, block.id != focused, block.id != expanded { markerIDs.insert(block.id) }
+            }
+        }
+        let titleContent = markerIDs.isEmpty ? content : DayContentLayout(blocks: blocks.filter { !markerIDs.contains($0.id) })
+        let places = titleContent.titlePlacements(
             top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
             bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
             left: { (frames[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
@@ -154,7 +168,7 @@ struct DayRenderPlan {
         var hiddenByGroup = Set<BlockID>()
         var summaries: [Summary] = []
         var groupMembers: [Int: [EventBlock]] = [:]
-        for block in blocks {
+        for block in blocks where !markerIDs.contains(block.id) {
             if let shape = overlap(block), shape.summarisesTitles { groupMembers[shape.groupIndex, default: []].append(block) }
         }
         for index in groupMembers.keys.sorted() {
@@ -175,29 +189,47 @@ struct DayRenderPlan {
             for member in members where member.id != focused && member.id != expanded { hiddenByGroup.insert(member.id) }
         }
 
-        // Incoming day: events whose titles cannot be kept apart at the room they have (or that sit on one that cannot) are one crowd per
-        // run: a count, with the events left as thin cards at their true times. Events with room keep their cards and titles untouched.
-        if incoming {
-            let near = parameters.titleRow * scale
-            let moved = blocks.filter { (places[$0.id] ?? .init()) != DayContentLayout.TitlePlacement() }
-            let crowded = blocks.filter { block in
-                guard let frame = frames[block.id], !hiddenByGroup.contains(block.id), block.id != focused, block.id != expanded else { return false }
-                return moved.contains { $0.id == block.id } || moved.contains { abs((frames[$0.id]?.minY ?? 0) - frame.minY) < near }
-            }.sorted { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
+        // Events too short for a card on this axis are bars at their true times, in lanes side by side where they overlap, with one label
+        // to their right per run: the title if there is one event, else how many (and their colours).
+        var markerFrames: [BlockID: CGRect] = [:]
+        if !markerIDs.isEmpty {
+            let marked = blocks.filter { markerIDs.contains($0.id) }
+                .sorted { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
             var runs: [[EventBlock]] = []
-            for block in crowded {
-                if let last = runs.last?.last, let lastY = frames[last.id]?.minY, let y = frames[block.id]?.minY, y - lastY < near * 2 {
-                    runs[runs.count - 1].append(block)
-                } else {
+            var runBottom: CGFloat = -.infinity
+            for block in marked {
+                guard let frame = frames[block.id] else { continue }
+                if runs.isEmpty || frame.minY > runBottom + titleRowHeight {
                     runs.append([block])
+                    runBottom = frame.maxY
+                } else {
+                    runs[runs.count - 1].append(block)
+                    runBottom = max(runBottom, frame.maxY)
                 }
             }
-            for run in runs where run.count >= 2 {
-                guard let first = run.first, let firstFrame = frames[first.id] else { continue }
-                let union = run.compactMap { frames[$0.id] }.reduce(firstFrame) { $0.union($1) }
+            let barWidth: CGFloat = 4, laneStep: CGFloat = 6
+            for run in runs {
+                var laneEnds: [CGFloat] = []
+                var lanes: [BlockID: Int] = [:]
+                for block in run {
+                    guard let frame = frames[block.id] else { continue }
+                    if let lane = laneEnds.firstIndex(where: { $0 <= frame.minY }) {
+                        lanes[block.id] = lane
+                        laneEnds[lane] = frame.maxY
+                    } else {
+                        lanes[block.id] = laneEnds.count
+                        laneEnds.append(frame.maxY)
+                    }
+                }
+                for block in run {
+                    guard let frame = frames[block.id] else { continue }
+                    markerFrames[block.id] = CGRect(x: contentLeft + CGFloat(lanes[block.id] ?? 0) * laneStep, y: frame.minY, width: barWidth, height: frame.height)
+                }
+                let labelX = contentLeft + CGFloat(laneEnds.count) * laneStep + 4
+                let top = run.compactMap { frames[$0.id]?.minY }.min() ?? 0
                 summaries.append(Summary(
-                    frame: CGRect(x: union.minX, y: firstFrame.minY, width: union.width, height: parameters.titleRow * scale),
-                    items: run.map { ($0.id, $0.title) }, countOnly: true
+                    frame: CGRect(x: labelX, y: top - 3 * scale, width: max(0, contentLeft + contentWidth - labelX), height: 16 * scale),
+                    items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex)
                 ))
                 for member in run { hiddenByGroup.insert(member.id) }
             }
@@ -207,17 +239,19 @@ struct DayRenderPlan {
         let ordered = content.hitOrder(focused: focused ?? expanded).reversed()
         var eventItems: [EventItem] = []
         for id in ordered {
-            guard let block = byID[id], let frame = frames[id] else { continue }
+            guard let block = byID[id], let cardFrame = frames[id] else { continue }
+            let isMarker = markerFrames[id] != nil
+            let frame = markerFrames[id] ?? cardFrame
             let placed = placement(block)
             var header: CGRect?
-            if let spec = placed?.header, expanded != block.id {
+            if !isMarker, let spec = placed?.header, expanded != block.id {
                 header = CGRect(x: frame.minX, y: frame.minY - spec.height, width: frame.width, height: spec.height)
             }
-            let inside = Self.insideAllocations(of: block, placement: placed, blockHeight: frame.height)
+            let inside = isMarker ? (rows: [AllocationItem](), shown: 0, hidden: 0) : Self.insideAllocations(of: block, placement: placed, blockHeight: frame.height)
             let touchMissing = max(0, parameters.minimumTouchHeight - frame.height)
             eventItems.append(EventItem(
                 block: block, placement: placed, frame: frame,
-                touchFrame: frame.insetBy(dx: 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
+                touchFrame: frame.insetBy(dx: isMarker ? -6 : 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
                 header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id),
                 insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden,
                 titleMaxWidth: {
@@ -227,7 +261,8 @@ struct DayRenderPlan {
                     default: return nil
                     }
                 }(),
-                insideAnchors: inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) }
+                insideAnchors: isMarker ? [] : inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
+                isMarker: isMarker
             ))
         }
 

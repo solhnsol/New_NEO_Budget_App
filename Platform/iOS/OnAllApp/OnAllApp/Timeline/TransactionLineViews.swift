@@ -230,20 +230,48 @@ struct OverlapSummaryView: View {
                 Button(item.title) { onSelect(item.id) }
             }
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "square.on.square").font(.system(size: 9 * scale))
-                Text(summary.countOnly ? "일정 \(summary.items.count)개" : "일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
-                    .font(.system(size: summary.countOnly ? 10 * scale : 11 * scale, weight: .semibold)).lineLimit(1)
+            HStack(spacing: 4) {
+                if summary.countOnly {
+                    // Beside its bar(s): the title when there is one event; else a dot in each event's own colour, and how many.
+                    if summary.items.count > 1 {
+                        HStack(spacing: 2) {
+                            ForEach(Array(summary.colors.prefix(4).enumerated()), id: \.offset) { _, hex in
+                                Circle().fill(Color(hex: hex) ?? .accentColor).frame(width: 6 * scale, height: 6 * scale)
+                            }
+                        }
+                    }
+                    Text(summary.items.count > 1 ? "일정 \(summary.items.count)개" : (summary.items.first?.title ?? ""))
+                        .font(.system(size: 10 * scale, weight: .semibold)).foregroundStyle(.primary).lineLimit(1)
+                } else {
+                    Image(systemName: "square.on.square").font(.system(size: 9 * scale))
+                    Text("일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
+                        .font(.system(size: 11 * scale, weight: .semibold)).lineLimit(1)
+                }
                 Spacer(minLength: 0)
             }
-            .halo(summary.countOnly)
             .foregroundStyle(.primary)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, summary.countOnly ? 0 : 6)
             .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
         }
+        .tint(Color.primary)
         .offset(x: summary.frame.minX, y: summary.frame.minY)
-        .accessibilityLabel("겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
+        .accessibilityLabel(summary.countOnly ? "일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", ") : "겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
         .accessibilityHint("일정을 고릅니다")
+    }
+}
+
+/// An event with too little room for a card: a thin bar in its calendar's colour at its true start and end.
+struct EventMarkerBar: View {
+    let block: EventBlock
+    let frame: CGRect
+
+    var body: some View {
+        let color = Color(hex: block.calendarColorHex) ?? .accentColor
+        RoundedRectangle(cornerRadius: 2).fill(color)
+            .frame(width: frame.width, height: frame.height)
+            .offset(x: frame.minX, y: frame.minY)
+            .accessibilityElement()
+            .accessibilityLabel(block.title)
     }
 }
 
