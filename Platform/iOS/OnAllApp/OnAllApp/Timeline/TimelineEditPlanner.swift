@@ -122,24 +122,95 @@ struct TimelineEditPlanner {
 }
 
 /// Where a touch landed on the event being edited. The handles are dots outside the corners, like the system calendar,
-/// so even a 15 minute event has something to grab.
+/// so even a 15 minute event has something to grab. Pure geometry: it knows nothing about the axis or the scroll view.
+///
+/// Dragging is for handles only. The body is a target for a long press (to move the event), never for a plain drag, which
+/// belongs to the scroll view.
 enum EditHit: Equatable {
     case body
     case resizeStart
     case resizeEnd
 
+    /// A handle's touch target is a circle this big, which is also Apple's minimum comfortable size.
     static let handleRadius: CGFloat = 22
+    static let minimumTouchSide: CGFloat = handleRadius * 2
     /// Distance of the handle dots from the block's corners, inward along the edge.
     static let handleInset: CGFloat = 28
 
     static func startHandle(of frame: CGRect) -> CGPoint { CGPoint(x: frame.maxX - handleInset, y: frame.minY) }
     static func endHandle(of frame: CGRect) -> CGPoint { CGPoint(x: frame.minX + handleInset, y: frame.maxY) }
 
+    /// The square an assistive technology activates for a handle.
+    static func touchFrame(around center: CGPoint) -> CGRect {
+        CGRect(x: center.x - handleRadius, y: center.y - handleRadius, width: minimumTouchSide, height: minimumTouchSide)
+    }
+
+    /// The handle under a point, or `nil`. Where the two circles overlap (a very short event) the nearer centre wins.
+    static func handle(at point: CGPoint, frame: CGRect, canResizeStart: Bool, canResizeEnd: Bool) -> EditHit? {
+        var best: (hit: EditHit, distance: CGFloat)?
+        for (hit, center, enabled) in [
+            (EditHit.resizeStart, startHandle(of: frame), canResizeStart),
+            (EditHit.resizeEnd, endHandle(of: frame), canResizeEnd),
+        ] where enabled {
+            let distance = hypot(point.x - center.x, point.y - center.y)
+            if distance <= handleRadius, distance < (best?.distance ?? .infinity) { best = (hit, distance) }
+        }
+        return best?.hit
+    }
+
     /// `nil` when the touch is not on the block or either handle. A handle wins over the body where they overlap.
     static func hit(_ point: CGPoint, frame: CGRect, canResizeStart: Bool, canResizeEnd: Bool) -> EditHit? {
-        func near(_ center: CGPoint) -> Bool { hypot(point.x - center.x, point.y - center.y) <= handleRadius }
-        if canResizeStart, near(startHandle(of: frame)) { return .resizeStart }
-        if canResizeEnd, near(endHandle(of: frame)) { return .resizeEnd }
-        return frame.contains(point) ? .body : nil
+        handle(at: point, frame: frame, canResizeStart: canResizeStart, canResizeEnd: canResizeEnd)
+            ?? (frame.contains(point) ? .body : nil)
     }
+}
+
+/// What a touch landed on, in the grid. Classification is the view's job (it knows the frames); what each gesture then
+/// means is decided here, so the whole gesture table can be tested without a screen.
+enum TimelineTouchTarget: Equatable {
+    case handle(EditHit)
+    /// The event being edited (not its handles).
+    case selectedEvent
+    /// Any other event.
+    case otherEvent
+    case emptyTime
+}
+
+/// The gesture table. In edit mode and out of it:
+///
+/// | gesture | on | result |
+/// |---|---|---|
+/// | tap | an event | open it in place |
+/// | tap | empty time | leave edit mode |
+/// | first long press | an event | enter edit mode (nothing moves) |
+/// | plain drag | anywhere | scroll |
+/// | drag | a handle | change that edge |
+/// | second long press, then drag | the selected event | move it |
+/// | long press | empty time | start a new event |
+enum TimelineGestureRouter {
+    enum LongPress: Equatable {
+        case enterEditMode
+        case pickUp
+        case startNewEvent
+        case ignore
+    }
+
+    static func longPress(on target: TimelineTouchTarget, isEditing: Bool) -> LongPress {
+        switch target {
+        case .handle: return .ignore                                  // a handle's own drag does the work
+        case .selectedEvent: return isEditing ? .pickUp : .enterEditMode
+        case .otherEvent: return .enterEditMode                       // switches the event being edited
+        case .emptyTime: return .startNewEvent
+        }
+    }
+
+    /// Whether the edit pan (as opposed to scrolling) takes a touch that begins on `target`. Only a handle does: the body of
+    /// an event, other events and empty time always scroll.
+    static func panBegins(on target: TimelineTouchTarget, isEditing: Bool) -> Bool {
+        guard isEditing, case .handle = target else { return false }
+        return true
+    }
+
+    /// Whether a tap on `target` ends edit mode.
+    static func tapEndsEditing(on target: TimelineTouchTarget) -> Bool { target == .emptyTime }
 }

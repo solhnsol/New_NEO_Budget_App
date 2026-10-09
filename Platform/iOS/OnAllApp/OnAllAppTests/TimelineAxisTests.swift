@@ -7,7 +7,7 @@ private let day = 1440
 /// The numbers these tests reason with. `standard` is tuned for the screen and tested separately below.
 private let parameters = TimelineAxis.Parameters(
     browseScale: 1.0, foldedScale: 0.12, minimumFoldedHeight: 30, padding: 45, minimumFoldMinutes: 90,
-    editScale: 1.6, editMargin: 90, emptyDayFocus: (9 * 60)...(18 * 60)
+    editScale: 1.6, emptyDayFocus: (9 * 60)...(18 * 60), handleRadius: 45, handleRamp: 15, rampScale: 1.3, zoneMergeGap: 20
 )
 
 private func browse(_ anchors: [Int]) -> TimelineAxis { TimelineAxis.browse(totalMinutes: day, anchors: anchors, parameters: parameters) }
@@ -81,39 +81,125 @@ private func browse(_ anchors: [Int]) -> TimelineAxis { TimelineAxis.browse(tota
     #expect(axis.minute(atY: top + fold.height / 2) > fold.startMinute + 100)
 }
 
-@Test func expandingMakesEveryFifteenMinuteStepTallEnoughToDrag() {
+@Test func enlargingAroundTheHandlesMakesEveryFifteenMinuteStepTallEnoughToDrag() {
     let axis = browse([10 * 60, 11 * 60])
-    let window = axis.editWindow(around: (10 * 60)...(11 * 60), parameters: parameters)
-    #expect(window == (8 * 60 + 30)...(12 * 60 + 30))
-    let editing = axis.expanded(over: window, scale: parameters.editScale)
+    let zones = axis.handleZones(around: [10 * 60, 11 * 60], parameters: parameters)
+    #expect(zones == [(9 * 60 + 15)...(11 * 60 + 45)])                     // the two handles' windows overlap, so they are one
+    let editing = axis.expandedLocally(around: [10 * 60, 11 * 60], parameters: parameters)
     #expect(editing.y(minute: 10 * 60 + 15) - editing.y(minute: 10 * 60) == 24)
     #expect(editing.y(minute: 11 * 60) - editing.y(minute: 10 * 60) == 96)
-    #expect(!editing.isFolded(minute: 9 * 60) && !editing.isFolded(minute: 12 * 60))      // folds inside the window are opened
-    #expect(abs(editing.y(minute: 6 * 60) - axis.y(minute: 6 * 60)) < 0.001)                  // above the window nothing moves
+    #expect(abs(editing.y(minute: 6 * 60) - axis.y(minute: 6 * 60)) < 0.001)                 // above the zone nothing moves
     #expect(editing.height > axis.height)
     // Dragging one step in the enlarged region moves exactly one snap step.
     let start = editing.y(minute: 10 * 60)
     #expect(editing.minute(atY: start + 24) == 10 * 60 + 15)
-    #expect(editing.minute(atY: start + 12) == 10 * 60 + 8 || editing.minute(atY: start + 12) == 10 * 60 + 7)
 }
 
-@Test func expandingKeepsOtherFoldsFoldedAndTheWindowInsideTheDay() {
+@Test func theEnlargedZoneIsOpenedButEverythingElseKeepsItsBrowseShape() {
     let axis = browse([9 * 60, 22 * 60])
-    let window = axis.editWindow(around: (22 * 60)...(23 * 60 + 50), parameters: parameters)
-    #expect(window.upperBound == day)
-    let editing = axis.expanded(over: window, scale: parameters.editScale)
+    let editing = axis.expandedLocally(around: [22 * 60, 23 * 60 + 50], parameters: parameters)
     #expect(editing.isFolded(minute: 14 * 60))                // the long quiet stretch in the middle stays folded
     #expect(!editing.isFolded(minute: 23 * 60))
     #expect(editing.segments.first?.startMinute == 0 && editing.segments.last?.endMinute == day)
-    // Segments stay contiguous.
     for pair in zip(editing.segments, editing.segments.dropFirst()) { #expect(pair.0.endMinute == pair.1.startMinute) }
+    #expect(abs(editing.y(minute: 6 * 60) - axis.y(minute: 6 * 60)) < 0.001)
 }
 
 @Test func collapsingBackIsTheSameAxisAsBefore() {
     let axis = browse([9 * 60, 12 * 60])
-    let window = axis.editWindow(around: (9 * 60)...(10 * 60), parameters: parameters)
-    _ = axis.expanded(over: window, scale: parameters.editScale)
-    #expect(axis == browse([9 * 60, 12 * 60]))      // the browse axis is a value; expanding never mutates it
+    _ = axis.expandedLocally(around: [9 * 60, 10 * 60], parameters: parameters)
+    #expect(axis == browse([9 * 60, 12 * 60]))      // the browse axis is a value; enlarging never mutates it
+}
+
+@Test func theSizeChangesGraduallyTowardsAnEnlargedZone() {
+    let axis = browse([10 * 60, 18 * 60])             // an eight hour event: its middle is folded
+    let editing = axis.expandedLocally(around: [10 * 60, 18 * 60], parameters: parameters)
+    // Scales seen walking down from the fold into the start handle's zone: folded -> ramp -> edit.
+    let scales = editing.segments.filter { $0.endMinute > 9 * 60 && $0.startMinute < 11 * 60 + 30 }.map(\.pointsPerMinute)
+    #expect(scales.contains(parameters.rampScale) && scales.contains(parameters.editScale))
+    let ramp = editing.segments.first { $0.pointsPerMinute == parameters.rampScale }
+    let core = editing.segments.first { $0.pointsPerMinute == parameters.editScale }
+    #expect(ramp != nil && core != nil && (ramp?.startMinute ?? 0) < (core?.startMinute ?? 0))
+}
+
+// MARK: Events of every length, under the screen settings
+
+/// What the screen would draw while editing an event from `start` to `end` minutes, with nothing else on the day.
+private func editing(_ start: Int, _ end: Int) -> (browse: TimelineAxis, editing: TimelineAxis, handles: [Int]) {
+    let standard = TimelineAxis.Parameters.standard
+    let browse = TimelineAxis.browse(totalMinutes: day, anchors: [start, end], parameters: standard)
+    return (browse, browse.expandedLocally(around: [start, end], parameters: standard), [start, end])
+}
+
+struct EventLength: Sendable, CustomTestStringConvertible {
+    let name: String
+    let start: Int
+    let end: Int
+    var testDescription: String { name }
+}
+
+private let lengths = [
+    EventLength(name: "30 minutes", start: 10 * 60, end: 10 * 60 + 30),
+    EventLength(name: "2 hours", start: 10 * 60, end: 12 * 60),
+    EventLength(name: "8 hours", start: 9 * 60, end: 17 * 60),
+    EventLength(name: "24 hours", start: 0, end: day),
+]
+
+@Test(arguments: lengths) func everyHandleHasComfortableStepsAndAWholeEventFitsOneScreen(length: EventLength) {
+    let standard = TimelineAxis.Parameters.standard
+    let shapes = editing(length.start, length.end)
+    for handle in shapes.handles {
+        // A step towards the inside of the day, whichever side of the handle has room (the edge of the day has one side only).
+        let neighbour = handle + 15 <= day ? handle + 15 : handle - 15
+        let step = abs(shapes.editing.y(minute: neighbour) - shapes.editing.y(minute: handle))
+        #expect(step >= 24 - 0.001, "\(length.name) at \(handle): \(step)")
+        let other = handle - 15 >= 0 ? handle - 15 : handle + 15
+        #expect(abs(shapes.editing.y(minute: handle) - shapes.editing.y(minute: other)) >= 24 - 0.001, "\(length.name) other side of \(handle)")
+        // A round trip through the enlarged region is exact.
+        #expect(shapes.editing.minute(atY: shapes.editing.y(minute: handle)) == handle)
+    }
+    // Both handles are within one phone screen of each other, however long the event is.
+    let span = shapes.editing.y(minute: length.end) - shapes.editing.y(minute: length.start)
+    #expect(span < 640, "\(length.name): \(span)")
+    // Enlarging adds a bounded amount, not the length of the event.
+    #expect(shapes.editing.height - shapes.browse.height < 2 * (CGFloat(2 * standard.handleRadius + 2 * standard.handleRamp) * standard.editScale))
+}
+
+@Test func theMiddleOfALongEventStaysFoldedWhileEditing() {
+    for length in lengths where length.end - length.start >= 8 * 60 {
+        let shapes = editing(length.start, length.end)
+        let middle = (length.start + length.end) / 2
+        #expect(shapes.browse.isFolded(minute: middle) && shapes.editing.isFolded(minute: middle), Comment(rawValue: length.name))
+        // The folded middle keeps its scale; the zones only take a few minutes off its ends.
+        let before = shapes.browse.segments.first { $0.isFolded && $0.startMinute <= middle && middle <= $0.endMinute }
+        let after = shapes.editing.segments.first { $0.isFolded && $0.startMinute <= middle && middle <= $0.endMinute }
+        #expect(before != nil && after != nil && before?.pointsPerMinute == after?.pointsPerMinute, Comment(rawValue: length.name))
+        #expect((after?.height ?? .infinity) <= (before?.height ?? 0), Comment(rawValue: length.name))
+    }
+}
+
+@Test func zonesMergeWhenTheHandlesAreCloseAndStaySeparateWhenTheyAreFar() {
+    let standard = TimelineAxis.Parameters.standard
+    let axis = TimelineAxis.browse(totalMinutes: day, anchors: [10 * 60, 18 * 60], parameters: standard)
+    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 30], parameters: standard).count == 1)          // 30 minutes: one zone
+    #expect(axis.handleZones(around: [10 * 60, 12 * 60], parameters: standard).count == 2)               // 2 hours: two
+    #expect(axis.handleZones(around: [10 * 60, 10 * 60 + 100], parameters: standard).count == 1)         // 100 min: windows 10 apart, merged
+    #expect(axis.handleZones(around: [0, day], parameters: standard) == [0...45, (day - 45)...day])      // clamped to the day
+    #expect(axis.handleZones(around: [], parameters: standard).isEmpty)
+}
+
+@Test func enlargedMappingStaysMonotonicAndContiguousForEveryLength() {
+    for length in lengths {
+        let axis = editing(length.start, length.end).editing
+        var previous: CGFloat = -1
+        for minute in stride(from: 0, through: day, by: 5) {
+            let y = axis.y(minute: minute)
+            #expect(y >= previous, "\(length.name) \(minute)")
+            previous = y
+        }
+        for pair in zip(axis.segments, axis.segments.dropFirst()) { #expect(pair.0.endMinute == pair.1.startMinute) }
+        #expect(axis.segments.first?.startMinute == 0 && axis.segments.last?.endMinute == day)
+    }
 }
 
 // MARK: The numbers the screen actually uses
@@ -127,8 +213,7 @@ private func browse(_ anchors: [Int]) -> TimelineAxis { TimelineAxis.browse(tota
     #expect(axis.height < uniform / 2.4)                                        // about a screen instead of a day and a half
     #expect(axis.height < 640)
     // Editing: a 15 minute step is big enough to hit.
-    let window = axis.editWindow(around: (9 * 60)...(10 * 60 + 30), parameters: standard)
-    let editing = axis.expanded(over: window, scale: standard.editScale)
+    let editing = axis.expandedLocally(around: [9 * 60, 10 * 60 + 30], parameters: standard)
     #expect(editing.y(minute: 9 * 60 + 15) - editing.y(minute: 9 * 60) >= 24)
 }
 

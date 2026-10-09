@@ -2,9 +2,10 @@ import SwiftUI
 import UIKit
 
 /// The timeline's touch handling, attached to the enclosing `UIScrollView` so UIKit arbitrates it against scrolling:
-/// - **long press**: picks up an event, or starts a new one on empty time. Moving before the press time scrolls as usual.
-/// - **pan**: only in edit mode, and only for touches that start on the selected event or its handles. Everything else
-///   still scrolls.
+/// - **long press**: the owner decides what it means (enter edit mode, pick up the selected event, start a new one).
+///   Moving before the press time scrolls as usual.
+/// - **pan**: only in edit mode, and only for touches that start on a handle. The recogniser does not even receive any other
+///   touch, so the scroll view never waits for it: a plain drag scrolls from the first point of movement.
 ///
 /// SwiftUI's `LongPressGesture.sequenced(before: DragGesture)` and drags on child views swallow scrolling, so they are
 /// not used here. Locations are in the scrolled content's coordinate space.
@@ -70,7 +71,8 @@ struct EditGestureHost: UIViewRepresentable {
             }
             if let reveal = configuration.reveal, reveal.id != lastReveal {
                 lastReveal = reveal.id
-                scrollView?.scrollRectToVisible(reveal.rect.insetBy(dx: 0, dy: -24), animated: true)
+                // The host sits inside the padded content, so its coordinates are not the scroll view's.
+                if let scrollView { scrollView.scrollRectToVisible(convert(reveal.rect, to: scrollView).insetBy(dx: 0, dy: -24), animated: true) }
             }
         }
 
@@ -125,13 +127,9 @@ struct EditGestureHost: UIViewRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             touchDown = touch.location(in: self)
-            return true
-        }
-
-        /// The pan exists only for edit mode and only where the touch began on the selected event; otherwise it fails
-        /// at once and the scroll view's own pan takes over.
-        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            guard gestureRecognizer === pan else { return super.gestureRecognizerShouldBegin(gestureRecognizer) }
+            // The pan takes only touches that begin on a handle. Declining the rest at touch-down (rather than failing after
+            // some movement) is what lets the scroll view start immediately.
+            guard gestureRecognizer === pan else { return true }
             guard let configuration, configuration.panEnabled else { return false }
             return configuration.panStartsAt(touchDown)
         }

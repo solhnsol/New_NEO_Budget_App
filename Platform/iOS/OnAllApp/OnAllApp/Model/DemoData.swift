@@ -44,7 +44,7 @@ enum DemoData {
 
         let tomorrow = today.adding(days: 1)
         let yesterday = today.adding(days: -1)
-        let drafts: [CalendarEventDraft] = [
+        let usualDrafts: [CalendarEventDraft] = [
             draft(school, "알고리즘 수업", today, (9, 0), (10, 30), location: "공학관 302"),
             draft(appointments, "점심 약속", today, (12, 0), (13, 0), location: "성수"),
             draft(life, "스터디", today, (12, 30), (14, 30)),
@@ -52,6 +52,14 @@ enum DemoData {
             draft(school, "팀 회의", tomorrow, (15, 0), (16, 0)),
             draft(appointments, "영화", yesterday, (20, 0), (22, 10)),
         ]
+        // `-demo-long`: events of 30 minutes, 2 hours and 8 hours today and one that fills tomorrow, to check editing of
+        // long events. Replaces the usual events so nothing overlaps them.
+        let fullDay = try? TimedRange(startUnixMilliseconds: at(tomorrow, 0), endUnixMilliseconds: at(tomorrow.adding(days: 1), 0))
+        let drafts: [CalendarEventDraft] = !ProcessInfo.processInfo.arguments.contains("-demo-long") ? usualDrafts : [
+            draft(life, "30분 일정", today, (8, 0), (8, 30)),
+            draft(life, "2시간 일정", today, (10, 0), (12, 0)),
+            draft(appointments, "8시간 일정", today, (13, 0), (21, 0)),
+        ] + (fullDay.map { [CalendarEventDraft(calendarID: life, title: "24시간 일정", time: .timed($0))] } ?? [])
         let weekRange = try? DayRange(firstDay: today, lastDay: tomorrow)
         let seriesStart = at(today.adding(days: -7), 16, 0)
 

@@ -7,14 +7,15 @@ import NEOBudgetCalendar
 /// Two shapes are built from the same day:
 /// - **browse**: keeps full size around anything that happens (event edges, transactions) and folds the long empty
 ///   stretches and the middle of very long events, so the whole day reads at a glance.
-/// - **editing**: the browse axis with the neighbourhood of one event unfolded and enlarged, so a 15 minute step is
-///   comfortably large to drag.
+/// - **editing**: the browse axis with a small neighbourhood of each edge handle unfolded and enlarged, so a 15 minute
+///   step is comfortably large to drag. Everything else, including the middle of a long event, keeps its browse shape,
+///   so editing never unfolds the day. A fold draws no label: its length is not information the user needs.
 struct TimelineAxis: Equatable {
     struct Segment: Equatable {
         let startMinute: Int
         let endMinute: Int
         let pointsPerMinute: CGFloat
-        /// Drawn height. For a folded stretch this is at least the minimum fold height, so it can carry a label.
+        /// Drawn height. For a folded stretch this is at least the minimum fold height, so it stays visible.
         let height: CGFloat
         let isFolded: Bool
 
@@ -25,17 +26,22 @@ struct TimelineAxis: Equatable {
         /// Points per minute where nothing is folded.
         var browseScale: CGFloat = 0.6
         var foldedScale: CGFloat = 0.06
-        var minimumFoldedHeight: CGFloat = 28
+        var minimumFoldedHeight: CGFloat = 18
         /// Minutes kept at full size on each side of an anchor.
         var padding: Int = 30
         /// A stretch shorter than this is not worth folding.
         var minimumFoldMinutes: Int = 60
         /// Points per minute while editing. 15 minutes should be at least about 24 points.
         var editScale: CGFloat = 1.6
-        /// Minutes unfolded on each side of the edited event.
-        var editMargin: Int = 90
         /// Where an empty day keeps its full-size stretch.
         var emptyDayFocus: ClosedRange<Int> = (9 * 60)...(18 * 60)
+        /// Minutes enlarged on each side of an edge handle.
+        var handleRadius: Int = 45
+        /// Minutes of transition on each side of an enlarged zone, drawn between browse scale and edit scale.
+        var handleRamp: Int = 15
+        var rampScale: CGFloat = 1.1
+        /// Two enlarged zones closer than this are drawn as one.
+        var zoneMergeGap: Int = 20
 
         static let standard = Parameters()
     }
@@ -186,9 +192,35 @@ struct TimelineAxis: Equatable {
 
     // MARK: Editing
 
-    /// The minute window that gets unfolded and enlarged around an edited range.
-    func editWindow(around range: ClosedRange<Int>, parameters: Parameters = .standard) -> ClosedRange<Int> {
-        max(0, range.lowerBound - parameters.editMargin)...min(totalMinutes, range.upperBound + parameters.editMargin)
+    /// The minute windows enlarged around edge handles at `handles` (event edges, or a minute being placed). Each handle
+    /// gets `handleRadius` minutes on both sides, clamped to the day; windows that overlap or nearly touch become one.
+    func handleZones(around handles: [Int], parameters: Parameters = .standard) -> [ClosedRange<Int>] {
+        let zones = handles.sorted().map { handle in
+            max(0, handle - parameters.handleRadius)...min(totalMinutes, handle + parameters.handleRadius)
+        }
+        var merged: [ClosedRange<Int>] = []
+        for zone in zones where zone.upperBound > zone.lowerBound {
+            if let last = merged.last, zone.lowerBound - last.upperBound <= parameters.zoneMergeGap {
+                merged[merged.count - 1] = last.lowerBound...max(last.upperBound, zone.upperBound)
+            } else {
+                merged.append(zone)
+            }
+        }
+        return merged
+    }
+
+    /// This axis with the neighbourhood of each handle unfolded and drawn at `editScale`, each with a short ramp at
+    /// `rampScale` on both sides so the change of size is gradual. The rest of the axis, including a long event's folded
+    /// middle, is untouched, so the whole thing grows by a few hundred points at most however long the event is.
+    func expandedLocally(around handles: [Int], parameters: Parameters = .standard) -> TimelineAxis {
+        let zones = handleZones(around: handles, parameters: parameters)
+        var result = self
+        for zone in zones {
+            let ramp = max(0, zone.lowerBound - parameters.handleRamp)...min(totalMinutes, zone.upperBound + parameters.handleRamp)
+            result = result.expanded(over: ramp, scale: parameters.rampScale)
+        }
+        for zone in zones { result = result.expanded(over: zone, scale: parameters.editScale) }
+        return result
     }
 
     /// This axis with `window` unfolded and drawn at `scale`. Stretches outside the window keep their shape.
