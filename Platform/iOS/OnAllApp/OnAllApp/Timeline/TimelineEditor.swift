@@ -88,9 +88,43 @@ final class TimelineEditor {
 
     /// Asks the scroll view to move by `delta` points, in step with an axis change, so what is under the finger stays put.
     struct ScrollRequest: Equatable {
+        let id: UUID
+        let delta: CGFloat
+        init(id: UUID = UUID(), delta: CGFloat) {
+            self.id = id
+            self.delta = delta
+        }
+        static func == (lhs: ScrollRequest, rhs: ScrollRequest) -> Bool { lhs.id == rhs.id }
+    }
+
+    /// The axis changing from one shape to another. The grid draws it as one animation of a single number (`GeometryBlend`),
+    /// and the scroll view stays where it is while that runs: the content is moved by `delta * progress` instead, so the
+    /// anchor minute is held still on screen by the same arithmetic that moves everything else. When it ends (`completeTransition`)
+    /// the scroll view is moved by the whole `delta` in one step, the content shift is dropped in the same update, and the
+    /// two cancel exactly.
+    struct AxisTransition: Equatable {
+        let id: UUID
+        let from: TimelineAxis
+        let to: TimelineAxis
+        /// How far the anchor minute moved in content coordinates (`to.y - from.y`).
+        let delta: CGFloat
+        let startedAt: Date
+
+        static let duration: TimeInterval = 0.25
+
+        /// How far along the change is at `date`, from the clock alone: 0 before it starts, 1 once it is over, eased in between.
+        /// Nothing animates this number, so a change that replaces another cannot blend with it.
+        func progress(at date: Date) -> CGFloat {
+            let t = min(max(date.timeIntervalSince(startedAt) / Self.duration, 0), 1)
+            return CGFloat(t < 0.5 ? 2 * t * t : 1 - pow(-2 * t + 2, 2) / 2)
+        }
+    }
+
+    /// The scroll view moving by `delta` at once, because a transition has ended.
+    struct ScrollCommit: Equatable {
         let id = UUID()
         let delta: CGFloat
-        static func == (lhs: ScrollRequest, rhs: ScrollRequest) -> Bool { lhs.id == rhs.id }
+        static func == (lhs: ScrollCommit, rhs: ScrollCommit) -> Bool { lhs.id == rhs.id }
     }
 
     private(set) var mode: Mode = .idle
@@ -104,6 +138,9 @@ final class TimelineEditor {
     /// each is drawn enlarged; the rest of the day, including the middle of a long event, keeps its browse shape.
     /// `nil` is browse mode.
     private(set) var editAnchors: [Int]?
+    /// The minute a new event is being placed at. Only a new event enlarges the axis from the start; an event being edited
+    /// does not, so entering and leaving edit mode never moves anything on screen.
+    private(set) var createFocus: Int?
     /// While an edge handle is dragged and the finger rests over a compressed stretch, the minute the enlarged zone has
     /// moved to. It is the selected time, so the handle stays exactly where the finger is when the zone appears.
     private(set) var dwellCenter: Int?
@@ -112,7 +149,17 @@ final class TimelineEditor {
     /// The event opened in place to show what it means and every linked transaction. Only one at a time, and never
     /// together with edit mode: time adjustment and reading details are separate.
     private(set) var expandedKey: CalendarEventKey?
-    private(set) var scrollRequest: ScrollRequest?
+    /// How far the scroll view can shift the content for a layout `contentHeight` tall (with or without the extra room): the
+    /// change of shape is planned inside this, because a shift the scroll view refuses would show as a jump when the change ends.
+    /// Set by the grid; `nil` (tests, before it appears) means no limit.
+    var scrollLimits: ((_ contentHeight: CGFloat, _ needsRoom: Bool) -> ClosedRange<CGFloat>?)?
+    private(set) var transition: AxisTransition?
+    private(set) var scrollCommit: ScrollCommit?
+    /// The scroll the current transition will need, for callers and tests that ask what was requested.
+    var scrollRequest: ScrollRequest? {
+        guard let transition, abs(transition.delta) > 0.5 else { return nil }
+        return ScrollRequest(id: transition.id, delta: transition.delta)
+    }
     private(set) var timeline: DayTimeline?
     private let parameters = TimelineAxis.Parameters.standard
     private var fingerAnchorY: CGFloat = 0
@@ -147,26 +194,24 @@ final class TimelineEditor {
 
     var isEditing: Bool { editAnchors != nil }
 
-    /// Everything that changes the shape of the axis while editing, for animating it.
-    struct AxisShape: Equatable {
-        let anchors: [Int]?
-        let dwell: Int?
-    }
-    var axisShape: AxisShape { AxisShape(anchors: editAnchors, dwell: dwellCenter) }
-
-    /// Where the axis is enlarged now: the handles, plus the resting finger's zone while one exists.
-    private var allAnchors: [Int]? { editAnchors.map { $0 + (dwellCenter.map { [$0] } ?? []) } }
+    /// Where the axis is enlarged now: the place a new event is being put, and the resting finger's zone. Never the handles of
+    /// an event that is merely selected.
+    private var zoomCenters: [Int] { [createFocus, dwellCenter].compactMap { $0 } }
     /// The enlarged minute windows, for drawing and tests.
-    var enlargedZones: [ClosedRange<Int>] { allAnchors.map { browseAxis.handleZones(around: $0, parameters: parameters) } ?? [] }
+    var enlargedZones: [ClosedRange<Int>] { browseAxis.handleZones(around: zoomCenters, parameters: parameters) }
+
+    /// Whether the scroll view needs room beyond the end of the day. A zone opening under a resting finger moves the content by
+    /// as much as it grew, which a short day could not do without it. Held until the zone is gone and the scroll has settled.
+    var needsScrollRoom: Bool { mode != .idle || dwellCenter != nil || createFocus != nil || transition != nil }
     var isActive: Bool { mode != .idle }
     var activeBlockID: BlockID? { block?.id }
     /// Whether the picked-up block is being created rather than edited.
     var isCreating: Bool { preview?.kind == .create }
 
     /// Where to draw the preview, in grid coordinates.
-    func previewFrame(totalWidth: CGFloat) -> CGRect? {
+    func previewFrame(totalWidth: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect? {
         guard let planner, let preview else { return nil }
-        return planner.previewFrame(preview.range, column: preview.column, columns: preview.columnCount, totalWidth: totalWidth)
+        return planner.previewFrame(preview.range, column: preview.column, columns: preview.columnCount, totalWidth: totalWidth, geometry: geometry)
     }
 
     // MARK: View modes
@@ -179,14 +224,14 @@ final class TimelineEditor {
 
     /// The axis for a view shape: the browse axis, with the neighbourhood of each handle enlarged and/or one event opened
     /// over its own range.
-    private func axis(anchors: [Int]?, expanded: CalendarEventKey?) -> TimelineAxis {
+    private func axis(anchors: [Int], expanded: CalendarEventKey?) -> TimelineAxis {
         var result = browseAxis
-        if let anchors { result = result.expandedLocally(around: anchors, parameters: parameters) }
+        if !anchors.isEmpty { result = result.expandedLocally(around: anchors, parameters: parameters) }
         if let spec = expansion(for: expanded) { result = result.expanded(over: spec.window, scale: spec.scale) }
         return result
     }
 
-    private var currentAxis: TimelineAxis { axis(anchors: allAnchors, expanded: expandedKey) }
+    private var currentAxis: TimelineAxis { axis(anchors: zoomCenters, expanded: expandedKey) }
 
     /// The minutes an expanded event occupies and how large they are drawn: large enough that the block is as tall as its
     /// content needs, but never smaller than browse scale.
@@ -226,20 +271,42 @@ final class TimelineEditor {
         return result.isEmpty ? [minute] : result
     }
 
-    /// Switches the axis and, if asked, scrolls so `anchorMinute` stays where it was on screen.
+    /// Switches the editing state and, if the axis changes shape because of it, makes the change a transition that holds
+    /// `anchorMinute` still on screen.
     private func setAnchors(
         _ new: [Int]?, selected: CalendarEventKey?, expanded: CalendarEventKey? = nil, anchorMinute: Int?, from old: TimelineAxis
     ) {
         editAnchors = new
+        if new == nil { createFocus = nil }
         selectedKey = selected
         expandedKey = expanded
-        guard let anchorMinute else { return }
-        let delta = currentAxis.y(minute: anchorMinute) - old.y(minute: anchorMinute)
-        if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
+        publishAxisChange(from: old, anchorMinute: anchorMinute)
     }
 
-    /// First long press on an event: select it and enlarge the neighbourhood of its two handles. Nothing else unfolds, and
-    /// `pressMinute`, the time under the finger, keeps its screen position. Returns `false` (and says why) if the event cannot be edited.
+    /// Starts the transition from `old` to the axis as it is now (nothing if they are the same). `old` is the axis before the
+    /// change that was just made, which is also where a transition still running would be heading, so finishing that one
+    /// first loses nothing.
+    private func publishAxisChange(from old: TimelineAxis, anchorMinute: Int?) {
+        completeTransition()
+        let new = currentAxis
+        guard new != old else { return }
+        var delta = anchorMinute.map { new.y(minute: $0) - old.y(minute: $0) } ?? 0
+        // Hold the anchor as far as the scroll view can follow; past that it drifts smoothly instead of jumping at the end.
+        if let range = scrollLimits?(new.height, needsScrollRoom) { delta = min(max(delta, range.lowerBound), range.upperBound) }
+        transition = AxisTransition(id: UUID(), from: old, to: new, delta: delta, startedAt: Date())
+    }
+
+    /// The grid has finished drawing the change: the axis is now simply the new shape and the scroll view takes the whole shift.
+    func completeTransition(id: UUID? = nil) {
+        guard let finished = transition, id == nil || id == finished.id else { return }
+        transition = nil
+        if abs(finished.delta) > 0.5 { scrollCommit = ScrollCommit(delta: finished.delta) }
+    }
+
+    /// First long press on an event: select it, so its two handles show. **Nothing on screen moves**: the axis is not changed,
+    /// so no time, block or handle shifts. (An opened event does close, which is a change of shape anchored at the pressed
+    /// minute.) The neighbourhood of a handle is enlarged only once that handle is dragged and rests (`zoomAtFinger`).
+    /// Returns `false` (and says why) if the event cannot be edited.
     @discardableResult
     func enterEditMode(for block: EventBlock, pressMinute: Int) -> Bool {
         guard mode == .idle, timeline != nil else { return false }
@@ -250,7 +317,7 @@ final class TimelineEditor {
         feedback = nil
         if selectedKey != block.eventKey || editAnchors == nil {
             setAnchors(anchors(for: block, fallback: pressMinute), selected: block.eventKey, anchorMinute: pressMinute, from: currentAxis)
-            settlesAt = Date().addingTimeInterval(0.35)
+            if transition != nil { settlesAt = Date().addingTimeInterval(Self.settleSeconds) }
         }
         return true
     }
@@ -260,8 +327,10 @@ final class TimelineEditor {
     func focusForCreate(atMinute minute: Int) -> Bool {
         guard mode == .idle, timeline != nil else { return false }
         feedback = nil
-        setAnchors([minute], selected: nil, anchorMinute: minute, from: currentAxis)
-        settlesAt = Date().addingTimeInterval(0.35)
+        let old = currentAxis
+        createFocus = minute
+        setAnchors([minute], selected: nil, anchorMinute: minute, from: old)
+        if transition != nil { settlesAt = Date().addingTimeInterval(Self.settleSeconds) }
         return true
     }
 
@@ -348,9 +417,9 @@ final class TimelineEditor {
         let before = currentAxis
         guard before.pointsPerMinute(atMinute: minute) < parameters.editScale - 0.001, dwellCenter != minute else { return }
         dwellCenter = minute
+        publishAxisChange(from: before, anchorMinute: minute)
         let after = currentAxis
-        let delta = after.y(minute: minute) - before.y(minute: minute)
-        if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
+        let delta = transition?.delta ?? 0
         let geometry = TimelineGeometry(axis: after)
         planner = TimelineEditPlanner(policy: environment.policy, zone: environment.zone, geometry: geometry, timeline: timeline)
         // The finger has not moved on screen, so in content coordinates it is `delta` further along, and it is at `minute`.
@@ -359,6 +428,9 @@ final class TimelineEditor {
         lastFingerY += delta
         settlesAt = Date().addingTimeInterval(Self.settleSeconds)
     }
+
+    /// Where the finger is, in content coordinates, as far as the editor knows. For scripts and tests that stand in for a finger.
+    var fingerContentY: CGFloat { lastFingerY }
 
     /// Ends the wait for the axis to settle. For tests, which have no animation to wait for.
     func endSettling() { settlesAt = .distantPast }
@@ -381,9 +453,7 @@ final class TimelineEditor {
         guard dwellCenter != nil else { return }
         let before = currentAxis
         dwellCenter = nil
-        guard let anchorMinute else { return }
-        let delta = currentAxis.y(minute: anchorMinute) - before.y(minute: anchorMinute)
-        if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
+        publishAxisChange(from: before, anchorMinute: anchorMinute)
     }
 
     // MARK: Gesture phases
@@ -408,6 +478,7 @@ final class TimelineEditor {
             kind: kind, range: edit.range, wasClamped: edit.wasClamped, blockID: block.id,
             column: block.layout.column, columnCount: block.layout.columnCount, title: block.title
         )
+        armDwell(at: lastFingerY)          // a handle held still, without moving, also opens a precise zone
         return true
     }
 

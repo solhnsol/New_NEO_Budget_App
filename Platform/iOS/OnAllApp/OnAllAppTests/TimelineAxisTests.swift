@@ -239,3 +239,113 @@ private let lengths = [
     #expect(!marks.contains { $0.elapsedMinute == 10 * 60 || $0.elapsedMinute == 11 * 60 })
     #expect(marks.contains { $0.elapsedMinute == 9 * 60 })
 }
+
+// MARK: One frame of an axis changing shape
+
+/// The shapes before and after a zone opens at `minute` on an eight hour event's folded middle.
+private func zoomShapes(at minute: Int = 13 * 60) -> (from: TimelineAxis, to: TimelineAxis, delta: CGFloat) {
+    let standard = TimelineAxis.Parameters.standard
+    let from = TimelineAxis.browse(totalMinutes: day, anchors: [9 * 60, 17 * 60], parameters: standard)
+    let to = from.expandedLocally(around: [minute], parameters: standard)
+    return (from, to, to.y(minute: minute) - from.y(minute: minute))
+}
+
+@Test func aBlendIsTheOldShapeAtTheStartAndTheNewShapeAtTheEnd() {
+    let shapes = zoomShapes()
+    let start = TimelineGeometry(from: shapes.from, to: shapes.to, progress: 0)
+    let end = TimelineGeometry(from: shapes.from, to: shapes.to, progress: 1)
+    for minute in stride(from: 0, through: day, by: 20) {
+        #expect(abs(start.y(minute: minute) - shapes.from.y(minute: minute)) < 0.0001)
+        #expect(abs(end.y(minute: minute) - shapes.to.y(minute: minute)) < 0.0001)
+    }
+    // The content never gets shorter during a change: it is as tall as the taller of the two shapes, in every frame.
+    let tallest = max(shapes.from.height, shapes.to.height)
+    #expect(abs(start.contentHeight - tallest) < 0.0001 && abs(end.contentHeight - tallest) < 0.0001)
+    for step in 0...10 {
+        let frame = TimelineGeometry(from: shapes.to, to: shapes.from, progress: CGFloat(step) / 10)      // a fold-away, the other way
+        #expect(frame.contentHeight >= shapes.to.height - 0.0001)
+    }
+}
+
+@Test func theAnchorMinuteStaysAtTheSameScreenPositionInEveryFrameOfAChange() {
+    let shapes = zoomShapes()
+    let anchor = 13 * 60
+    let before = shapes.from.y(minute: anchor)                                   // where it is on screen at the start (scroll offset 0)
+    for step in 0...20 {
+        let progress = CGFloat(step) / 20
+        let frame = TimelineGeometry(from: shapes.from, to: shapes.to, progress: progress)
+        // The content is moved up by delta * progress while the scroll view stays put.
+        let onScreen = frame.y(minute: anchor) - shapes.delta * progress
+        #expect(abs(onScreen - before) < 0.0001, "progress \(progress)")
+    }
+    // The change ends with the scroll view moving by the whole delta and the shift dropped: the same position again.
+    let committed = shapes.to.y(minute: anchor) - shapes.delta
+    #expect(abs(committed - before) < 0.0001)
+}
+
+@Test func everyMinuteMovesSmoothlyBetweenItsTwoPositionsAndNeverOutOfOrder() {
+    let shapes = zoomShapes()
+    var previousFrame: [CGFloat] = (0...day).map { shapes.from.y(minute: $0) }
+    for step in 1...20 {
+        let frame = TimelineGeometry(from: shapes.from, to: shapes.to, progress: CGFloat(step) / 20)
+        var last: CGFloat = -1
+        for minute in stride(from: 0, through: day, by: 10) {
+            let y = frame.y(minute: minute)
+            #expect(y >= last)                                                    // time never runs backwards on screen
+            last = y
+            let low = min(shapes.from.y(minute: minute), shapes.to.y(minute: minute))
+            let high = max(shapes.from.y(minute: minute), shapes.to.y(minute: minute))
+            #expect(y >= low - 0.0001 && y <= high + 0.0001)                      // and never overshoots
+            // The step between two frames is a twentieth of the whole move: no frame jumps.
+            let travel = abs(shapes.to.y(minute: minute) - shapes.from.y(minute: minute))
+            #expect(abs(y - previousFrame[minute]) <= travel / 20 + 0.0001)
+        }
+        previousFrame = (0...day).map { frame.y(minute: $0) }
+    }
+}
+
+@Test func aBlocksBodyAndItsHandlesShareOneCoordinateSystemInEveryFrame() {
+    let shapes = zoomShapes()
+    for step in 0...10 {
+        let frame = TimelineGeometry(from: shapes.from, to: shapes.to, progress: CGFloat(step) / 10)
+        // A block 09:00-17:00: its top and bottom edges are the start and end minute as drawn in this frame, and the handles
+        // sit at those edges, so they cannot move differently from the body.
+        let top = frame.y(minute: 9 * 60)
+        let bottom = frame.y(minute: 17 * 60)
+        let rect = CGRect(x: frame.gutterWidth, y: top, width: 200, height: bottom - top - 1)
+        #expect(EditHit.startHandle(of: rect).y == top)
+        #expect(EditHit.endHandle(of: rect).y == rect.maxY)
+        #expect(abs(rect.maxY - (bottom - 1)) < 0.0001)
+    }
+}
+
+@Test func hourMarksAndFoldsFadeWhenOnlyOneShapeHasThem() {
+    let shapes = zoomShapes()
+    let utc = try! DisplayTimeZone(identifier: "UTC")
+    let start = TimelineGeometry(from: shapes.from, to: shapes.to, progress: 0)
+    let middle = TimelineGeometry(from: shapes.from, to: shapes.to, progress: 0.5)
+    let end = TimelineGeometry(from: shapes.from, to: shapes.to, progress: 1)
+    // A mark that only the new shape has: invisible at first, full at the end. One that only the old shape has: the reverse.
+    let arriving = Set(TimelineGeometry(axis: shapes.to).hourMarks(dayStartUnixMilliseconds: 0, zone: utc).map(\.elapsedMinute))
+    let leaving = Set(TimelineGeometry(axis: shapes.from).hourMarks(dayStartUnixMilliseconds: 0, zone: utc).map(\.elapsedMinute))
+    let onlyNew = arriving.subtracting(leaving), onlyOld = leaving.subtracting(arriving), both = arriving.intersection(leaving)
+    #expect(!onlyNew.isEmpty || !onlyOld.isEmpty)
+    func opacity(_ geometry: TimelineGeometry, _ minute: Int) -> CGFloat? {
+        geometry.hourMarks(dayStartUnixMilliseconds: 0, zone: utc).first { $0.elapsedMinute == minute }?.opacity
+    }
+    for minute in onlyNew { #expect(opacity(start, minute) == 0 && opacity(middle, minute) == 0.5 && opacity(end, minute) == 1) }
+    for minute in onlyOld { #expect(opacity(start, minute) == 1 && opacity(middle, minute) == 0.5 && opacity(end, minute) == 0) }
+    for minute in both { #expect(opacity(start, minute) == 1 && opacity(middle, minute) == 1 && opacity(end, minute) == 1) }
+    // A fold that only the old shape has fades out as the zone opens through it.
+    let oldFolds = shapes.from.foldedSegments.map { $0.startMinute...$0.endMinute }
+    let newFolds = shapes.to.foldedSegments.map { $0.startMinute...$0.endMinute }
+    for fold in start.foldMarks {
+        let range = fold.startMinute...fold.endMinute
+        #expect(fold.opacity == (oldFolds.contains(range) ? 1 : 0))                  // at the start only the old shape's folds show
+    }
+    for fold in end.foldMarks {
+        let range = fold.startMinute...fold.endMinute
+        #expect(fold.opacity == (newFolds.contains(range) ? 1 : 0))
+    }
+    #expect(middle.foldMarks.contains { $0.opacity == 0.5 })
+}

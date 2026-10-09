@@ -46,90 +46,119 @@ struct TimelineGridView: View {
     private static let transition = Animation.easeInOut(duration: 0.28)
     private static let edgePadding: CGFloat = EditHit.handleRadius
     private static let editScrollRoom: CGFloat = 320
+    @State private var probe = ScrollProbe()
 
     var body: some View {
-        let geometry = editor.geometry
-        let marks = geometry.hourMarks(dayStartUnixMilliseconds: timeline.dayStartUnixMilliseconds, zone: zone)
         ScrollViewReader { proxy in
             ScrollView {
-                GeometryReader { size in
-                    let width = size.size.width
-                    ZStack(alignment: .topLeading) {
-                        Color.clear.contentShape(Rectangle())
-                            .onTapGesture { location in
-                                if TimelineGestureRouter.tapEndsEditing(on: .emptyTime) {
-                                    editor.collapseAll(anchorMinute: editor.geometry.minute(atY: location.y))
-                                }
-                            }
-                            .frame(width: width, height: geometry.contentHeight)
-                        ForEach(marks, id: \.elapsedMinute) { mark in
-                            HourRow(mark: mark, geometry: geometry, width: width)
-                        }
-                        ForEach(geometry.axis.foldedSegments, id: \.startMinute) { segment in
-                            FoldRow(segment: segment, geometry: geometry, width: width)
-                        }
-                        ForEach(timeline.blocks.filter { !editor.isExpanded($0) }, id: \.id) { block in
-                            let frame = frame(of: block, width: width)
-                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
-                        }
-                        // The opened event is drawn last so it sits over its neighbours.
-                        ForEach(timeline.blocks.filter { editor.isExpanded($0) }, id: \.id) { block in
-                            let frame = frame(of: block, width: width)
-                            QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone)
-                            BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
-                        }
-                        MarkerRail(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
-                        if let block = selectedBlock, !editor.isExpanded(block), !editor.isActive {
-                            let frame = frame(of: block, width: width)
-                            if !block.continuesFromPreviousDay {
-                                EditHandle(kind: .resizeStart, block: block, center: EditHit.startHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
-                            }
-                            if !block.continuesToNextDay {
-                                EditHandle(kind: .resizeEnd, block: block, center: EditHit.endHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
-                            }
-                        }
-                        if let frame = editor.previewFrame(totalWidth: width), let preview = editor.preview {
-                            PreviewBlockView(preview: preview, zoneIdentifier: timeline.timeZoneIdentifier)
-                                .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-                                .offset(x: frame.minX, y: frame.minY)
-                                .allowsHitTesting(false)
-                        }
-                        if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
-                    }
-                    .background { gestureHost(width: width, geometry: geometry) }
-                    .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width) }
-                    // The zone moved to where the finger rested: a small tick says the time can now be set precisely.
-                    .onChange(of: editor.dwellCenter) { _, center in if center != nil { Haptics.snap() } }
-                }
-                .frame(height: geometry.contentHeight)
-                .animation(Self.transition, value: editor.axisShape)
-                .animation(Self.transition, value: editor.expandedKey)
-                // Scroll anchors need real layout frames; `offset` does not move a view's frame.
-                .background(alignment: .top) {
-                    VStack(spacing: 0) {
-                        ForEach(geometry.axis.segments, id: \.startMinute) { segment in
-                            Color.clear.frame(height: segment.height).id("segment-\(segment.startMinute)")
-                        }
+                // While the axis changes shape the clock, not an animation, says how far along it is (`AxisTransition.progress`):
+                // every frame is positioned from that one number (see `TimelineGeometry`), so nothing can fall out of step.
+                TimelineView(.animation(minimumInterval: nil, paused: editor.transition == nil)) { context in
+                    MorphingContent(
+                        progress: editor.transition?.progress(at: context.date) ?? 0,
+                        transition: editor.transition, base: editor.geometry
+                    ) { geometry, shift in
+                        grid(geometry: geometry, shift: shift)
                     }
                 }
-                // Room for a handle (and the first hour label) at the very top or bottom of the day.
-                .padding(.vertical, Self.edgePadding)
-                // While editing, room to scroll past the end. When a zone opens under a resting finger the content must be able
-                // to move by exactly as much as the zone grew, even on a day short enough to fit the screen.
-                .padding(.bottom, editor.isEditing ? Self.editScrollRoom : 0)
             }
             .scrollDisabled(editor.isActive)
-            .onAppear { scrollToStart(proxy, geometry: geometry) }
+            .onAppear {
+                scrollToStart(proxy, geometry: editor.geometry)
+                // The editor asks how far the content may be shifted before it plans a change of shape.
+                editor.scrollLimits = { [probe] contentHeight, needsRoom in
+                    probe.shiftRange(contentHeight: contentHeight + 2 * Self.edgePadding + (needsRoom ? Self.editScrollRoom : 0))
+                }
+            }
             .onChange(of: timeline.day) { _, _ in scrollToStart(proxy, geometry: editor.geometry) }
+            .task(id: editor.transition?.id) {
+                // The change ends when its time is up: the scroll view takes the whole shift in one step and the content shift is
+                // dropped in the same update.
+                guard let id = editor.transition?.id else { return }
+                try? await Task.sleep(for: .seconds(TimelineEditor.AxisTransition.duration + 0.02))
+                editor.completeTransition(id: id)
+            }
         }
+    }
+
+    /// The hour grid for one frame. `geometry` may be a blend of two shapes; `shift` is how far the content is moved up so the
+    /// anchor minute stays put while the scroll view itself stays where it is.
+    private func grid(geometry: TimelineGeometry, shift: CGFloat) -> some View {
+        let marks = geometry.hourMarks(dayStartUnixMilliseconds: timeline.dayStartUnixMilliseconds, zone: zone)
+        return GeometryReader { size in
+            let width = size.size.width
+            ZStack(alignment: .topLeading) {
+                Color.clear.contentShape(Rectangle())
+                    .onTapGesture { location in
+                        if TimelineGestureRouter.tapEndsEditing(on: .emptyTime) {
+                            editor.collapseAll(anchorMinute: editor.geometry.minute(atY: location.y))
+                        }
+                    }
+                    .frame(width: width, height: geometry.contentHeight)
+                ForEach(marks, id: \.elapsedMinute) { mark in
+                    HourRow(mark: mark, geometry: geometry, width: width)
+                }
+                ForEach(geometry.foldMarks, id: \.startMinute) { fold in
+                    FoldRow(fold: fold, geometry: geometry, width: width)
+                }
+                ForEach(timeline.blocks.filter { !editor.isExpanded($0) }, id: \.id) { block in
+                    let frame = frame(of: block, width: width, geometry: geometry)
+                    BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                }
+                // The opened event is drawn last so it sits over its neighbours.
+                ForEach(timeline.blocks.filter { editor.isExpanded($0) }, id: \.id) { block in
+                    let frame = frame(of: block, width: width, geometry: geometry)
+                    QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone)
+                    BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                }
+                MarkerRail(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+                // The handles are positioned from the same geometry as the block they belong to, so they move with it.
+                if let block = selectedBlock, !editor.isExpanded(block), !editor.isActive {
+                    let frame = frame(of: block, width: width, geometry: geometry)
+                    if !block.continuesFromPreviousDay {
+                        EditHandle(kind: .resizeStart, block: block, center: EditHit.startHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
+                    }
+                    if !block.continuesToNextDay {
+                        EditHandle(kind: .resizeEnd, block: block, center: EditHit.endHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
+                    }
+                }
+                if let frame = editor.previewFrame(totalWidth: width, geometry: geometry), let preview = editor.preview {
+                    PreviewBlockView(preview: preview, zoneIdentifier: timeline.timeZoneIdentifier)
+                        .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+                        .offset(x: frame.minX, y: frame.minY)
+                        .allowsHitTesting(false)
+                }
+                if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
+            }
+            .background { gestureHost(width: width, geometry: geometry) }
+            .offset(y: -shift)
+            .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width) }
+            // The zone moved to where the finger rested: a small tick says the time can now be set precisely.
+            .onChange(of: editor.dwellCenter) { _, center in if center != nil { Haptics.snap() } }
+        }
+        .frame(height: geometry.contentHeight)
+        .animation(Self.transition, value: editor.expandedKey)
+        // Scroll anchors need real layout frames; `offset` does not move a view's frame.
+        .background(alignment: .top) {
+            VStack(spacing: 0) {
+                ForEach(geometry.axis.segments, id: \.startMinute) { segment in
+                    Color.clear.frame(height: segment.height).id("segment-\(segment.startMinute)")
+                }
+            }
+        }
+        // Room for a handle (and the first hour label) at the very top or bottom of the day.
+        .padding(.vertical, Self.edgePadding)
+        // Room to scroll past the end while a zone is open under a finger, so a short day can still follow it.
+        .padding(.bottom, editor.needsScrollRoom ? Self.editScrollRoom : 0)
     }
 
     // MARK: Gestures
 
     private func gestureHost(width: CGFloat, geometry: TimelineGeometry) -> some View {
         EditGestureHost(
+            probe: probe,
             panEnabled: editor.isEditing,
-            scrollRequest: editor.scrollRequest,
+            scrollCommit: editor.scrollCommit,
             reveal: reveal,
             longPress: { phase, point in longPress(phase, point, width: width) },
             panStartsAt: { point in
@@ -211,8 +240,9 @@ struct TimelineGridView: View {
         return ordered.last { frame(of: $0, width: width).contains(point) }
     }
 
-    private func frame(of block: EventBlock, width: CGFloat) -> CGRect {
-        editor.geometry.blockFrame(block, totalWidth: width, expanded: editor.isExpanded(block))
+    /// Where a block is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
+    private func frame(of block: EventBlock, width: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect {
+        (geometry ?? editor.geometry).blockFrame(block, totalWidth: width, expanded: editor.isExpanded(block))
     }
 
     /// After an event opens, bring all of it into view; its content is taller than the block was.
@@ -303,24 +333,42 @@ private struct EditHandle: View {
 
 /// A stretch of the day drawn small: a dashed rule and an ellipsis in the hour gutter. It carries no duration label.
 private struct FoldRow: View {
-    let segment: TimelineAxis.Segment
+    let fold: TimelineGeometry.FoldMark
     let geometry: TimelineGeometry
     let width: CGFloat
 
     var body: some View {
-        let top = geometry.axis.top(of: segment)
+        let top = geometry.y(minute: fold.startMinute)
+        let height = geometry.y(minute: fold.endMinute) - top
         ZStack(alignment: .topLeading) {
             Rectangle().stroke(Color.secondary.opacity(0.35), style: StrokeStyle(lineWidth: 1, dash: [3, 4]))
                 .frame(width: max(0, width - geometry.gutterWidth), height: 0)
-                .offset(x: geometry.gutterWidth, y: segment.height / 2)
+                .offset(x: geometry.gutterWidth, y: height / 2)
             // Only a mark that time is skipped here. How long is not worth saying: the hours around it already tell.
             Image(systemName: "ellipsis").font(.system(size: 10)).rotationEffect(.degrees(90))
                 .foregroundStyle(.secondary)
-                .frame(width: geometry.gutterWidth - 6, height: segment.height)
+                .frame(width: geometry.gutterWidth - 6, height: height)
         }
-        .frame(width: width, height: segment.height, alignment: .topLeading)
+        .frame(width: width, height: height, alignment: .topLeading)
         .offset(y: top)
+        .opacity(fold.opacity)
         .accessibilityHidden(true)
+    }
+}
+
+/// Draws its content for one value of `progress`: the blend of the two shapes of a change in progress, or the plain shape. The
+/// content is the same view whether or not a change is running. A different structure (an `if` around two branches) would be a
+/// different view to SwiftUI: the grid, the gesture recognizers and the scroll view's position would all be torn down and rebuilt
+/// as a change starts and ends.
+private struct MorphingContent<Content: View>: View {
+    let progress: CGFloat
+    let transition: TimelineEditor.AxisTransition?
+    let base: TimelineGeometry
+    let content: (TimelineGeometry, CGFloat) -> Content
+
+    var body: some View {
+        let geometry = transition.map { TimelineGeometry(from: $0.from, to: $0.to, progress: progress) } ?? base
+        content(geometry, (transition?.delta ?? 0) * progress)
     }
 }
 
@@ -376,6 +424,7 @@ private struct HourRow: View {
         }
         .frame(width: width, alignment: .topLeading)
         .offset(y: geometry.y(minute: mark.elapsedMinute))
+        .opacity(mark.opacity)
         .accessibilityHidden(true)
     }
 }

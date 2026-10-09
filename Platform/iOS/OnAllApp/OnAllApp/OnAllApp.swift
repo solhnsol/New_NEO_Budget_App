@@ -23,6 +23,7 @@ struct OnAllApp: App {
                     await created.start()
                     if isDemo, let index = arguments.firstIndex(of: "-demo-preview"), arguments.indices.contains(index + 1) {
                         DemoPreview.apply(arguments[index + 1], to: created)
+                        await DemoPreview.runScript(arguments[index + 1], on: created)
                     }
                 } catch {
                     model = nil

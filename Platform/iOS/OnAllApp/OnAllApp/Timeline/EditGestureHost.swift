@@ -9,11 +9,30 @@ import UIKit
 ///
 /// SwiftUI's `LongPressGesture.sequenced(before: DragGesture)` and drags on child views swallow scrolling, so they are
 /// not used here. Locations are in the scrolled content's coordinate space.
+/// Lets the grid read where the enclosing scroll view is and how far it can go, which the scroll view itself is the only one to know.
+@MainActor
+final class ScrollProbe {
+    fileprivate(set) weak var scrollView: UIScrollView?
+
+    /// How far the content can still move by, for a layout whose content is `contentHeight` tall: down to the top edge and up to
+    /// the bottom edge. A shift outside this is refused by the scroll view, and would show as a jump when the change ends.
+    func shiftRange(contentHeight: CGFloat) -> ClosedRange<CGFloat>? {
+        guard let scrollView else { return nil }
+        let top = -scrollView.adjustedContentInset.top
+        let bottom = max(top, contentHeight + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let offset = scrollView.contentOffset.y
+        return (top - offset)...(bottom - offset)
+    }
+}
+
 struct EditGestureHost: UIViewRepresentable {
     enum Phase { case began, moved, ended }
 
+    let probe: ScrollProbe
     var panEnabled: Bool
-    var scrollRequest: TimelineEditor.ScrollRequest?
+    /// The scroll view moving by this much at once, when a change of shape ends. The content shift that held the anchor still
+    /// until then is dropped in the same update, so what is on screen does not change.
+    var scrollCommit: TimelineEditor.ScrollCommit?
     /// Brings this rectangle (content coordinates) into view, with a little margin. Used after a long press so the whole
     /// selected event is visible even if it grew upward past the screen edge.
     var reveal: RevealRequest?
@@ -43,7 +62,7 @@ struct EditGestureHost: UIViewRepresentable {
         private let pan = UIPanGestureRecognizer()
         private weak var scrollView: UIScrollView?
         private var touchDown: CGPoint = .zero
-        private var lastScrollRequest: UUID?
+        private var lastScrollCommit: UUID?
         private var lastReveal: UUID?
 
         override init(frame: CGRect) {
@@ -63,11 +82,13 @@ struct EditGestureHost: UIViewRepresentable {
         @available(*, unavailable) required init?(coder: NSCoder) { fatalError("not used") }
 
         func update(_ configuration: EditGestureHost) {
+            // A commit that was already there when this view came into being was applied (or not needed) before it existed.
+            if self.configuration == nil { lastScrollCommit = configuration.scrollCommit?.id }
             self.configuration = configuration
             pan.isEnabled = configuration.panEnabled         // a disabled recognizer never delays scrolling
-            if let request = configuration.scrollRequest, request.id != lastScrollRequest {
-                lastScrollRequest = request.id
-                scroll(by: request.delta)
+            if let commit = configuration.scrollCommit, commit.id != lastScrollCommit {
+                lastScrollCommit = commit.id
+                scrollView?.contentOffset.y += commit.delta
             }
             if let reveal = configuration.reveal, reveal.id != lastReveal {
                 lastReveal = reveal.id
@@ -90,14 +111,7 @@ struct EditGestureHost: UIViewRepresentable {
                 found.addGestureRecognizer(longPress)
                 found.addGestureRecognizer(pan)
                 scrollView = found
-            }
-        }
-
-        /// Moves the content so what the user is looking at stays put while the axis changes size.
-        private func scroll(by delta: CGFloat) {
-            guard let scrollView else { return }
-            UIView.animate(withDuration: 0.28, delay: 0, options: [.curveEaseInOut, .allowUserInteraction, .beginFromCurrentState]) {
-                scrollView.contentOffset.y += delta
+                configuration?.probe.scrollView = found
             }
         }
 

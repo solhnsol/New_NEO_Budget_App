@@ -106,7 +106,8 @@ struct TimelineEditPlanner {
 
     /// The frame of a previewed range inside the grid, kept inside the selected day. `column`/`columns` come from the
     /// block being edited so a preview stays in its column; a new event uses the whole width.
-    func previewFrame(_ range: TimedRange, column: Int, columns: Int, totalWidth: CGFloat) -> CGRect {
+    func previewFrame(_ range: TimedRange, column: Int, columns: Int, totalWidth: CGFloat, geometry override: TimelineGeometry? = nil) -> CGRect {
+        let geometry = override ?? self.geometry
         let first = max(0, Int((range.startUnixMilliseconds - dayStartUnixMilliseconds) / 60_000))
         let last = min(geometry.totalMinutes, Int((range.endUnixMilliseconds - dayStartUnixMilliseconds + 59_999) / 60_000))
         let available = max(0, totalWidth - geometry.gutterWidth - geometry.markerRailWidth)

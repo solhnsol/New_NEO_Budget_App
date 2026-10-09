@@ -184,3 +184,34 @@ enum DemoPreview {
         }
     }
 }
+
+extension DemoPreview {
+    /// `-demo-preview script-zoom`: plays one handle drag by itself, with real pauses, so a screen recording can be measured
+    /// frame by frame. Enters edit mode on the 24 hour event (use with `-demo-long`), drags its end handle quickly into the
+    /// compressed middle, rests there (the zone moves by itself after 400 ms), nudges by 15 minutes, lets go, and leaves edit mode.
+    @MainActor
+    static func runScript(_ mode: String, on model: AppModel) async {
+        guard mode == "script-zoom", let editor = model.editor else { return }
+        func pause(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+        await model.shift(days: 1)
+        await pause(2.5)
+        guard let timeline = model.timeline, let block = timeline.blocks.first(where: { $0.title == "24시간 일정" }) else { return }
+        _ = editor.enterEditMode(for: block, pressMinute: 12 * 60)
+        await pause(1.0)
+        let geometry = editor.geometry
+        let start = geometry.y(minute: block.endMinute)
+        let target = geometry.y(minute: 13 * 60 + 15)
+        editor.setFingerAnchor(y: start)
+        guard editor.begin(.resizeEnd, block: block, timeline: timeline, geometry: geometry) else { return }
+        for step in 1...8 {
+            editor.update(fingerY: start + (target - start) * CGFloat(step) / 8)
+            await pause(0.03)
+        }
+        await pause(1.2)                                         // rest: the zone opens here by itself
+        editor.update(fingerY: editor.fingerContentY - 24)       // exactly one 15 minute step in the zoomed zone
+        await pause(0.8)
+        editor.finish()
+        await pause(1.5)
+        editor.exitEditMode(anchorMinute: 12 * 60)
+    }
+}

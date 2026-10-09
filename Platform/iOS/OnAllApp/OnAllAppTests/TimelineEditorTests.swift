@@ -345,7 +345,7 @@ private func busyDay() -> [CalendarEvent] {
     return [event("a", "수업", at(9), at(10, 30)), event("b", "회의", at(10), at(11)), event("c", "저녁", at(19), at(20))]
 }
 
-@MainActor @Test func aLongPressEnlargesTheSurroundingsOfTheEventAndSelectsIt() async throws {
+@MainActor @Test func aLongPressSelectsTheEventAndChangesNothingOnScreen() async throws {
     let h = try await Harness.make(events: busyDay())
     let block = try h.block("회의")
     let browse = h.editor.geometry
@@ -354,26 +354,21 @@ private func busyDay() -> [CalendarEvent] {
 
     #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
     #expect(h.editor.isEditing && h.editor.isSelected(block))
-    let editing = h.editor.geometry
-    #expect(h.editor.enlargedZones == [(9 * 60 + 15)...(11 * 60 + 45)])           // only around the two handles
-    #expect(editing.y(minute: 10 * 60 + 15) - editing.y(minute: 10 * 60) >= 24)       // a 15 minute step is easy to hit
-    #expect(editing.contentHeight > browse.contentHeight)
-    #expect(editing.axis.isFolded(minute: 14 * 60))                                     // far away stays folded: the enlargement is local
-    // The press stays under the finger: the scroll request equals how far that minute moved.
-    let request = try #require(h.editor.scrollRequest)
-    #expect(abs(request.delta - (editing.y(minute: 10 * 60 + 20) - browse.y(minute: 10 * 60 + 20))) < 0.001)
+    #expect(h.editor.editAnchors == [10 * 60, 11 * 60])                          // the handles are known...
+    // ...but the axis is exactly what it was: no time, block or handle moves, and the scroll view is not asked to move.
+    #expect(h.editor.geometry == browse)
+    #expect(h.editor.transition == nil && h.editor.scrollRequest == nil && h.editor.scrollCommit == nil)
+    #expect(h.editor.enlargedZones.isEmpty && !h.editor.needsScrollRoom)
 }
 
-@MainActor @Test func leavingEditModeFoldsTheDayBackToExactlyTheBrowseShape() async throws {
+@MainActor @Test func leavingEditModeAlsoChangesNothingOnScreen() async throws {
     let h = try await Harness.make(events: busyDay())
     let browse = h.editor.geometry
     #expect(h.editor.enterEditMode(for: try h.block("회의"), pressMinute: 10 * 60 + 20))
-    let enlarged = h.editor.scrollRequest
-    h.editor.exitEditMode()
+    h.editor.exitEditMode(anchorMinute: 14 * 60)
     #expect(!h.editor.isEditing && h.editor.selectedKey == nil && h.editor.editAnchors == nil)
-    #expect(h.editor.geometry == browse)                                                 // the browse axis was never mutated
-    let back = try #require(h.editor.scrollRequest)
-    #expect(back != enlarged && back.delta < 0)                                          // scrolls back by what was added
+    #expect(h.editor.geometry == browse)
+    #expect(h.editor.transition == nil && h.editor.scrollRequest == nil && h.editor.scrollCommit == nil)
 }
 
 @MainActor @Test func aReadOnlyEventNeverEntersEditMode() async throws {
@@ -413,8 +408,7 @@ private func busyDay() -> [CalendarEvent] {
     #expect(try await h.stored(block.eventKey).time == .timed(range(at(15), at(16))))
     // Still editing the same event, now around 15:00.
     #expect(h.editor.isEditing && h.editor.selectedKey == block.eventKey)
-    let zones = h.editor.enlargedZones
-    #expect(zones.contains { $0.contains(15 * 60) } && zones.contains { $0.contains(16 * 60) } && !zones.contains { $0.contains(10 * 60) })
+    #expect(h.editor.editAnchors == [15 * 60, 16 * 60])                          // the handles follow the event to its new time
     #expect(h.editor.scrollRequest != nil)
 }
 
@@ -450,22 +444,10 @@ private func busyDay() -> [CalendarEvent] {
     #expect(h.editor.enterEditMode(for: block, pressMinute: 19 * 60 + 10))
     await h.provider.editExternally(block.eventKey, update: CalendarEventUpdate(time: .timed(range(at(21), at(22)))))
     await h.editorReload()
-    #expect(h.editor.isEditing && h.editor.enlargedZones.contains { $0.contains(21 * 60) })
+    #expect(h.editor.isEditing && h.editor.editAnchors?.contains(21 * 60) == true)
     await h.provider.removeExternally(block.eventKey)
     await h.editorReload()
     #expect(!h.editor.isEditing && h.editor.selectedKey == nil)
-}
-
-@MainActor @Test func movesReportedWhileTheAxisIsStillSettlingAreIgnoredSoThePreviewDoesNotJump() async throws {
-    let h = try await Harness.make(events: busyDay())
-    let block = try h.block("회의")
-    #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
-    #expect(h.editor.begin(.move, block: block, timeline: h.timeline, geometry: h.editor.geometry))
-    let before = try #require(h.editor.preview)
-    h.editor.setFingerAnchor(y: 0)
-    h.editor.update(fingerY: 5_000)               // the scroll offset is still animating: this reading is not a real drag
-    #expect(h.editor.preview == before)
-    h.editor.cancel()
 }
 
 // MARK: Touch targets
@@ -572,72 +554,57 @@ private func longEvent(_ id: String, _ title: String, from start: Int64, to end:
     CalendarEvent(id: CalendarEventID(rawValue: id), calendarID: writable, title: title, time: .timed(range(start, end)), revisionToken: "r0")
 }
 
-@MainActor @Test func enteringEditModeNeverUnfoldsALongEventAndKeepsTheTouchedSpotStill() async throws {
-    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
-    let block = try h.block("워크숍")
-    let browse = h.editor.geometry
-    #expect(browse.axis.isFolded(minute: 13 * 60))                                // browse folds the middle of an eight hour event
-    // The finger is in the folded middle when the long press fires.
-    #expect(h.editor.enterEditMode(for: block, pressMinute: 13 * 60))
-    let editing = h.editor.geometry
-    #expect(editing.axis.isFolded(minute: 13 * 60))                               // still folded: the day did not unfold
-    #expect(h.editor.enlargedZones.count == 2)                                    // one zone per handle, independent
-    let growth = editing.contentHeight - browse.contentHeight
-    #expect(growth < 400, "grew by \(growth)")                                          // a few hundred points at most, not eight hours (which would be ~770)
-    #expect(editing.y(minute: 17 * 60) - editing.y(minute: 9 * 60) < 640)         // both handles on one screen
-    #expect(editing.y(minute: 9 * 60 + 15) - editing.y(minute: 9 * 60) >= 24 && editing.y(minute: 17 * 60 + 15) - editing.y(minute: 17 * 60) >= 24)
-    // The touched minute keeps its place on screen: the scroll request is how far it moved.
-    let request = try #require(h.editor.scrollRequest)
-    #expect(abs(request.delta - (editing.y(minute: 13 * 60) - browse.y(minute: 13 * 60))) < 0.001)
+@MainActor @Test func enteringEditModeOnAnEventOfAnyLengthMovesNothing() async throws {
+    for shape in zoomShapes() {
+        let startMs = at(0) + Int64(shape.start) * 60_000
+        let endMs = at(0) + Int64(shape.end) * 60_000
+        let h = try await Harness.make(events: [longEvent("e", "일정", from: startMs, to: endMs)])
+        let block = try h.block("일정")
+        let browse = h.editor.geometry
+        let label = Comment(rawValue: shape.name)
+        // Wherever the finger is when the long press fires, including the compressed middle of a long event.
+        #expect(h.editor.enterEditMode(for: block, pressMinute: (shape.start + shape.end) / 2), label)
+        #expect(h.editor.geometry == browse, label)
+        #expect(h.editor.transition == nil && h.editor.scrollCommit == nil && !h.editor.needsScrollRoom, label)
+        // Every minute is drawn exactly where it was.
+        for minute in stride(from: 0, through: 1440, by: 30) {
+            #expect(h.editor.geometry.y(minute: minute) == browse.y(minute: minute), label)
+        }
+    }
 }
 
-@MainActor @Test func aTimeAboveTheEventIsAlsoKeptWhereItWasWhenTheFirstHandleGrows() async throws {
-    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17)), longEvent("a", "아침", from: at(6), to: at(6, 30))])
-    let browse = h.editor.geometry
-    #expect(h.editor.enterEditMode(for: try h.block("워크숍"), pressMinute: 9 * 60 + 20))
-    let editing = h.editor.geometry
-    // Everything above the first enlarged zone is untouched, so it does not move relative to the top of the content.
-    #expect(abs(editing.y(minute: 6 * 60) - browse.y(minute: 6 * 60)) < 0.001)
-    let request = try #require(h.editor.scrollRequest)
-    #expect(abs(request.delta - (editing.y(minute: 9 * 60 + 20) - browse.y(minute: 9 * 60 + 20))) < 0.001)
-}
-
-@MainActor @Test func aFullDayEventKeepsBothHandlesOnOneScreenAndFoldsBackToTheTappedSpot() async throws {
+@MainActor @Test func aFullDayEventHasTwoHandlesAndStepsOfFifteenMinutesAfterTheyRest() async throws {
     let h = try await Harness.make(events: [longEvent("d", "하루", from: at(0), to: at(0) + 86_400_000)])
     let block = try h.block("하루")
     let browse = h.editor.geometry
-    #expect(h.editor.enterEditMode(for: block, pressMinute: 12 * 60))
-    let editing = h.editor.geometry
-    #expect(h.editor.editAnchors == [0, 1440])
-    #expect(h.editor.enlargedZones == [0...45, 1395...1440])
-    #expect(editing.axis.isFolded(minute: 12 * 60))
-    #expect(editing.contentHeight < 400)                                          // the whole day is still under a screen
-    #expect(editing.y(minute: 1440) - editing.y(minute: 0) < 640)
-    // Dragging the end handle by one step moves it exactly 15 minutes, even at the very end of the day.
-    #expect(h.editor.begin(.resizeEnd, block: block, timeline: h.timeline, geometry: editing))
-    h.editor.update(translationY: editing.y(minute: 1440 - 15) - editing.y(minute: 1440))
-    #expect(try #require(h.editor.preview).range == range(at(0), at(0) + 86_400_000 - 15 * 60_000))
+    let y0 = try grabHandle(h, .resizeEnd, block)
+    #expect(h.editor.editAnchors == [0, 1440] && h.editor.geometry == browse)
+    // Held still on the end handle: the zone opens at the day's end and the handle does not move on screen.
+    h.editor.zoomAtFinger()
+    #expect(h.editor.dwellCenter == 1440)
+    let delta = try #require(h.editor.scrollRequest).delta
+    h.editor.endSettling()
+    #expect(try previewEnd(h.editor) == at(0) + 86_400_000)
+    h.editor.update(fingerY: y0 + delta - 24)
+    #expect(try previewEnd(h.editor) == at(0) + 86_400_000 - 15 * 60_000)
     h.editor.cancel()
-    // A tap outside leaves edit mode and keeps the tapped spot where it was.
+    // Releasing folds the zone away and a tap outside has nothing left to undo.
+    h.editor.completeTransition()
+    #expect(h.editor.geometry == browse)
     h.editor.exitEditMode(anchorMinute: 12 * 60)
     #expect(h.editor.geometry == browse)
-    let back = try #require(h.editor.scrollRequest)
-    #expect(abs(back.delta - (browse.y(minute: 12 * 60) - editing.y(minute: 12 * 60))) < 0.001)
 }
 
-@MainActor @Test func anEventThatContinuesBothWaysHasNoHandlesSoThePressedMinuteIsEnlarged() async throws {
+@MainActor @Test func anEventThatContinuesBothWaysHasNoHandlesSoNothingIsEnlarged() async throws {
     let h = try await Harness.make(events: [longEvent("s", "합숙", from: at(20) - 86_400_000, to: at(10) + 86_400_000)])
     let block = try h.block("합숙")
+    let browse = h.editor.geometry
     #expect(block.continuesFromPreviousDay && block.continuesToNextDay)
     #expect(h.editor.enterEditMode(for: block, pressMinute: 14 * 60))
-    #expect(h.editor.editAnchors == [14 * 60])
-    #expect(h.editor.enlargedZones.count == 1 && h.editor.enlargedZones[0].contains(14 * 60))
-    // It can still be moved in exact steps where the finger is.
-    let editing = h.editor.geometry
-    #expect(editing.y(minute: 14 * 60 + 15) - editing.y(minute: 14 * 60) >= 24)
+    #expect(h.editor.editAnchors == [14 * 60] && h.editor.geometry == browse && h.editor.enlargedZones.isEmpty)
 }
 
-@MainActor @Test func cancellingADragKeepsEditModeAndTheEnlargedZones() async throws {
+@MainActor @Test func cancellingADragKeepsEditModeAndTheSelection() async throws {
     let h = try await Harness.make(events: busyDay())
     let block = try h.block("회의")
     #expect(h.editor.enterEditMode(for: block, pressMinute: 10 * 60 + 20))
@@ -1033,13 +1000,14 @@ private func zoomShapes() -> [EventShape] {
     _ = try grabHandle(h, .resizeEnd, block)
     let geometry = h.editor.geometry
     let y = geometry.y(minute: 13 * 60)
-    h.editor.update(fingerY: y)
-    #expect(h.editor.dwellArmCount == 1)
+    #expect(h.editor.dwellArmCount == 1)                                               // holding the handle still already starts the wait
+    h.editor.update(fingerY: y)                                                        // moved a long way: wait again
+    #expect(h.editor.dwellArmCount == 2)
     h.editor.update(fingerY: y + 1.5)                                                  // tremor: still resting
     h.editor.update(fingerY: y - 2)
-    #expect(h.editor.dwellArmCount == 1)
+    #expect(h.editor.dwellArmCount == 2)
     h.editor.update(fingerY: y + 30)                                                   // a real move: wait again
-    #expect(h.editor.dwellArmCount == 2 && h.editor.dwellCenter == nil)
+    #expect(h.editor.dwellArmCount == 3 && h.editor.dwellCenter == nil)
     h.editor.cancel()                                                                  // cancels the pending wait
     #expect(h.editor.dwellCenter == nil)
 }
@@ -1068,4 +1036,128 @@ private func zoomShapes() -> [EventShape] {
     await h.editor.waitUntilSettled()
     try await Task.sleep(for: .milliseconds(150))
     #expect(h.editor.dwellCenter == nil)
+}
+
+// MARK: Changes of shape while a handle is dragged
+
+@MainActor @Test func aZoomIsOneTransitionThatEndsWithOneScrollAndNeverMovesTheAnchorOnScreen() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    _ = try grabHandle(h, .resizeEnd, block)
+    let fast = h.editor.geometry
+    h.editor.update(fingerY: fast.y(minute: 13 * 60))
+    #expect(h.editor.transition == nil && h.editor.scrollCommit == nil)
+    h.editor.zoomAtFinger()
+    let transition = try #require(h.editor.transition)
+    #expect(transition.from == fast.axis && transition.to == h.editor.geometry.axis)
+    #expect(h.editor.needsScrollRoom && h.editor.scrollCommit == nil)               // not yet: it is still being drawn
+    // Every frame of it holds the anchor still; the scroll view has not moved.
+    for step in 0...10 {
+        let progress = CGFloat(step) / 10
+        let frame = TimelineGeometry(from: transition.from, to: transition.to, progress: progress)
+        #expect(abs((frame.y(minute: 13 * 60) - transition.delta * progress) - fast.y(minute: 13 * 60)) < 0.0001)
+    }
+    // A finished report for some other transition does nothing; the right one ends it with exactly one scroll.
+    h.editor.completeTransition(id: UUID())
+    #expect(h.editor.transition != nil && h.editor.scrollCommit == nil)
+    h.editor.completeTransition(id: transition.id)
+    #expect(h.editor.transition == nil)
+    let commit = try #require(h.editor.scrollCommit)
+    #expect(commit.delta == transition.delta)
+    h.editor.completeTransition(id: transition.id)                                    // already done: no second scroll
+    #expect(h.editor.scrollCommit == commit)
+    h.editor.cancel()
+}
+
+@MainActor @Test func aNewChangeFinishesTheOneStillRunningFirstSoNoShiftIsLost() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    _ = try grabHandle(h, .resizeEnd, block)
+    var geometry = h.editor.geometry
+    h.editor.update(fingerY: geometry.y(minute: 14 * 60))
+    h.editor.zoomAtFinger()
+    let first = try #require(h.editor.transition)
+    h.editor.endSettling()
+    geometry = h.editor.geometry
+    h.editor.update(fingerY: geometry.y(minute: 11 * 60))
+    h.editor.zoomAtFinger()                                                           // moves the zone while the first is "running"
+    let second = try #require(h.editor.transition)
+    #expect(second.id != first.id && second.from == first.to)                         // continues from where the first was going
+    #expect(h.editor.scrollCommit?.delta == first.delta)                              // the first one's scroll was not dropped
+    h.editor.cancel()
+}
+
+@MainActor @Test func releasingAfterAZoomFoldsItAwayWithOneTransitionAnchoredWhereTheFingerWas() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    _ = try grabHandle(h, .resizeEnd, block)
+    let fast = h.editor.geometry
+    h.editor.update(fingerY: fast.y(minute: 13 * 60))
+    h.editor.zoomAtFinger()
+    h.editor.completeTransition()
+    let zoomed = h.editor.geometry
+    h.editor.cancel()
+    let release = try #require(h.editor.transition)
+    #expect(release.from == zoomed.axis && release.to == fast.axis)
+    // Released: the minute the finger was on keeps its screen position through the whole fold-away.
+    for step in 0...10 {
+        let progress = CGFloat(step) / 10
+        let frame = TimelineGeometry(from: release.from, to: release.to, progress: progress)
+        #expect(abs((frame.y(minute: 13 * 60) - release.delta * progress) - zoomed.y(minute: 13 * 60)) < 0.0001)
+    }
+    h.editor.completeTransition(id: release.id)
+    #expect(!h.editor.needsScrollRoom && h.editor.geometry == fast)
+}
+
+@MainActor @Test func theScrollRoomIsOnlyHeldWhileAZoneOrADragNeedsIt() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    #expect(!h.editor.needsScrollRoom)
+    #expect(h.editor.enterEditMode(for: block, pressMinute: 13 * 60))
+    #expect(!h.editor.needsScrollRoom)                                                // merely selecting adds and moves nothing
+    _ = try grabHandle(h, .resizeEnd, block)
+    #expect(h.editor.needsScrollRoom)                                                 // a drag may open a zone under the finger
+    h.editor.cancel()
+    h.editor.completeTransition()
+    #expect(!h.editor.needsScrollRoom)
+}
+
+// MARK: The clock drives a change of shape
+
+@MainActor @Test func aChangesProgressComesFromTheClockAloneAndIsEased() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    _ = try grabHandle(h, .resizeEnd, block)
+    h.editor.update(fingerY: h.editor.geometry.y(minute: 13 * 60))
+    h.editor.zoomAtFinger()
+    let transition = try #require(h.editor.transition)
+    let start = transition.startedAt
+    func progress(_ seconds: TimeInterval) -> CGFloat { transition.progress(at: start.addingTimeInterval(seconds)) }
+    #expect(progress(-1) == 0 && progress(0) == 0)                                    // not started: the old shape
+    #expect(progress(TimelineEditor.AxisTransition.duration) == 1 && progress(10) == 1)   // over: the new shape, and it stays
+    #expect(abs(progress(TimelineEditor.AxisTransition.duration / 2) - 0.5) < 0.0001)
+    var previous: CGFloat = -1
+    for step in 0...100 {
+        let value = progress(TimelineEditor.AxisTransition.duration * Double(step) / 100)
+        #expect(value >= previous && value >= 0 && value <= 1)                          // never backwards, never outside 0...1
+        previous = value
+    }
+    // Slow at both ends (eased): the first tenth of the time covers far less than a tenth of the distance.
+    #expect(progress(TimelineEditor.AxisTransition.duration * 0.1) < 0.05)
+    h.editor.cancel()
+}
+
+@MainActor @Test func aChangeThatReplacesAnotherStartsFromNothingRatherThanBlendingWithIt() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    _ = try grabHandle(h, .resizeEnd, block)
+    h.editor.update(fingerY: h.editor.geometry.y(minute: 13 * 60))
+    h.editor.zoomAtFinger()
+    let first = try #require(h.editor.transition)
+    h.editor.cancel()                                                                  // the finger lifts at once: a second change replaces the first
+    let second = try #require(h.editor.transition)
+    #expect(second.id != first.id && second.startedAt >= first.startedAt)
+    // The second one's progress depends only on its own start, whatever the first was doing.
+    #expect(second.progress(at: second.startedAt) == 0)
+    #expect(h.editor.scrollCommit?.delta == first.delta)                               // and the first one's shift was handed over, not lost
 }
