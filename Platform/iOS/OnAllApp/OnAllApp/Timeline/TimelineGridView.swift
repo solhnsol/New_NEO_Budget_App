@@ -287,16 +287,16 @@ struct TimelineGridView: View {
         return ZStack(alignment: .topLeading) {
             ForEach(plan.events, id: \.block.id) { item in
                 if editor.isExpanded(item.block) { QuarterMarks(block: item.block, geometry: geometry, timeline: timeline, zone: zone) }
-                BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo)
+                BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.map(\.frame) + plan.overflows.map(\.frame))
             }
             // Titles are drawn over every card, so a card stacked on another never hides the title under it.
             ForEach(plan.events.filter { !editor.isExpanded($0.block) }, id: \.block.id) { item in
                 if let header = item.header {
-                    EventHeaderView(block: item.block, rect: header)
+                    EventHeaderView(block: item.block, rect: header, zoneIdentifier: timeline.timeZoneIdentifier)
                 } else if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
-                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale
+                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, zoneIdentifier: timeline.timeZoneIdentifier
                     )
                 }
             }
@@ -599,6 +599,8 @@ private struct BlockCell: View {
     let editor: TimelineEditor
     let scale: CGFloat
     let onEditInfo: (EventBlock) -> Void
+    /// Transaction lines and overflow cards drawn over the day: an end time under one of them is left out.
+    var overlays: [CGRect] = []
 
     var body: some View {
         let block = item.block
@@ -612,7 +614,8 @@ private struct BlockCell: View {
             } else {
                 EventBlockView(
                     block: block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
-                    shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil
+                    shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
+                    endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) }
                 )
                 .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
                 .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }

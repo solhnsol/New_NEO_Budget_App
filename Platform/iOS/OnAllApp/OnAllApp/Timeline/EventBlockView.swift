@@ -103,6 +103,7 @@ struct EventTitleLayer: View {
     var shownRows = 0
     var hiddenRows = 0
     var scale: CGFloat = 1
+    var zoneIdentifier = ""
 
     var body: some View {
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
@@ -112,6 +113,10 @@ struct EventTitleLayer: View {
             if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
             Spacer(minLength: 2)
             if shownRows == 0, hiddenRows > 0, let total { SummaryChip(count: hiddenRows, total: total) }
+            // The start, in the top right corner; a title that has been moved aside leaves it out rather than crowd the line.
+            if !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
+                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier))
+            }
         }
         .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
         .frame(width: max(0, place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
@@ -135,6 +140,8 @@ struct EventBlockView: View {
     var scale: CGFloat = 1
     /// The title is in a header above the card: the card's own top edge is then drawn firmly, as the real start.
     var hasHeader = false
+    var zoneIdentifier = ""
+    var endIsCovered = false
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -155,6 +162,15 @@ struct EventBlockView: View {
         .background(color.opacity(missing ? 0.08 : 0.22), in: RoundedRectangle(cornerRadius: 6))
         .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 6))
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 2)) }
+        .overlay(alignment: .bottomTrailing) {
+            // The end, in the bottom right corner, when the rows above leave the room.
+            let rowsUsed = CGFloat(shownRows + (hiddenRows > 0 && shownRows > 0 ? 1 : 0)) * InlineAllocationPlan.rowHeight * scale
+            let used = (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + rowsUsed + 6
+            if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
+                CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
+                    .padding(.horizontal, 6).padding(.bottom, 2)
+            }
+        }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
         .opacity(missing ? 0.7 : 1)
@@ -221,5 +237,15 @@ fileprivate struct SummaryChip: View {
         }
         .font(.system(size: 9).weight(.semibold))
         .foregroundStyle(Color.orange)
+    }
+}
+
+/// A start or end time on an event's corner: small, quiet, never the thing that wraps.
+struct CornerTime: View {
+    let text: String
+    var scale: CGFloat = 1
+
+    var body: some View {
+        Text(text).font(.system(size: 10 * scale)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize()
     }
 }

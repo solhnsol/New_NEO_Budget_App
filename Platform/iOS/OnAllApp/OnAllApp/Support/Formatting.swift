@@ -53,6 +53,23 @@ enum Formatting {
         return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
     }
 
+    @MainActor private static var clockFormatters: [String: DateFormatter] = [:]
+
+    /// "9:30" (24-hour): the short form drawn on an event's corners, where room is tight.
+    @MainActor static func shortClock(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
+        let formatter: DateFormatter
+        if let known = clockFormatters[zoneIdentifier] {
+            formatter = known
+        } else {
+            formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(identifier: zoneIdentifier)
+            formatter.dateFormat = "H:mm"
+            clockFormatters[zoneIdentifier] = formatter
+        }
+        return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+    }
+
     /// "10/7": the date of something that happened on another day.
     static func shortDate(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
         let formatter = DateFormatter()

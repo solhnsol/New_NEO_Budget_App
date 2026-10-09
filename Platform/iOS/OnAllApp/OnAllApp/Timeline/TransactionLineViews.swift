@@ -120,6 +120,7 @@ struct OverflowCardView: View {
 struct EventHeaderView: View {
     let block: EventBlock
     let rect: CGRect
+    var zoneIdentifier = ""
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -128,6 +129,7 @@ struct EventHeaderView: View {
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
             if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
             Spacer(minLength: 2)
+            if !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty { CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier)) }
         }
         .padding(.horizontal, 6)
         .frame(width: rect.width, height: rect.height, alignment: .leading)
