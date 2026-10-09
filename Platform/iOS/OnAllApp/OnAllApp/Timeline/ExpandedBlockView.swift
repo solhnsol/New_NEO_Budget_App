@@ -56,6 +56,8 @@ enum ExpandedBlockPlan {
 struct ExpandedBlockView: View {
     let block: EventBlock
     let zoneIdentifier: String
+    /// Opens the event's info sheet (type, place, people, transactions).
+    var onEditInfo: (() -> Void)?
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -66,6 +68,11 @@ struct ExpandedBlockView: View {
                 if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 10)) }
                 if !block.isEditable { Image(systemName: "lock.fill").font(.system(size: 10)).foregroundStyle(.secondary) }
                 Spacer(minLength: 4)
+                if let onEditInfo {
+                    Button(action: onEditInfo) { Label("정보", systemImage: "square.and.pencil").font(.system(size: 11, weight: .semibold)) }
+                        .buttonStyle(.bordered).controlSize(.mini)
+                        .accessibilityLabel("활동 정보 편집")
+                }
                 Image(systemName: "chevron.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
             }
             .frame(height: ExpandedBlockPlan.titleHeight)

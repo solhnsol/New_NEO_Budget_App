@@ -157,6 +157,18 @@ public struct AssignActivityTypeInput: Hashable, Sendable {
     }
 }
 
+public struct AssignActivityAreaInput: Hashable, Sendable {
+    public let target: ActivityTarget
+    /// `nil` clears the area.
+    public let areaID: AreaID?
+    public let provenance: AssignmentProvenance
+    public init(target: ActivityTarget, areaID: AreaID?, provenance: AssignmentProvenance) {
+        self.target = target
+        self.areaID = areaID
+        self.provenance = provenance
+    }
+}
+
 public struct AssignTagInput: Hashable, Sendable {
     public let tagID: TagID
     public let target: TaggableTarget
@@ -481,6 +493,9 @@ public enum CalendarCommand: Hashable, Sendable {
     case linkTransaction(LinkTransactionInput)
     case unlinkTransaction(UnlinkTransactionInput)
     case assignActivityType(AssignActivityTypeInput)
+    case assignActivityArea(AssignActivityAreaInput)
+    /// Adds a place (or renames one) so it can be chosen for an activity.
+    case upsertArea(Area)
     case assignTag(AssignTagInput)
     case unassignTag(AssignTagInput)
 

@@ -23,6 +23,8 @@ final class AppModel {
     private(set) var timeline: DayTimeline?
     private(set) var week: [WeekStripDay] = []
     private(set) var calendars: [CalendarDescriptor] = []
+    /// What an event's info sheet can choose from (types, places, people).
+    private(set) var catalog = ActivityCatalog()
     /// Created once the command service exists (after the first successful start). Gestures go through it.
     private(set) var editor: TimelineEditor?
 
@@ -172,6 +174,7 @@ final class AppModel {
             editor?.timelineDidChange(loadedTimeline)
             week = loadedWeek
             calendars = loadedCalendars
+            if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == generation else { return }
@@ -181,6 +184,18 @@ final class AppModel {
             phase = .failed("일정과 거래를 불러오지 못했습니다.")
         }
     }
+
+    /// Runs one edit of an event's meaning (type, place, people, linked transactions) and shows the result. The day is reloaded
+    /// either way, so what is on screen is what is stored.
+    @discardableResult
+    func perform(_ command: CalendarCommand) async -> CalendarCommandOutcome? {
+        guard let service else { return nil }
+        let outcome = await service.perform(command)
+        await reload()
+        return outcome
+    }
+
+    var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
     private func observeChanges() {
         guard observer == nil else { return }

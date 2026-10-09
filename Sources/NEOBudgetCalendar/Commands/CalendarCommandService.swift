@@ -173,6 +173,8 @@ public actor CalendarCommandService {
         case let .linkTransaction(input): return await linkTransaction(input)
         case let .unlinkTransaction(input): return unlinkTransaction(input)
         case let .assignActivityType(input): return await assignActivityType(input)
+        case let .assignActivityArea(input): return await assignActivityArea(input)
+        case let .upsertArea(area): return applyLocal([.upsertArea(area)], activityID: nil)
         case let .assignTag(input): return await assignTag(input, remove: false)
         case let .unassignTag(input): return await assignTag(input, remove: true)
         case let .setAllocations(input): return await setAllocations(input)
@@ -467,6 +469,24 @@ public actor CalendarCommandService {
         }
         return applyLocal(
             resolved.creation + [.setActivityType(resolved.id, Assigned(typeID, provenance: input.provenance))],
+            activityID: resolved.id
+        )
+    }
+
+    private func assignActivityArea(_ input: AssignActivityAreaInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let areaID = input.areaID else {
+            // Clearing never creates an Activity just to clear nothing.
+            guard let resolved = await existingActivity(input.target) else { return .applied(AppliedCommand()) }
+            return applyLocal([.clearActivityArea(resolved, by: input.provenance)], activityID: resolved)
+        }
+        let resolved: ResolvedActivity
+        switch await resolveActivity(input.target) {
+        case let .success(value): resolved = value
+        case let .failure(outcome): return outcome
+        }
+        return applyLocal(
+            resolved.creation + [.setActivityArea(resolved.id, Assigned(areaID, provenance: input.provenance))],
             activityID: resolved.id
         )
     }

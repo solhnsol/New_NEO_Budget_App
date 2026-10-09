@@ -6,6 +6,7 @@ struct DayTimelineScreen: View {
     let model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: TimelineSelection?
+    @State private var infoEvent: CalendarEventKey?
 
     var body: some View {
         NavigationStack {
@@ -57,7 +58,7 @@ struct DayTimelineScreen: View {
                 Divider()
             }
             if let editor = model.editor {
-                TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: editor) { selection = $0 }
+                TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: editor, onSelect: { selection = $0 }, onEditInfo: { infoEvent = $0.eventKey })
                     .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
             Divider()
@@ -67,6 +68,7 @@ struct DayTimelineScreen: View {
             EventDetailView(selection: item, zoneIdentifier: timeline.timeZoneIdentifier)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: timeline.timeZoneIdentifier))
     }
 

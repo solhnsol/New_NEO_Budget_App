@@ -276,3 +276,25 @@ private func lifeWithTags() throws -> LifeState {
     #expect(todayCell.unlinkedTransactionCount == 3)                       // dinner, taxi, ktx happened today
     #expect(todayCell.netSpend == [won(42_000 + 13_200 + 59_800)])
 }
+
+// MARK: Activity area
+
+@Test func assigningAnAreaToAnEventCreatesItsActivityOnDemandAndClearingNeverDoes() async throws {
+    let h = harness()
+    let area = Area(id: AreaID(rawValue: "area-test"), displayName: "테스트 동네")
+    let clear = AssignActivityAreaInput(target: .event(dateKey), areaID: nil, provenance: userProvenance())
+    guard case .applied = await h.service.perform(.assignActivityArea(clear)) else { Issue.record("expected applied"); return }
+    do { let life = await h.life(); #expect(life.activities.isEmpty) }
+
+    #expect(await h.service.perform(.assignActivityArea(AssignActivityAreaInput(target: .event(dateKey), areaID: area.id, provenance: userProvenance())))
+        == .rejected(.lifeValidation(.unknownArea(area.id))))
+    guard case .applied = await h.service.perform(.upsertArea(area)) else { Issue.record("expected applied"); return }
+    let outcome = await h.service.perform(.assignActivityArea(AssignActivityAreaInput(target: .event(dateKey), areaID: area.id, provenance: userProvenance())))
+    let id = try #require(activityID(of: outcome))
+    do { let life = await h.life(); #expect(life.activities[id]?.area?.value == area.id) }
+    let timeline = try await h.service.dayTimeline(for: today)
+    #expect(timeline.blocks.first { $0.title == "데이트" }?.activity?.display.areaName == "테스트 동네")
+
+    _ = await h.service.perform(.assignActivityArea(clear))
+    do { let life = await h.life(); #expect(life.activities[id]?.area == nil) }
+}

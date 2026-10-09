@@ -41,6 +41,7 @@ struct TimelineGridView: View {
     let isToday: Bool
     let editor: TimelineEditor
     let onSelect: (TimelineSelection) -> Void
+    var onEditInfo: (EventBlock) -> Void = { _ in }
     @State private var reveal: EditGestureHost.RevealRequest?
 
     private static let transition = Animation.easeInOut(duration: 0.28)
@@ -112,7 +113,7 @@ struct TimelineGridView: View {
                 ForEach(drawOrder, id: \.id) { block in
                     let frame = frames[block.id] ?? .zero
                     if editor.isExpanded(block) { QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone) }
-                    BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                    BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onEditInfo: onEditInfo)
                 }
                 // Titles are drawn over every card, so a card stacked on another never hides the title under it.
                 ForEach(drawOrder.filter { !editor.isExpanded($0) }, id: \.id) { block in
@@ -355,13 +356,14 @@ private struct BlockCell: View {
     let title: DayContentLayout.TitlePlacement
     let zoneIdentifier: String
     let editor: TimelineEditor
+    let onEditInfo: (EventBlock) -> Void
 
     var body: some View {
         let selected = editor.isSelected(block)
         let expanded = editor.isExpanded(block)
         Group {
             if expanded {
-                ExpandedBlockView(block: block, zoneIdentifier: zoneIdentifier)
+                ExpandedBlockView(block: block, zoneIdentifier: zoneIdentifier, onEditInfo: { onEditInfo(block) })
             } else {
                 EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height, titleOffset: title.dy)
                     .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
