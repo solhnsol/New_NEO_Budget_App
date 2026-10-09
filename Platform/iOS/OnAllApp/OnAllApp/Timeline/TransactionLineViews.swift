@@ -21,19 +21,14 @@ enum AmountKindNames {
 private struct Leader: View {
     var dashed = false
     var hollow = false
-    /// How far the line runs on after the dot: out of the day's edge to where the text starts.
-    var length: CGFloat = 10
+    var length: CGFloat = 0
     let scale: CGFloat
 
     var body: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: 3, height: 1)
-            Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: hollow ? 1 : 0).background(Circle().fill(hollow ? Color.clear : Color.secondary.opacity(0.8)))
-                .frame(width: 5 * scale, height: 5 * scale)
-            Path { path in path.move(to: .zero); path.addLine(to: CGPoint(x: length, y: 0)) }
-                .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 0.75, dash: dashed ? [2, 2] : []))
-                .frame(width: length, height: 1)
-        }
+        // The dot sits on the day's edge and the text starts at the same x as an event's own text, so there is no margin before it.
+        Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: hollow || dashed ? 1 : 0)
+            .background(Circle().fill(hollow || dashed ? Color.clear : Color.secondary.opacity(0.8)))
+            .frame(width: 4 * scale, height: 4 * scale)
     }
 }
 
@@ -50,11 +45,11 @@ struct TransactionLineView: View {
     var body: some View {
         let display = item.display
         let refund = display?.flow == .refund
-        HStack(spacing: 4) {
-            Leader(dashed: item.link != nil || (display?.isApproximate ?? false), length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
+        HStack(spacing: 2) {
+            Leader(dashed: display?.isApproximate ?? false, scale: scale)
             // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
             let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
-            let nameRoom = item.frame.width - 8 * scale - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
+            let nameRoom = item.frame.width - 6 - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
             if nameRoom >= 30 * scale {
                 if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary) }
                 Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
@@ -98,8 +93,8 @@ struct OverflowCardView: View {
     var overEvent = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Leader(hollow: true, length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
+        HStack(spacing: 2) {
+            Leader(scale: scale)
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()

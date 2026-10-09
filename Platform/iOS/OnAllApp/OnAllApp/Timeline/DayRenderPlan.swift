@@ -224,7 +224,15 @@ struct DayRenderPlan {
             if let previousCenter { center = max(center, previousCenter + (previousHeight + unit.height) / 2 + gap) }
             previousCenter = center
             previousHeight = unit.height
-            let frame = CGRect(x: lineX, y: center - unit.height / 2, width: lineWidth, height: unit.height)
+            // A row writes from the day's left edge, like the text of an event, unless the title of an event is on its row: then it keeps to
+            // the right part the engine left it, so the two never print over one another.
+            var frame = CGRect(x: lineX, y: center - unit.height / 2, width: lineWidth, height: unit.height)
+            let rowText = frame.insetBy(dx: 0, dy: 4 * scale)
+            let titleRows = eventItems.filter { $0.header == nil && $0.showsTitleInCard }.map { CGRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: (EventTitleLayer.rowHeight + 2) * scale) }
+                + eventItems.compactMap(\.header) + summaries.map(\.frame)
+            if !titleRows.contains(where: { $0.intersects(rowText) }) {
+                frame = CGRect(x: contentLeft, y: frame.minY, width: frame.maxX - contentLeft, height: frame.height)
+            }
             let missing = max(0, parameters.minimumTouchHeight - unit.height)
             let touch = frame.insetBy(dx: 0, dy: -missing / 2)
             if unit.kind == 0 {

@@ -98,6 +98,7 @@ struct EventTitleLayer: View {
     /// Where the day's column ends, in the same coordinates as `frame`: the farthest a title that had to move may run.
     var columnRight: CGFloat = 0
     static let horizontalPadding: CGFloat = 6
+    static let rowHeight: CGFloat = InlineAllocationPlan.titleHeight + 3
 
     /// Linked transactions of the card that are shown / summed up, so a card too short for rows still says how many there are.
     var shownRows = 0
