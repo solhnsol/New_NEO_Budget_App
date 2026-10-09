@@ -11,6 +11,10 @@ struct DayTimelineScreen: View {
     @State private var swipeOffset: CGFloat = 0
     /// Where a swipe in progress would land (-1, 0, +1 days), for the week strip, which changes at that moment and not with the finger.
     @State private var pendingDays = 0
+    @State private var screenWidth: CGFloat = 0
+    /// The timeline's opacity while a far jump swaps the days under a quick cross-fade.
+    @State private var gridOpacity: CGFloat = 1
+    @State private var isChangingDay = false
 
     var body: some View {
         NavigationStack {
@@ -52,11 +56,44 @@ struct DayTimelineScreen: View {
         }
     }
 
+    /// Goes to another day picked from the strip or the header, with the motion the system calendar has. The week strip answers at once (its
+    /// circle and capsule); the next day slides in just as it does for a swipe; a day further away is a quick cross-fade instead of a
+    /// run through the days in between.
+    private func goTo(_ day: LocalDate) async {
+        let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
+        guard delta != 0, !isChangingDay else { return }
+        isChangingDay = true
+        defer { isChangingDay = false }
+        let column = (screenWidth - 60) / 2
+        pendingDays = delta
+        var noAnimation = Transaction()
+        noAnimation.disablesAnimations = true
+        if abs(delta) == 1, column > 0 {
+            withAnimation(.easeOut(duration: 0.22)) { swipeOffset = -CGFloat(delta) * column }
+            try? await Task.sleep(for: .seconds(0.24))
+            withTransaction(noAnimation) {
+                _ = model.moveTo(day)
+                swipeOffset = 0
+                pendingDays = 0
+            }
+            await model.reload()
+        } else {
+            withAnimation(.easeOut(duration: 0.12)) { gridOpacity = 0 }
+            try? await Task.sleep(for: .seconds(0.13))
+            withTransaction(noAnimation) {
+                _ = model.moveTo(day)
+                pendingDays = 0
+            }
+            await model.reload()
+            withAnimation(.easeOut(duration: 0.2)) { gridOpacity = 1 }
+        }
+    }
+
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         return VStack(spacing: 0) {
-            DayHeader(model: model)
-            WeekStripView(week: model.week, selected: model.selectedDay, today: model.today, pendingShift: pendingDays) { day in Task { await model.select(day) } }
+            DayHeader(model: model) { day in Task { await goTo(day) } }
+            WeekStripView(week: model.week, selected: model.selectedDay, today: model.today, pendingShift: pendingDays) { day in Task { await goTo(day) } }
             Divider()
             if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
@@ -70,10 +107,16 @@ struct DayTimelineScreen: View {
                     swipeOffset: $swipeOffset,
                     pendingDays: $pendingDays
                 )
+                .opacity(gridOpacity)
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
             Divider()
             SummaryBar(timelines: timelines)
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.onAppear { screenWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in screenWidth = width }
+            }
         }
         .sheet(item: $selection) { item in
             EventDetailView(selection: item, zoneIdentifier: zoneIdentifier)
@@ -110,16 +153,17 @@ private struct StatusView: View {
 
 private struct DayHeader: View {
     let model: AppModel
+    let goTo: (LocalDate) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
             Text(Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
             Spacer()
-            Button("오늘") { Task { await model.goToday() } }
+            Button("오늘") { goTo(model.today) }
                 .buttonStyle(.bordered).disabled(model.isToday)
-            Button { Task { await model.shift(days: -1) } } label: { Image(systemName: "chevron.left") }
+            Button { goTo(model.selectedDay.adding(days: -1)) } label: { Image(systemName: "chevron.left") }
                 .accessibilityLabel("이전 날")
-            Button { Task { await model.shift(days: 1) } } label: { Image(systemName: "chevron.right") }
+            Button { goTo(model.selectedDay.adding(days: 1)) } label: { Image(systemName: "chevron.right") }
                 .accessibilityLabel("다음 날")
         }
         .padding(.horizontal, 16)
