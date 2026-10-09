@@ -199,12 +199,18 @@ enum DemoLinks {
         ("txn-a1", 4_500, "cafe"), ("txn-over", 9_800, "transport"), ("txn-b1", 12_000, "food"), ("txn-b2", 3_000, "cafe"),
         ("txn-ext", 3_500, "shopping"), ("txn-late", 7_700, "food"),
     ]
+    /// The usual demo day: its spending, classified the same way.
+    private static let usualCategories: [(raw: String, won: Int64, category: String)] = [
+        ("sample-restaurant", 12_000, "food"), ("sample-dessert", 3_000, "cafe"), ("sample-parking", 2_000, "transport"),
+        ("sample-snack", 3_200, "food"), ("sample-cafe", 4_800, "cafe"), ("sample-convenience", 3_500, "shopping"),
+        ("sample-delivery", 6_200, "food"),
+    ]
 
     private static func classify(service: CalendarCommandService) async {
         let args = ProcessInfo.processInfo.arguments
-        guard args.contains("-demo-txn") || args.contains("-demo-txn-lite") else { return }
+        let table = args.contains("-demo-txn") || args.contains("-demo-txn-lite") ? categories : usualCategories
         let provenance = AssignmentProvenance.user(at: 1, evidenceVersion: nil)
-        for item in categories {
+        for item in table {
             let transaction = SampleLedger.entryID(for: item.raw)
             let before = try? await service.lifeSnapshot().state
             if before?.allocationSet(for: transaction) == nil {

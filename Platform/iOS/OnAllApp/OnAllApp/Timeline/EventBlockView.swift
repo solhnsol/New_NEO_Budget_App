@@ -158,6 +158,8 @@ struct EventBlockView: View {
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
+    /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
+    var anchors: [CGFloat] = []
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -170,8 +172,11 @@ struct EventBlockView: View {
         VStack(alignment: .leading, spacing: 1) {
             // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
             Color.clear.frame(height: hasHeader ? 2 : (InlineAllocationPlan.titleHeight * scale + titleOffset))
-            ForEach(Array(rows.prefix(shownRows)), id: \.allocationID) { item in
-                AllocationRow(item: item, scale: scale)
+            ForEach(Array(rows.prefix(shownRows).enumerated()), id: \.element.allocationID) { index, item in
+                // The row's own middle, from the card's top, as the stack below lays it out.
+                let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
+                let middle = 3 + (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + CGFloat(index) * (rowHeight + 1) + rowHeight / 2
+                AllocationRow(item: item, scale: scale, anchorDy: anchors.indices.contains(index) ? anchors[index] - middle : nil)
             }
             if hiddenRows > 0 && shownRows > 0 {
                 MoreRow(label: "그 외 \(hiddenRows)건", total: nil, color: .secondary, scale: scale)
@@ -219,9 +224,16 @@ struct EventBlockView: View {
 private struct AllocationRow: View {
     let item: AllocationItem
     var scale: CGFloat = 1
+    /// How far from this row's middle the transaction really happened (up or down); `nil` when unknown.
+    var anchorDy: CGFloat?
 
     var body: some View {
-        HStack(spacing: 6) {
+        // Written like the rows outside events: a line out of the timeline at the moment it happened, bending to this row, then the
+        // category icon (if classified), the name and the amount.
+        HStack(spacing: 0) {
+            Color.clear.frame(width: (LeaderLayout.lineEnd - 6) * scale)
+            CategoryMark(category: item.categoryID, scale: scale)
+            Color.clear.frame(width: LeaderLayout.textGap * scale)
             Text(item.title ?? "거래").lineLimit(1)
             Spacer(minLength: 2)
             Text((item.flow == .refund ? "−" : "") + Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency))
@@ -230,6 +242,9 @@ private struct AllocationRow: View {
         .font(.system(size: 10 * scale))
         .foregroundStyle(item.flow == .refund ? Color.green : Color.primary)          // a transaction keeps full contrast
         .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
+        .overlay(alignment: .topLeading) {
+            LeaderMark(originX: -6, dy: anchorDy ?? 0, height: (InlineAllocationPlan.rowHeight - 2) * scale, scale: scale)
+        }
     }
 }
 
@@ -242,6 +257,7 @@ private struct MoreRow: View {
 
     var body: some View {
         HStack(spacing: 3) {
+            Color.clear.frame(width: (LeaderLayout.lineEnd - 6 + LeaderLayout.iconSlot + LeaderLayout.textGap) * scale - 3)
             Text(label).font(.system(size: 10 * scale).weight(.semibold))
             Spacer(minLength: 2)
             if let total {

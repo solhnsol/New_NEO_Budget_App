@@ -36,6 +36,8 @@ struct DayRenderPlan {
         let hiddenRows: Int
         /// How wide the title may run, when the engine shortened it to stay clear of a transaction line's text; `nil` for the full card.
         var titleMaxWidth: CGFloat?
+        /// Where on the axis each shown inside transaction happened (absolute y), in the order of the rows.
+        var insideAnchors: [CGFloat] = []
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -180,7 +182,8 @@ struct DayRenderPlan {
                     case let .cramped(width)?: return width
                     default: return nil
                     }
-                }()
+                }(),
+                insideAnchors: inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) }
             ))
         }
 

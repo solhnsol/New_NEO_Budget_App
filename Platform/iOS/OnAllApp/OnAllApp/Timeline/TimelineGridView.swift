@@ -618,7 +618,8 @@ private struct BlockCell: View {
                     block: block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
                     shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
                     endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
-                    startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) }
+                    startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
+                    anchors: item.insideAnchors.map { $0 - frame.minY }
                 )
                 .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
                 .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }

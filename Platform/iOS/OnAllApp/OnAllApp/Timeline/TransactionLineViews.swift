@@ -18,7 +18,7 @@ enum AmountKindNames {
 
 /// How a row leads out of the timeline: a dot at the moment it happened on the day's left edge and a thin line to the row's text, bending
 /// when the text is not at that moment. The text then starts after a small margin, where the category icon (if classified) sits.
-private enum LeaderLayout {
+enum LeaderLayout {
     static let dotSize: CGFloat = 4
     static let lineEnd: CGFloat = 12
     static let iconSlot: CGFloat = 11
@@ -26,7 +26,9 @@ private enum LeaderLayout {
     static func textStart(_ scale: CGFloat) -> CGFloat { (lineEnd + iconSlot + textGap) * scale }
 }
 
-private struct LeaderMark: View {
+struct LeaderMark: View {
+    /// Where the line starts, left of the view's own left edge (a row inside a card starts at the card's edge).
+    var originX: CGFloat = 0
     /// How far above (negative) or below the row's middle the transaction really happened.
     let dy: CGFloat
     let height: CGFloat
@@ -35,9 +37,9 @@ private struct LeaderMark: View {
 
     var body: some View {
         let s = scale
-        let start = CGPoint(x: LeaderLayout.dotSize / 2, y: height / 2 + dy)
-        let end = CGPoint(x: LeaderLayout.lineEnd * s, y: height / 2)
-        let bendX = abs(dy) > 1 ? 7 * s : end.x
+        let start = CGPoint(x: originX + LeaderLayout.dotSize / 2, y: height / 2 + dy)
+        let end = CGPoint(x: originX + LeaderLayout.lineEnd * s, y: height / 2)
+        let bendX = abs(dy) > 1 ? originX + 7 * s : end.x
         ZStack(alignment: .topLeading) {
             Path { path in
                 path.move(to: start)
@@ -54,7 +56,7 @@ private struct LeaderMark: View {
     }
 }
 
-private struct CategoryMark: View {
+struct CategoryMark: View {
     let category: CanonicalCategoryID?
     let scale: CGFloat
 
@@ -136,8 +138,9 @@ struct OverflowCardView: View {
     var overEvent = false
 
     var body: some View {
+        // A summary is not at a moment of the day, so it has no line to the timeline: it is written as information, at the same x as an
+        // event's own text.
         HStack(spacing: 0) {
-            Color.clear.frame(width: LeaderLayout.textStart(scale))
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()
@@ -146,12 +149,9 @@ struct OverflowCardView: View {
             .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
         }
-        .padding(.trailing, 6)
+        .padding(.leading, 6).padding(.trailing, 6)
         .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
-        .overlay(alignment: .topLeading) {
-            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, scale: scale)
-        }
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
