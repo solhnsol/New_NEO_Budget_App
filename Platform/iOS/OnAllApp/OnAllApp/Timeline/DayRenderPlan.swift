@@ -41,6 +41,8 @@ struct DayRenderPlan {
         var insideAnchors: [CGFloat] = []
         /// The event has no room for a card at its true size: it is a thin bar at its true start and end, named by a label beside the bars.
         var isMarker = false
+        /// 0 for a bar, 1 for a card: how far a bar has opened up as its room grows (see `isMarker`).
+        var openness: CGFloat = 0
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -52,6 +54,8 @@ struct DayRenderPlan {
         var countOnly = false
         /// The calendar colour of each of its events, so a crowd of different colours is still readable at a glance.
         var colors: [String?] = []
+        /// How visible the label is: it fades out as its bars open up into cards.
+        var opacity: CGFloat = 1
     }
 
     struct LineItem {
@@ -192,6 +196,7 @@ struct DayRenderPlan {
         // Events too short for a card on this axis are bars at their true times, in lanes side by side where they overlap, with one label
         // to their right per run: the title if there is one event, else how many (and their colours).
         var markerFrames: [BlockID: CGRect] = [:]
+        var markerOpenness: [BlockID: CGFloat] = [:]
         if !markerIDs.isEmpty {
             let marked = blocks.filter { markerIDs.contains($0.id) }
                 .sorted { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
@@ -221,15 +226,26 @@ struct DayRenderPlan {
                         laneEnds.append(frame.maxY)
                     }
                 }
+                var maxOpen: CGFloat = 0
                 for block in run {
                     guard let frame = frames[block.id] else { continue }
-                    markerFrames[block.id] = CGRect(x: contentLeft + CGFloat(lanes[block.id] ?? 0) * laneStep, y: frame.minY, width: barWidth, height: frame.height)
+                    // As the room grows the bar opens up into the card it will be, from its lane to the card's own place and width, so the
+                    // move from a thin mark to a card is one continuous change and not a swap.
+                    let t = min(max((frame.height - trueMinimumHeight) / max(1, titleRowHeight - trueMinimumHeight), 0), 1)
+                    let open = t * t * (3 - 2 * t)
+                    maxOpen = max(maxOpen, open)
+                    let laneX = contentLeft + CGFloat(lanes[block.id] ?? 0) * laneStep
+                    markerFrames[block.id] = CGRect(
+                        x: laneX + (frame.minX - laneX) * open, y: frame.minY,
+                        width: barWidth + (frame.width - barWidth) * open, height: frame.height
+                    )
+                    markerOpenness[block.id] = open
                 }
                 let labelX = contentLeft + CGFloat(laneEnds.count) * laneStep + 4
                 let top = run.compactMap { frames[$0.id]?.minY }.min() ?? 0
                 summaries.append(Summary(
                     frame: CGRect(x: labelX, y: top - 3 * scale, width: max(0, contentLeft + contentWidth - labelX), height: 16 * scale),
-                    items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex)
+                    items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex), opacity: max(0, 1 - maxOpen * 1.6)
                 ))
                 for member in run { hiddenByGroup.insert(member.id) }
             }
@@ -262,7 +278,7 @@ struct DayRenderPlan {
                     }
                 }(),
                 insideAnchors: isMarker ? [] : inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
-                isMarker: isMarker
+                isMarker: isMarker, openness: markerOpenness[id] ?? 0
             ))
         }
 

@@ -254,24 +254,39 @@ struct OverlapSummaryView: View {
             .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
         }
         .tint(Color.primary)
+        .opacity(summary.opacity)
+        .allowsHitTesting(summary.opacity > 0.3)
         .offset(x: summary.frame.minX, y: summary.frame.minY)
         .accessibilityLabel(summary.countOnly ? "일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", ") : "겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
         .accessibilityHint("일정을 고릅니다")
     }
 }
 
-/// An event with too little room for a card: a thin bar in its calendar's colour at its true start and end.
+/// An event with too little room for a card: a thin bar in its calendar's colour at its true start and end. As its room grows it opens up
+/// (`openness` 0 to 1) into the card it will be: wider, paler, outlined, its title coming in, so there is no moment where one thing is
+/// swapped for another.
 struct EventMarkerBar: View {
     let block: EventBlock
     let frame: CGRect
+    let openness: CGFloat
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
-        RoundedRectangle(cornerRadius: 2).fill(color)
-            .frame(width: frame.width, height: frame.height)
-            .offset(x: frame.minX, y: frame.minY)
-            .accessibilityElement()
-            .accessibilityLabel(block.title)
+        let shape = RoundedRectangle(cornerRadius: 2 + 4 * openness)
+        ZStack(alignment: .topLeading) {
+            shape.fill(Color(.systemBackground))
+            shape.fill(color.opacity(1 - 0.78 * openness))
+            Rectangle().fill(color).frame(width: 3)
+            Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
+                .padding(.leading, 9).padding(.top, 3)
+                .opacity(max(0, (openness - 0.55) / 0.45))
+        }
+        .overlay(shape.stroke(color.opacity(0.5 * openness), lineWidth: 1))
+        .clipShape(shape)
+        .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+        .offset(x: frame.minX, y: frame.minY)
+        .accessibilityElement()
+        .accessibilityLabel(block.title)
     }
 }
 

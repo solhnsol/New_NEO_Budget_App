@@ -288,7 +288,7 @@ struct TimelineGridView: View {
             ForEach(plan.events, id: \.block.id) { item in
                 if editor.isExpanded(item.block) { QuarterMarks(block: item.block, geometry: geometry, timeline: timeline, zone: zone) }
                 if item.isMarker {
-                    EventMarkerBar(block: item.block, frame: item.frame)
+                    EventMarkerBar(block: item.block, frame: item.frame, openness: item.openness)
                 } else {
                 BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.map(\.frame) + plan.overflows.map(\.frame))
                 }
