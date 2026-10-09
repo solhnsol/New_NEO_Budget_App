@@ -161,6 +161,11 @@ struct EventBlockView: View {
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
         let missing = block.state == .eventMissing
+        // With a header above it, the card's top corners are square: the header's own corners are the pair's, and its sides continue
+        // straight down into the card's, so the two read as one event.
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: hasHeader ? 0 : 6, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: hasHeader ? 0 : 6
+        )
         VStack(alignment: .leading, spacing: 1) {
             // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
             Color.clear.frame(height: hasHeader ? 2 : (InlineAllocationPlan.titleHeight * scale + titleOffset))
@@ -174,9 +179,9 @@ struct EventBlockView: View {
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(color.opacity(missing ? 0.08 : 0.22), in: RoundedRectangle(cornerRadius: 6))
-        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 6))
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 2)) }
+        .background(color.opacity(missing ? 0.08 : 0.22), in: shape)
+        .background(Color(.systemBackground), in: shape)
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
         .overlay(alignment: .bottomTrailing) {
             // The end, in the bottom right corner, when the rows above leave the room.
             let rowsUsed = CGFloat(shownRows + (hiddenRows > 0 && shownRows > 0 ? 1 : 0)) * InlineAllocationPlan.rowHeight * scale
@@ -187,9 +192,9 @@ struct EventBlockView: View {
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
+        .overlay(shape.stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
         .opacity(missing ? 0.7 : 1)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .clipShape(shape)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)

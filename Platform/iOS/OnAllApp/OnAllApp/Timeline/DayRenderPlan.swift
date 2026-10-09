@@ -15,6 +15,8 @@ struct DayRenderPlan {
         let amount: Money
         let flow: TransactionFlow
         let isApproximate: Bool
+        /// The classified spending category, when there is one (it picks the row's icon).
+        var categoryID: CanonicalCategoryID? = nil
     }
 
     struct EventItem {
@@ -271,7 +273,10 @@ struct DayRenderPlan {
             guard item.titleMaxWidth != nil else { return item }
             let row = CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (InlineAllocationPlan.titleHeight + 2) * scale)
             guard drawnLines.contains(where: { $0.intersects(row) }) else { var copy = item; copy.titleMaxWidth = nil; return copy }
-            return item
+            // A transaction is on the title and there is no header to move it to: the transaction is what is shown, and the title is left out.
+            var copy = item
+            copy.showsTitleInCard = false
+            return copy
         }
         events = eventItems
         self.summaries = summaries
@@ -359,13 +364,15 @@ struct DayRenderPlan {
         for block in timeline.blocks {
             for item in block.allocations where result[item.transactionID.rawValue] == nil {
                 result[item.transactionID.rawValue] = TransactionDisplay(
-                    title: item.title, amount: item.transactionAmount, flow: item.flow, isApproximate: item.timePrecision == .approximate
+                    title: item.title, amount: item.transactionAmount, flow: item.flow, isApproximate: item.timePrecision == .approximate,
+                    categoryID: item.categoryID
                 )
             }
         }
         for marker in timeline.markers {
             result[marker.transactionID.rawValue] = TransactionDisplay(
-                title: marker.title, amount: marker.amount, flow: marker.flow, isApproximate: marker.timePrecision == .approximate
+                title: marker.title, amount: marker.amount, flow: marker.flow, isApproximate: marker.timePrecision == .approximate,
+                categoryID: marker.categoryID
             )
         }
         return result

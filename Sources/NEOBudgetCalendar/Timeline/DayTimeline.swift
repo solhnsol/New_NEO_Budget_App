@@ -102,6 +102,8 @@ public struct AllocationItem: Equatable, Sendable {
     /// True unless the allocation is known to be the entire transaction.
     public let isPartOfTransaction: Bool
     public let source: AssignmentSource
+    /// What this portion was spent on, only when it has been classified. `nil` for every other state of the category.
+    public let categoryID: CanonicalCategoryID?
 }
 
 public struct EventBlock: Equatable, Sendable {
@@ -183,6 +185,8 @@ public struct TransactionMarkerItem: Equatable, Sendable {
     /// What is left of the transaction after its allocations (widened by unknown portions).
     public let remainder: AmountBounds
     public let isFullyAllocated: Bool
+    /// The category all of its allocations were classified into, when they agree; `nil` when there are none or they differ.
+    public let categoryID: CanonicalCategoryID?
 }
 
 public struct CurrencyTotals: Equatable, Sendable {

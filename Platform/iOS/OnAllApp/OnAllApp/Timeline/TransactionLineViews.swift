@@ -20,15 +20,21 @@ enum AmountKindNames {
 /// were written into the calendar. A transaction that is linked to an event or only approximately placed leads out with a dashed line.
 private struct Leader: View {
     var dashed = false
-    var hollow = false
-    var length: CGFloat = 0
+    var category: CanonicalCategoryID?
     let scale: CGFloat
 
     var body: some View {
-        // The dot sits on the day's edge and the text starts at the same x as an event's own text, so there is no margin before it.
-        Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: hollow || dashed ? 1 : 0)
-            .background(Circle().fill(hollow || dashed ? Color.clear : Color.secondary.opacity(0.8)))
-            .frame(width: 4 * scale, height: 4 * scale)
+        // A category icon where the category is classified, else a dot (hollow when the time is only approximate).
+        Group {
+            if let symbol = CategoryIcon.symbol(for: category) {
+                Image(systemName: symbol).font(.system(size: 10 * scale)).foregroundStyle(Color.secondary)
+            } else {
+                Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: dashed ? 1 : 0)
+                    .background(Circle().fill(dashed ? Color.clear : Color.secondary.opacity(0.8)))
+                    .frame(width: 4 * scale, height: 4 * scale)
+            }
+        }
+        .frame(width: 12 * scale)
     }
 }
 
@@ -46,10 +52,10 @@ struct TransactionLineView: View {
         let display = item.display
         let refund = display?.flow == .refund
         HStack(spacing: 2) {
-            Leader(dashed: display?.isApproximate ?? false, scale: scale)
+            Leader(dashed: display?.isApproximate ?? false, category: display?.categoryID, scale: scale)
             // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
             let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
-            let nameRoom = item.frame.width - 6 - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
+            let nameRoom = item.frame.width - 8 - 14 - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
             if nameRoom >= 30 * scale {
                 if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary) }
                 Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
@@ -57,7 +63,7 @@ struct TransactionLineView: View {
             Spacer(minLength: 2)
             amountText(display, refund: refund)
         }
-        .padding(.trailing, 6)
+        .padding(.leading, 2).padding(.trailing, 6)
         .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
@@ -103,7 +109,7 @@ struct OverflowCardView: View {
             .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
         }
-        .padding(.trailing, 6)
+        .padding(.leading, 2).padding(.trailing, 6)
         .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
@@ -158,8 +164,9 @@ struct EventHeaderView: View {
         .frame(width: rect.width, height: rect.height, alignment: .leading)
         .background(Color(.systemBackground))
         .background(color.opacity(0.10))
-        .overlay(alignment: .leading) { Rectangle().fill(color.opacity(0.5)).frame(width: 3) }
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
         .overlay(alignment: .bottom) { Rectangle().fill(color).frame(height: 1) }
+        .overlay(UnevenRoundedRectangle(topLeadingRadius: 6, topTrailingRadius: 6).stroke(color.opacity(0.5), lineWidth: 1))
         .clipShape(UnevenRoundedRectangle(topLeadingRadius: 6, topTrailingRadius: 6))
         .offset(x: rect.minX, y: rect.minY)
         .allowsHitTesting(false)

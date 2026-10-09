@@ -102,7 +102,8 @@ public enum DayTimelineBuilder {
                     occursOnSelectedDay: marker.occurredAtUnixMilliseconds >= bounds.start && marker.occurredAtUnixMilliseconds < bounds.end,
                     allocatedAmount: allocation.amount.knowledge,
                     isPartOfTransaction: !wholeTransaction,
-                    source: allocation.provenance.source
+                    source: allocation.provenance.source,
+                    categoryID: allocation.category.categoryID
                 )
             }
             .sorted { ($0.occurredAtUnixMilliseconds, $0.allocationID) < ($1.occurredAtUnixMilliseconds, $1.allocationID) }
@@ -285,7 +286,11 @@ public enum DayTimelineBuilder {
                     )
                 },
                 remainder: set?.remainder ?? AmountBounds(lower: total, upper: total),
-                isFullyAllocated: set?.isFullyAllocated ?? false
+                isFullyAllocated: set?.isFullyAllocated ?? false,
+                categoryID: { () -> CanonicalCategoryID? in
+                    let all = Set(allocations.map { $0.category.categoryID })
+                    return all.count == 1 ? all.first ?? nil : nil
+                }()
             ))
         }
 

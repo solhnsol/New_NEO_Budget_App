@@ -191,6 +191,37 @@ enum DemoLinks {
                 )))
             }
         }
+        await classify(service: service)
+    }
+
+    /// `-demo-txn`: some of the transactions are classified, so their rows show a category icon (the others keep the plain dot).
+    private static let categories: [(raw: String, won: Int64, category: String)] = [
+        ("txn-a1", 4_500, "cafe"), ("txn-over", 9_800, "transport"), ("txn-b1", 12_000, "food"), ("txn-b2", 3_000, "cafe"),
+        ("txn-ext", 3_500, "shopping"), ("txn-late", 7_700, "food"),
+    ]
+
+    private static func classify(service: CalendarCommandService) async {
+        let args = ProcessInfo.processInfo.arguments
+        guard args.contains("-demo-txn") || args.contains("-demo-txn-lite") else { return }
+        let provenance = AssignmentProvenance.user(at: 1, evidenceVersion: nil)
+        for item in categories {
+            let transaction = SampleLedger.entryID(for: item.raw)
+            let before = try? await service.lifeSnapshot().state
+            if before?.allocationSet(for: transaction) == nil {
+                // Not linked to an event: a decision that it belongs to no activity gives its category somewhere to live.
+                _ = await service.perform(.setAllocations(SetAllocationsInput(
+                    transactionID: transaction, parts: [AllocationPartInput(target: .nonActivity, amount: .exact(item.won))], provenance: provenance
+                )))
+            }
+            let after = try? await service.lifeSnapshot().state
+            guard let set = after?.allocationSet(for: transaction) else { continue }
+            for allocation in set.allocations {
+                _ = await service.perform(.setCategory(SetCategoryInput(
+                    target: .allocation(allocation.id),
+                    assignment: .classified(CanonicalCategoryID(rawValue: item.category), provenance)
+                )))
+            }
+        }
     }
 }
 
