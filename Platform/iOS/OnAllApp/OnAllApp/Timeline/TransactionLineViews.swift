@@ -268,22 +268,25 @@ struct OverlapSummaryView: View {
 struct EventMarkerBar: View {
     let block: EventBlock
     let frame: CGRect
+    /// 0 when the event has only the thinnest room, 1 when it has room for a card (its title row).
     let openness: CGFloat
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
-        let shape = RoundedRectangle(cornerRadius: 2 + 4 * openness)
+        let t = openness * openness * (3 - 2 * openness)
+        let shape = RoundedRectangle(cornerRadius: 2 + 4 * t)
         ZStack(alignment: .topLeading) {
             shape.fill(Color(.systemBackground))
-            shape.fill(color.opacity(1 - 0.78 * openness))
+            shape.fill(color.opacity(1 - 0.78 * t))
             Rectangle().fill(color).frame(width: 3)
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
-                .padding(.leading, 9).padding(.top, 3)
-                .opacity(max(0, (openness - 0.55) / 0.45))
+                .padding(.leading, 9).padding(.top, 3).padding(.trailing, 6)
+                .opacity(max(0, (openness - 0.6) / 0.4))
         }
-        .overlay(shape.stroke(color.opacity(0.5 * openness), lineWidth: 1))
-        .clipShape(shape)
+        // The size is fixed before anything is clipped, so a title longer than the room is cut by the card and never runs out of it.
         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
+        .clipShape(shape)
+        .overlay(shape.stroke(color.opacity(0.5 * t), lineWidth: 1))
         .offset(x: frame.minX, y: frame.minY)
         .accessibilityElement()
         .accessibilityLabel(block.title)

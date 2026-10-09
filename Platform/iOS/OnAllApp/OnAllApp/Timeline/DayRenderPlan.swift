@@ -252,14 +252,17 @@ struct DayRenderPlan {
                     // As the room grows the bar opens up into the card it will be, from its lane to the card's own place and width, so the
                     // move from a thin mark to a card is one continuous change and not a swap.
                     let t = min(max((frame.height - trueMinimumHeight) / max(1, titleRowHeight - trueMinimumHeight), 0), 1)
-                    let open = t * t * (3 - 2 * t)
-                    maxOpen = max(maxOpen, open)
+                    // A bar stays a bar (named by the label beside it) until it is tall enough to carry its title, then opens to the card's width
+                    // over a short range of height, so what is on screen is a named bar or a card with its title, never a bare strip.
+                    let wide = min(max((t - 0.5) / 0.3, 0), 1)
+                    let widen = wide * wide * (3 - 2 * wide)
+                    maxOpen = max(maxOpen, widen)
                     let laneX = contentLeft + CGFloat(lanes[block.id] ?? 0) * laneStep
                     markerFrames[block.id] = CGRect(
-                        x: laneX + (frame.minX - laneX) * open, y: frame.minY,
-                        width: barWidth + (frame.width - barWidth) * open, height: frame.height
+                        x: laneX + (frame.minX - laneX) * widen, y: frame.minY,
+                        width: barWidth + (frame.width - barWidth) * widen, height: frame.height
                     )
-                    markerOpenness[block.id] = open
+                    markerOpenness[block.id] = t
                 }
                 let labelX = contentLeft + CGFloat(laneEnds.count) * laneStep + 4
                 let top = run.compactMap { frames[$0.id]?.minY }.min() ?? 0
