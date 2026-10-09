@@ -50,14 +50,18 @@ struct DayRenderPlan {
         let link: LinkMetadata?
         /// The title of the event a linked line belongs to, for its small label.
         let linkedEventTitle: String?
-        let frame: CGRect
-        let touchFrame: CGRect
+        var frame: CGRect
+        var touchFrame: CGRect
+        /// Where on the axis the transaction really happened. The row's text may sit elsewhere (stacked clear of another row, or lined up
+        /// with a title that is not drawn); its leader then bends from this point to the text.
+        var anchorY: CGFloat? = nil
     }
 
     struct OverflowItem {
         let id: String
-        let frame: CGRect
-        let touchFrame: CGRect
+        var frame: CGRect
+        var touchFrame: CGRect
+        var anchorY: CGFloat? = nil
         let members: [OverflowMember]
         let countsByKind: [KindCount]
         let amountTotals: [AmountSum]
@@ -240,11 +244,11 @@ struct DayRenderPlan {
             if unit.kind == 0 {
                 let line = sourceLines[unit.index]
                 let linkTitle = line.link.flatMap { link in blocks.first { $0.id.rawValue == link.eventID }?.title }
-                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: linkTitle, frame: frame, touchFrame: touch))
+                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: linkTitle, frame: frame, touchFrame: touch, anchorY: geometry.y(minute: unit.anchor)))
             } else {
                 let overflow = sourceOverflows[unit.index]
                 overflowItems.append(OverflowItem(
-                    id: overflow.id, frame: frame, touchFrame: touch, members: overflow.members, countsByKind: overflow.countsByKind,
+                    id: overflow.id, frame: frame, touchFrame: touch, anchorY: geometry.y(minute: unit.anchor), members: overflow.members, countsByKind: overflow.countsByKind,
                     amountTotals: overflow.amountTotals, showsAmountTotal: overflow.showsAmountTotal
                 ))
             }
@@ -269,6 +273,7 @@ struct DayRenderPlan {
         // The engine shortens a title that could meet a line's text; here it is only kept short if a drawn line or overflow really is on the
         // title's row, so a title is never cut for a line that is below it.
         let drawnLines = (lineItems.map(\.frame) + overflowItems.map(\.frame)).map { $0.insetBy(dx: 0, dy: 4 * scale) }      // the text, not the row's air
+        var hiddenTitleRows: [CGRect] = []
         eventItems = eventItems.map { item in
             guard item.titleMaxWidth != nil else { return item }
             let row = CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (InlineAllocationPlan.titleHeight + 2) * scale)
@@ -276,8 +281,18 @@ struct DayRenderPlan {
             // A transaction is on the title and there is no header to move it to: the transaction is what is shown, and the title is left out.
             var copy = item
             copy.showsTitleInCard = false
+            hiddenTitleRows.append(CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (EventTitleLayer.rowHeight + 2) * scale))
             return copy
         }
+        // Where a title is left out, the transaction takes the title's row and is written there, neatly under the card's top edge; its leader
+        // bends from the moment it happened to that row.
+        func lineUp(_ frame: CGRect, _ touch: CGRect) -> (CGRect, CGRect) {
+            guard let row = hiddenTitleRows.first(where: { $0.intersects(frame.insetBy(dx: 0, dy: 4 * scale)) }) else { return (frame, touch) }
+            let dy = (row.minY + 11 * scale) - frame.midY
+            return (frame.offsetBy(dx: 0, dy: dy), touch.offsetBy(dx: 0, dy: dy))
+        }
+        for index in lineItems.indices { (lineItems[index].frame, lineItems[index].touchFrame) = lineUp(lineItems[index].frame, lineItems[index].touchFrame) }
+        for index in overflowItems.indices { (overflowItems[index].frame, overflowItems[index].touchFrame) = lineUp(overflowItems[index].frame, overflowItems[index].touchFrame) }
         events = eventItems
         self.summaries = summaries
         lines = lineItems

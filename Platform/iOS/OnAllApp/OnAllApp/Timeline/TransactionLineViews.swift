@@ -16,25 +16,57 @@ enum AmountKindNames {
     }
 }
 
-/// The small mark a transaction leaves on the timeline: a dot on the day's edge and a thin line leading out to its text, as if the text
-/// were written into the calendar. A transaction that is linked to an event or only approximately placed leads out with a dashed line.
-private struct Leader: View {
+/// How a row leads out of the timeline: a dot at the moment it happened on the day's left edge and a thin line to the row's text, bending
+/// when the text is not at that moment. The text then starts after a small margin, where the category icon (if classified) sits.
+private enum LeaderLayout {
+    static let dotSize: CGFloat = 4
+    static let lineEnd: CGFloat = 12
+    static let iconSlot: CGFloat = 11
+    static let textGap: CGFloat = 2
+    static func textStart(_ scale: CGFloat) -> CGFloat { (lineEnd + iconSlot + textGap) * scale }
+}
+
+private struct LeaderMark: View {
+    /// How far above (negative) or below the row's middle the transaction really happened.
+    let dy: CGFloat
+    let height: CGFloat
     var dashed = false
-    var category: CanonicalCategoryID?
     let scale: CGFloat
 
     var body: some View {
-        // A category icon where the category is classified, else a dot (hollow when the time is only approximate).
+        let s = scale
+        let start = CGPoint(x: LeaderLayout.dotSize / 2, y: height / 2 + dy)
+        let end = CGPoint(x: LeaderLayout.lineEnd * s, y: height / 2)
+        let bendX = abs(dy) > 1 ? 7 * s : end.x
+        ZStack(alignment: .topLeading) {
+            Path { path in
+                path.move(to: start)
+                path.addLine(to: CGPoint(x: bendX, y: start.y))
+                path.addLine(to: CGPoint(x: bendX, y: end.y))
+                path.addLine(to: end)
+            }
+            .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 0.75, lineJoin: .round, dash: dashed ? [2, 2] : []))
+            Circle().fill(Color.secondary.opacity(0.8))
+                .frame(width: LeaderLayout.dotSize * s, height: LeaderLayout.dotSize * s)
+                .position(start)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct CategoryMark: View {
+    let category: CanonicalCategoryID?
+    let scale: CGFloat
+
+    var body: some View {
         Group {
             if let symbol = CategoryIcon.symbol(for: category) {
                 Image(systemName: symbol).font(.system(size: 10 * scale)).foregroundStyle(Color.secondary)
             } else {
-                Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: dashed ? 1 : 0)
-                    .background(Circle().fill(dashed ? Color.clear : Color.secondary.opacity(0.8)))
-                    .frame(width: 4 * scale, height: 4 * scale)
+                Color.clear
             }
         }
-        .frame(width: 12 * scale)
+        .frame(width: LeaderLayout.iconSlot * scale)
     }
 }
 
@@ -51,21 +83,26 @@ struct TransactionLineView: View {
     var body: some View {
         let display = item.display
         let refund = display?.flow == .refund
-        HStack(spacing: 2) {
-            Leader(dashed: display?.isApproximate ?? false, category: display?.categoryID, scale: scale)
+        HStack(spacing: 0) {
+            Color.clear.frame(width: LeaderLayout.lineEnd * scale)
+            CategoryMark(category: display?.categoryID, scale: scale)
+            Color.clear.frame(width: LeaderLayout.textGap * scale)
             // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
             let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
-            let nameRoom = item.frame.width - 8 - 14 - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
+            let nameRoom = item.frame.maxX - edge - 8 - LeaderLayout.textStart(scale) - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
             if nameRoom >= 30 * scale {
-                if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary) }
+                if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary).padding(.trailing, 3) }
                 Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
             }
             Spacer(minLength: 2)
             amountText(display, refund: refund)
         }
-        .padding(.leading, 2).padding(.trailing, 6)
+        .padding(.trailing, 6)
         .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale)
+        }
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
@@ -99,8 +136,8 @@ struct OverflowCardView: View {
     var overEvent = false
 
     var body: some View {
-        HStack(spacing: 2) {
-            Leader(scale: scale)
+        HStack(spacing: 0) {
+            Color.clear.frame(width: LeaderLayout.textStart(scale))
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()
@@ -109,9 +146,12 @@ struct OverflowCardView: View {
             .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
         }
-        .padding(.leading, 2).padding(.trailing, 6)
+        .padding(.trailing, 6)
         .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, scale: scale)
+        }
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
