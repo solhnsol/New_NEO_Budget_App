@@ -191,6 +191,7 @@ extension DemoPreview {
     /// compressed middle, rests there (the zone moves by itself after 400 ms), nudges by 15 minutes, lets go, and leaves edit mode.
     @MainActor
     static func runScript(_ mode: String, on model: AppModel) async {
+        if mode == "script-return" { await runReturnScript(on: model); return }
         guard mode == "script-zoom", let editor = model.editor else { return }
         func pause(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
         await model.shift(days: 1)
@@ -213,5 +214,37 @@ extension DemoPreview {
         editor.finish()
         await pause(1.5)
         editor.exitEditMode(anchorMinute: 12 * 60)
+    }
+}
+
+extension DemoPreview {
+    /// `-demo-preview script-return`: the first event of the day, its end handle dragged later until a zone opens, then dragged
+    /// back to where it started and let go (nothing changes, so the zone folds away and the view returns). For measuring that return.
+    @MainActor
+    static func runReturnScript(on model: AppModel) async {
+        guard let editor = model.editor, let timeline = model.timeline,
+              let block = timeline.blocks.first(where: { $0.title == "알고리즘 수업" }) else { return }
+        func pause(_ seconds: Double) async { try? await Task.sleep(for: .seconds(seconds)) }
+        await pause(2.5)
+        _ = editor.enterEditMode(for: block, pressMinute: block.startMinute + 10)
+        await pause(1.0)
+        let geometry = editor.geometry
+        let start = geometry.y(minute: block.endMinute)
+        let target = geometry.y(minute: block.endMinute + 100)
+        editor.setFingerAnchor(y: start)
+        guard editor.begin(.resizeEnd, block: block, timeline: timeline, geometry: geometry) else { return }
+        for step in 1...8 {
+            editor.update(fingerY: start + (target - start) * CGFloat(step) / 8)
+            await pause(0.03)
+        }
+        await pause(1.2)                                         // rest: a zone opens at the later time
+        let back = editor.geometry.y(minute: block.endMinute)    // where the original end is drawn now
+        for step in 1...8 {
+            editor.update(fingerY: editor.fingerContentY + (back - editor.fingerContentY) * CGFloat(step) / 8)
+            await pause(0.03)
+        }
+        await pause(0.6)
+        editor.finish()                                          // back where it started: nothing is written
+        await pause(2.0)
     }
 }

@@ -1161,3 +1161,53 @@ private func zoomShapes() -> [EventShape] {
     #expect(second.progress(at: second.startedAt) == 0)
     #expect(h.editor.scrollCommit?.delta == first.delta)                               // and the first one's shift was handed over, not lost
 }
+
+@MainActor @Test func lettingGoWhereItStartedNeverLeavesAShiftTheScrollViewWouldTakeBackAtTheEnd() async throws {
+    let h = try await Harness.make(events: busyDay())
+    let block = try h.block("수업")
+    var offset: CGFloat = 0
+    let viewport: CGFloat = 531
+    // A scroll view that can only hold an offset the content is tall enough for, with the extra room only while it is asked for.
+    h.editor.scrollLimits = { height, room in
+        let total = height + 44 + (room ? 320 : 0)
+        return (0 - offset)...(max(0, total - viewport) - offset)
+    }
+    let y0 = try grabHandle(h, .resizeEnd, block)
+    let fast = h.editor.geometry
+    h.editor.update(fingerY: fast.y(minute: block.endMinute + 100))
+    h.editor.zoomAtFinger()
+    h.editor.completeTransition()
+    offset += h.editor.scrollCommit?.delta ?? 0
+    #expect(offset > 0)                                                                // the content was scrolled to hold the finger
+    h.editor.endSettling()
+    // Back to the original time and let go: nothing changes, so the zone folds away.
+    h.editor.update(fingerY: h.editor.geometry.y(minute: block.endMinute))
+    h.editor.finish()
+    #expect(h.editor.preview == nil && h.editor.dwellCenter == nil)
+    let release = try #require(h.editor.transition)
+    // The day is shorter than the screen again, so an offset cannot stay: the change ends at offset 0, and `delta` takes the
+    // content there smoothly rather than leaving UIKit to clamp the offset in one step when the room goes away.
+    #expect(abs(offset + release.delta) < 0.001, "offset \(offset) + delta \(release.delta)")
+    _ = y0
+}
+
+@MainActor @Test func everyShiftADragNeededIsGivenBackOnReleaseWhateverHowManyZonesOpened() async throws {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    var shifted: CGFloat = 0
+    _ = try grabHandle(h, .resizeEnd, block)
+    // Three zones in one drag, each holding the finger by scrolling the content.
+    for minute in [14 * 60, 11 * 60, 15 * 60 + 30] {
+        h.editor.endSettling()
+        h.editor.update(fingerY: h.editor.geometry.y(minute: minute))
+        h.editor.zoomAtFinger()
+        let transition = try #require(h.editor.transition)
+        shifted += transition.delta
+        h.editor.completeTransition(id: transition.id)
+    }
+    #expect(shifted != 0)
+    h.editor.cancel()
+    let release = try #require(h.editor.transition)
+    // The view goes back to exactly where it was when the handle was grabbed, not to wherever the last zone left it.
+    #expect(abs(release.delta + shifted) < 0.001, "shifted \(shifted), release \(release.delta)")
+}

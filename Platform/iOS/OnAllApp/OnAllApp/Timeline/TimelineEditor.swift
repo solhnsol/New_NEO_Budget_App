@@ -180,6 +180,9 @@ final class TimelineEditor {
     private var dwellAnchorY: CGFloat = 0
     private var lastFingerY: CGFloat = 0
     private var draggedKind: TimelineEditPlanner.Kind?
+    /// How far the content was shifted to keep a finger on its handle while zones opened during this drag. Letting go gives it all
+    /// back, so the view returns to where it was when the handle was grabbed instead of staying scrolled by what the drag needed.
+    private var dragShift: CGFloat = 0
 
     private let environment: Environment
     private var planner: TimelineEditPlanner?
@@ -274,25 +277,28 @@ final class TimelineEditor {
     /// Switches the editing state and, if the axis changes shape because of it, makes the change a transition that holds
     /// `anchorMinute` still on screen.
     private func setAnchors(
-        _ new: [Int]?, selected: CalendarEventKey?, expanded: CalendarEventKey? = nil, anchorMinute: Int?, from old: TimelineAxis
+        _ new: [Int]?, selected: CalendarEventKey?, expanded: CalendarEventKey? = nil, anchorMinute: Int?, from old: TimelineAxis,
+        forcedDelta: CGFloat? = nil
     ) {
         editAnchors = new
         if new == nil { createFocus = nil }
         selectedKey = selected
         expandedKey = expanded
-        publishAxisChange(from: old, anchorMinute: anchorMinute)
+        publishAxisChange(from: old, anchorMinute: anchorMinute, forcedDelta: forcedDelta)
     }
 
     /// Starts the transition from `old` to the axis as it is now (nothing if they are the same). `old` is the axis before the
     /// change that was just made, which is also where a transition still running would be heading, so finishing that one
     /// first loses nothing.
-    private func publishAxisChange(from old: TimelineAxis, anchorMinute: Int?) {
+    private func publishAxisChange(from old: TimelineAxis, anchorMinute: Int?, roomAfter: Bool? = nil, forcedDelta: CGFloat? = nil) {
         completeTransition()
         let new = currentAxis
         guard new != old else { return }
-        var delta = anchorMinute.map { new.y(minute: $0) - old.y(minute: $0) } ?? 0
+        var delta = forcedDelta ?? anchorMinute.map { new.y(minute: $0) - old.y(minute: $0) } ?? 0
         // Hold the anchor as far as the scroll view can follow; past that it drifts smoothly instead of jumping at the end.
-        if let range = scrollLimits?(new.height, needsScrollRoom) { delta = min(max(delta, range.lowerBound), range.upperBound) }
+        // The limit is the one the content will have when the change is over: if the extra room goes away with it, a shift that
+        // needs that room cannot be kept, and holding it until the end would make UIKit take it back all at once.
+        if let range = scrollLimits?(new.height, roomAfter ?? needsScrollRoom) { delta = min(max(delta, range.lowerBound), range.upperBound) }
         transition = AxisTransition(id: UUID(), from: old, to: new, delta: delta, startedAt: Date())
     }
 
@@ -420,6 +426,7 @@ final class TimelineEditor {
         publishAxisChange(from: before, anchorMinute: minute)
         let after = currentAxis
         let delta = transition?.delta ?? 0
+        dragShift += delta
         let geometry = TimelineGeometry(axis: after)
         planner = TimelineEditPlanner(policy: environment.policy, zone: environment.zone, geometry: geometry, timeline: timeline)
         // The finger has not moved on screen, so in content coordinates it is `delta` further along, and it is at `minute`.
@@ -447,13 +454,14 @@ final class TimelineEditor {
         dwellTask = nil
     }
 
-    /// Drops the finger's zone, scrolling so `anchorMinute` stays where it is on screen.
-    private func releaseDwell(keeping anchorMinute: Int?) {
+    /// Drops the finger's zone and gives back the shift the drag needed, so the view is where it was before the drag.
+    private func releaseDwell(roomAfter: Bool? = nil) {
         cancelDwell()
         guard dwellCenter != nil else { return }
         let before = currentAxis
         dwellCenter = nil
-        publishAxisChange(from: before, anchorMinute: anchorMinute)
+        publishAxisChange(from: before, anchorMinute: nil, roomAfter: roomAfter, forcedDelta: -dragShift)
+        dragShift = 0
     }
 
     // MARK: Gesture phases
@@ -471,6 +479,7 @@ final class TimelineEditor {
         self.planner = planner
         self.block = block
         draggedKind = kind
+        dragShift = 0
         cancelDwell()
         mode = .dragging
         feedback = nil
@@ -624,7 +633,10 @@ final class TimelineEditor {
             if let block = timeline?.blocks.first(where: { $0.eventKey == key }) {
                 // Keep the edge that was just moved where it was on screen.
                 let anchor = kind == .resizeEnd ? block.endMinute : block.startMinute
-                setAnchors(anchors(for: block, fallback: block.startMinute), selected: key, anchorMinute: anchor, from: before)
+                // The view goes back to where it was when the handle was grabbed; the new edge is wherever the new time puts it.
+                setAnchors(anchors(for: block, fallback: block.startMinute), selected: key, anchorMinute: anchor, from: before,
+                           forcedDelta: dragShift == 0 ? nil : -dragShift)
+                dragShift = 0
             } else {
                 setAnchors(nil, selected: nil, anchorMinute: nil, from: before)
             }
@@ -632,9 +644,7 @@ final class TimelineEditor {
     }
 
     private func rollback() {
-        if dwellCenter != nil, let preview, let timeline {
-            releaseDwell(keeping: edgeMinute(of: preview, in: timeline) ?? dwellCenter)
-        }
+        if dwellCenter != nil { releaseDwell(roomAfter: false) }                                           // the drag is over
         clear()
         if selectedKey == nil { exitEditMode() }       // a cancelled placement folds the day back up
     }
