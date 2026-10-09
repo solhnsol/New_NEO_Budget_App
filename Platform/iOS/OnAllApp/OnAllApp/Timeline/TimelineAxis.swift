@@ -43,6 +43,11 @@ struct TimelineAxis: Equatable {
         /// Two enlarged zones closer than this are drawn as one.
         var zoneMergeGap: Int = 20
 
+        /// The least height an event or a transaction card is drawn at, so nothing is lost in a folded stretch.
+        var minimumItemHeight: CGFloat = 24
+        /// The minutes around a transaction that are opened for its card.
+        var markerWindowMinutes: Int = 40
+
         static let standard = Parameters()
     }
 
@@ -283,17 +288,111 @@ struct TimelineAxis: Equatable {
 extension TimelineAxis {
     /// The browse axis for a day: full size around event edges and transactions, folded elsewhere.
     static func browse(for timeline: DayTimeline, parameters: Parameters = .standard) -> TimelineAxis {
-        browse(for: [timeline], parameters: parameters)
+        browse(main: timeline, secondary: nil, parameters: parameters)
     }
 
-    /// The browse axis shared by days shown side by side: a stretch stays full size if any of the days has an event edge or a
-    /// transaction in it, and is folded only when it is quiet in all of them, so no day is drawn squeezed.
-    static func browse(for timelines: [DayTimeline], parameters: Parameters = .standard) -> TimelineAxis {
+    /// The axis two days on screen share: **one** minute-to-height mapping, shaped by the main day and only *assisted* by the
+    /// secondary one. "Main" says which day the screen is centred on, nothing about how important either day's events are.
+    ///
+    /// - The main day sets the compression exactly as if it were alone: full size around its events and transactions, folded
+    ///   elsewhere.
+    /// - The secondary day adds a minimum. Where one of its events or transactions falls in a stretch the main day folded, that
+    ///   stretch is opened just enough for the item to be drawn at a readable height (`Parameters.minimumItemHeight`), and no more:
+    ///   never to full size unless that is what the item needs. Where the main day already shows the time at a useful size,
+    ///   nothing is added.
+    /// - The height of each stretch is therefore the larger of what the main day asks and what the secondary day needs.
+    static func browse(main: DayTimeline, secondary: DayTimeline?, parameters: Parameters = .standard) -> TimelineAxis {
         var anchors: [Int] = []
-        for timeline in timelines {
-            for block in timeline.blocks { anchors += [block.startMinute, block.endMinute] }
-            anchors += timeline.markers.map(\.positionMinute)
+        for block in main.blocks { anchors += [block.startMinute, block.endMinute] }
+        anchors += main.markers.map(\.positionMinute)
+        let base = browse(totalMinutes: main.totalMinutes, anchors: anchors, parameters: parameters)
+        guard let secondary else { return base }
+        return base.assisted(by: needs(of: secondary, parameters: parameters), parameters: parameters)
+    }
+
+    /// A stretch of minutes that must be drawn at least `height` points tall.
+    struct Need: Equatable {
+        let start: Int
+        let end: Int
+        let height: CGFloat
+    }
+
+    /// What a day's items need to stay readable: an event its minimum block height over its own minutes, a transaction a card's
+    /// worth of height around its time.
+    static func needs(of timeline: DayTimeline, parameters: Parameters = .standard) -> [Need] {
+        var result: [Need] = []
+        for block in timeline.blocks {
+            // Browse size is the most a minute is ever given, so a short event is asked for the minutes that make its height at that scale.
+            let reach = Int((parameters.minimumItemHeight / parameters.browseScale).rounded(.up))
+            result.append(Need(
+                start: block.displayStartMinute, end: min(timeline.totalMinutes, max(block.displayEndMinute, block.displayStartMinute + reach)),
+                height: parameters.minimumItemHeight
+            ))
         }
-        return browse(totalMinutes: timelines.map(\.totalMinutes).max() ?? 1440, anchors: anchors, parameters: parameters)
+        for marker in timeline.markers {
+            let window = parameters.markerWindowMinutes / 2
+            result.append(Need(
+                start: max(0, marker.positionMinute - window), end: min(timeline.totalMinutes, marker.positionMinute + window),
+                height: parameters.minimumItemHeight
+            ))
+        }
+        return result
+    }
+
+    /// This axis with its folded stretches opened where `needs` ask. A stretch that is not folded is left alone (it is already at
+    /// browse size, the most this axis ever gives a minute).
+    func assisted(by needs: [Need], parameters: Parameters = .standard) -> TimelineAxis {
+        guard !needs.isEmpty else { return self }
+        var result: [Segment] = []
+        for segment in segments {
+            guard segment.isFolded else { result.append(segment); continue }
+            result += Self.open(segment, for: needs, parameters: parameters)
+        }
+        return TimelineAxis(totalMinutes: totalMinutes, segments: result)
+    }
+
+    private static func open(_ segment: Segment, for needs: [Need], parameters: Parameters) -> [Segment] {
+        // The scale each need asks for inside this fold, as stretches clipped to it.
+        var asks: [(start: Int, end: Int, scale: CGFloat)] = needs.compactMap { need in
+            let start = max(need.start, segment.startMinute), end = min(need.end, segment.endMinute)
+            guard end > start else { return nil }
+            // Asked of its whole span, even where only part of it is in this fold, so a long event is not squeezed to its fold edge.
+            let span = CGFloat(max(1, need.end - need.start))
+            let scale = min(parameters.browseScale, max(parameters.foldedScale, need.height / span))
+            return (start, end, scale)
+        }.sorted { $0.start < $1.start }
+        guard !asks.isEmpty else { return [segment] }
+
+        // Merge stretches that touch or are closer than a fold is worth, and stretches left over at the fold's edges.
+        var merged: [(start: Int, end: Int, scale: CGFloat)] = []
+        for ask in asks {
+            if let last = merged.last, ask.start - last.end < parameters.minimumFoldMinutes {
+                merged[merged.count - 1] = (last.start, max(last.end, ask.end), max(last.scale, ask.scale))
+            } else {
+                merged.append(ask)
+            }
+        }
+        asks = merged
+        if asks[0].start - segment.startMinute < parameters.minimumFoldMinutes { asks[0].start = segment.startMinute }
+        if segment.endMinute - asks[asks.count - 1].end < parameters.minimumFoldMinutes { asks[asks.count - 1].end = segment.endMinute }
+
+        var pieces: [Segment] = []
+        var cursor = segment.startMinute
+        func folded(_ start: Int, _ end: Int) -> Segment {
+            Segment(
+                startMinute: start, endMinute: end, pointsPerMinute: parameters.foldedScale,
+                height: max(parameters.minimumFoldedHeight, CGFloat(end - start) * parameters.foldedScale), isFolded: true
+            )
+        }
+        for ask in asks {
+            if ask.start > cursor { pieces.append(folded(cursor, ask.start)) }
+            pieces.append(Segment(
+                startMinute: ask.start, endMinute: ask.end, pointsPerMinute: ask.scale,
+                height: CGFloat(ask.end - ask.start) * ask.scale, isFolded: false
+            ))
+            cursor = ask.end
+        }
+        if cursor < segment.endMinute { pieces.append(folded(cursor, segment.endMinute)) }
+        return pieces
     }
 }

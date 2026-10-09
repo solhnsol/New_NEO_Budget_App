@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import NEOBudgetCalendar
+import NEOBudgetCore
 import NEOBudgetInMemoryCalendar
 import Testing
 @testable import OnAllApp
@@ -69,31 +70,6 @@ func aDaysContentStillHasRoomForAnEventAndATransactionCardOnTheNarrowestPhone(wi
     #expect(!DaySwipe.isSwipe(velocity: CGPoint(x: 100, y: 300)))
     #expect(!DaySwipe.isSwipe(velocity: CGPoint(x: 200, y: 200)))                 // diagonal: scrolling
     #expect(!DaySwipe.isSwipe(velocity: .zero))
-}
-
-// MARK: The shared axis
-
-@Test func theTwoDaysShareOneAxisAndNeitherIsDrawnFolded() {
-    let a = DayTimelineBuilder.build(DayTimelineInput(day: first, timeZone: zone, events: [event("a", "아침", first, 9 * 60, 10 * 60)], life: .empty, transactions: []))
-    let b = DayTimelineBuilder.build(DayTimelineInput(day: second, timeZone: zone, events: [event("b", "오후", second, 15 * 60, 16 * 60)], life: .empty, transactions: []))
-    let shared = TimelineAxis.browse(for: [a, b])
-    for minute in [9 * 60, 9 * 60 + 30, 15 * 60, 15 * 60 + 30] {
-        #expect(shared.pointsPerMinute(atMinute: minute) >= TimelineAxis.Parameters.standard.browseScale - 0.001)
-    }
-    // Alone, each day would fold the other's hours; shared, both days' hours are open.
-    #expect(TimelineAxis.browse(for: a).pointsPerMinute(atMinute: 15 * 60 + 30) < TimelineAxis.Parameters.standard.browseScale)
-    #expect(shared.height >= TimelineAxis.browse(for: a).height)
-    #expect(shared.totalMinutes == 1440)
-}
-
-@Test func busyAndEmptyDaysSideBySideKeepEverythingReadable() {
-    let busy = DayTimelineBuilder.build(DayTimelineInput(
-        day: first, timeZone: zone, events: (0..<10).map { event("e\($0)", "일정\($0)", first, 8 * 60 + $0 * 60, 8 * 60 + $0 * 60 + 45) }, life: .empty, transactions: []))
-    let empty = DayTimelineBuilder.build(DayTimelineInput(day: second, timeZone: zone, events: [], life: .empty, transactions: []))
-    let axis = TimelineAxis.browse(for: [busy, empty])
-    #expect(axis.height > 0 && empty.blocks.isEmpty)
-    let layout = DayContentLayout(blocks: busy.blocks)
-    #expect(busy.blocks.allSatisfy { layout.slot(of: $0.id) == .single })
 }
 
 // MARK: Editing in either column
@@ -171,44 +147,111 @@ private final class Rig {
     rig.editor.cancel()
 }
 
-@MainActor @Test func aSwipeToANewPairOfDaysKeepsTheTimeAtTheTopOfTheScreenWhereItWas() async throws {
-    let rig = try await Rig(events: [event("a", "첫날", first, 9 * 60, 10 * 60), event("b", "둘째 날", second, 14 * 60, 15 * 60)])
-    rig.editor.visibleRange = { 100...900 }
-    let before = rig.editor.geometry
-    let anchor = before.minute(atY: 100 + 24)
-    // The next pair of days has an event at 20:00, which opens the axis there.
-    let later = DayTimelineBuilder.build(DayTimelineInput(day: third, timeZone: zone, events: [event("c", "셋째 날", third, 20 * 60, 21 * 60)], life: .empty, transactions: []))
-    rig.editor.timelinesDidChange([rig.days[1], later])
-    if let transition = rig.editor.transition {
-        // The anchor minute is shifted by exactly the difference between the two shapes, so it does not move on screen.
-        #expect(abs(transition.delta - (transition.to.y(minute: anchor) - transition.from.y(minute: anchor))) < 0.5)
-    }
-    #expect(rig.editor.timelines.map(\.day) == [second, third])
-}
-
-@MainActor @Test func swipingToTheNextDayDoesNotReLayTheDayOutWhenOnlyAnEmptyNeighbourJoinsTheAxis() async throws {
-    let rig = try await Rig(events: [])
-    func day(_ offset: Int, _ events: [CalendarEvent]) -> DayTimeline {
-        DayTimelineBuilder.build(DayTimelineInput(day: first.adding(days: offset), timeZone: zone, events: events, life: .empty, transactions: []))
-    }
-    let d0 = day(0, [event("a", "가", first, 9 * 60, 10 * 60)])
-    let d1 = day(1, [event("b", "나", second, 14 * 60, 15 * 60)])
-    let d2 = day(2, [event("c", "다", third, 11 * 60, 12 * 60)])
-    let d3 = day(3, [event("d", "라", first.adding(days: 3), 16 * 60, 17 * 60)])
-    let d4 = day(4, [])
-    rig.editor.visibleRange = { 100...900 }
-    rig.editor.timelinesDidChange([d0, d1], axisDays: [d0, d1, d2])
-    let before = rig.editor.geometry
-    // One day over: d4 (empty) joins and nothing leaves that mattered, so the axis, and everything on screen, stays put.
-    rig.editor.timelinesDidChange([d1, d2], axisDays: [d0, d1, d2, d3])
-    #expect(rig.editor.transition?.delta ?? 0 == 0 || rig.editor.geometry == before)
-    rig.editor.completeTransition()
-    let steady = rig.editor.geometry
-    rig.editor.timelinesDidChange([d2, d3], axisDays: [d1, d2, d3, d4])
-    // d0's event edges left the axis set, so it may fold, but never moves the day when it does not change shape.
-    if let transition = rig.editor.transition { #expect(transition.from == steady.axis) } else { #expect(rig.editor.geometry == steady) }
-}
-
 @Test func theHeaderIsTheSameHeightWhateverTheDaysHold() {
     #expect(DayHeaderStrip.height == 58)
+}
+
+// MARK: Main day sets the axis, the secondary day only assists
+
+private func dayOf(_ day: LocalDate, _ events: [CalendarEvent], markers: [TransactionMarker] = []) -> DayTimeline {
+    DayTimelineBuilder.build(DayTimelineInput(day: day, timeZone: zone, events: events, life: .empty, transactions: markers))
+}
+
+private func spend(_ id: String, _ day: LocalDate, minute: Int) -> TransactionMarker {
+    TransactionMarker(
+        id: LedgerEntryID(rawValue: id), occurredAtUnixMilliseconds: zone.instant(of: day, minuteOfDay: minute),
+        amount: (try? Money(minorUnits: 3_000, currency: "KRW")) ?? { fatalError("money") }(), flow: .spend, title: id
+    )
+}
+
+private let browse = TimelineAxis.Parameters.standard.browseScale
+
+@Test func withoutASecondaryDayTheAxisIsTheMainDaysOwn() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60), event("b", "나", first, 15 * 60, 16 * 60)])
+    #expect(TimelineAxis.browse(main: main, secondary: nil) == TimelineAxis.browse(for: main))
+    #expect(TimelineAxis.browse(main: main, secondary: dayOf(second, [])) == TimelineAxis.browse(for: main))   // nothing to assist
+}
+
+@Test func theSecondaryDaysEventIsOpenedJustEnoughWhereTheMainDayFoldedIt() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60), event("b", "나", first, 20 * 60, 21 * 60)])
+    let alone = TimelineAxis.browse(for: main)
+    #expect(alone.isFolded(minute: 14 * 60))                                       // the main day folds the afternoon
+    let secondary = dayOf(second, [event("c", "다", second, 14 * 60, 15 * 60)])
+    let shared = TimelineAxis.browse(main: main, secondary: secondary)
+    // The secondary event is drawn at a readable height, on the same axis...
+    #expect(shared.y(minute: 15 * 60) - shared.y(minute: 14 * 60) >= TimelineAxis.Parameters.standard.minimumItemHeight - 0.5)
+    // ...but opened only as far as that needs, not to full size.
+    #expect(shared.pointsPerMinute(atMinute: 14 * 60 + 30) <= browse)
+    #expect(shared.height < alone.height + 40)
+    // And the main day's own stretches are exactly as they were.
+    #expect(shared.y(minute: 10 * 60) - shared.y(minute: 9 * 60) == alone.y(minute: 10 * 60) - alone.y(minute: 9 * 60))
+}
+
+@Test func manySecondaryEventsDoNotUnfoldTheWholeAxis() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60)])
+    let crowded = dayOf(second, (0..<10).map { event("s\($0)", "보조\($0)", second, 11 * 60 + $0 * 70, 11 * 60 + $0 * 70 + 30) })
+    let shared = TimelineAxis.browse(main: main, secondary: crowded)
+    // The symmetric rule would keep every stretch either day touches at full size.
+    let anchors = (main.blocks + crowded.blocks).flatMap { [$0.startMinute, $0.endMinute] }
+    let both = TimelineAxis.browse(totalMinutes: 1440, anchors: anchors)
+    #expect(shared.height < both.height)
+    // Every secondary event is still drawn at least a readable height tall.
+    for block in crowded.blocks {
+        // (A 30 minute event at browse scale is 18 points; the block is drawn at least 24 tall regardless, and no more than browse is asked.)
+        let drawn = shared.y(minute: block.displayEndMinute) - shared.y(minute: block.displayStartMinute)
+        #expect(drawn >= min(TimelineAxis.Parameters.standard.minimumItemHeight, CGFloat(block.displayEndMinute - block.displayStartMinute) * browse) - 0.5)
+    }
+}
+
+@Test func aSecondaryTransactionKeepsRoomForItsCard() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60)])
+    let secondary = dayOf(second, [], markers: [spend("t", second, minute: 15 * 60 + 20)])
+    let shared = TimelineAxis.browse(main: main, secondary: secondary)
+    #expect(shared.y(minute: 15 * 60 + 40) - shared.y(minute: 15 * 60) >= TimelineAxis.Parameters.standard.minimumItemHeight - 0.5)
+}
+
+@Test func whereTheMainDayAlreadyShowsTheTimeNothingIsAddedForTheSecondary() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60)])
+    let secondary = dayOf(second, [event("c", "다", second, 9 * 60 + 15, 9 * 60 + 30)])
+    #expect(TimelineAxis.browse(main: main, secondary: secondary) == TimelineAxis.browse(for: main))
+}
+
+@Test func theMainDayNeverGetsItsOwnAxisSoBothDaysShareEveryMinuteHeight() {
+    let main = dayOf(first, [event("a", "가", first, 9 * 60, 10 * 60)])
+    let secondary = dayOf(second, [event("c", "다", second, 14 * 60, 15 * 60)])
+    let axis = TimelineAxis.browse(main: main, secondary: secondary)
+    // One value answers for both days: a minute has one height, whichever day an item is on.
+    for minute in stride(from: 0, through: 1440, by: 30) { #expect(axis.y(minute: minute) == axis.y(minute: minute)) }
+    #expect(axis.totalMinutes == 1440)
+}
+
+@MainActor @Test func editingHoldsTheBrowseAxisAndLeavingLetsItFollowTheDaysAgain() async throws {
+    let rig = try await Rig(events: [event("a", "첫날", first, 9 * 60, 10 * 60), event("b", "둘째 날", second, 14 * 60, 15 * 60)])
+    let found = try rig.block("첫날")
+    #expect(rig.editor.enterEditMode(for: found.block, pressMinute: 9 * 60 + 10))
+    rig.editor.completeTransition()
+    let held = rig.editor.geometry.axis
+    // The days change while editing (as after a reload): the axis does not.
+    let other = dayOf(first, [event("a", "첫날", first, 9 * 60, 10 * 60), event("z", "추가", first, 18 * 60, 19 * 60)])
+    rig.editor.timelinesDidChange([other, rig.days[1]])
+    rig.editor.completeTransition()
+    #expect(rig.editor.geometry.axis == held)
+    rig.editor.exitEditMode()
+    rig.editor.completeTransition()
+    #expect(rig.editor.geometry.axis != held)                                      // follows the new day again
+    #expect(rig.editor.geometry.axis == TimelineAxis.browse(main: other, secondary: rig.days[1]))
+}
+
+@MainActor @Test func afterASwipeTheAxisIsRecomputedForTheNewMainDayAnchoredAtTheCentreOfTheScreen() async throws {
+    let rig = try await Rig(events: [event("a", "첫날", first, 9 * 60, 10 * 60), event("b", "둘째 날", second, 14 * 60, 15 * 60)])
+    rig.editor.visibleRange = { 100...900 }
+    let before = rig.editor.geometry.axis
+    let centre = before.minute(atY: 500)
+    let newMain = dayOf(second, [event("b", "둘째 날", second, 14 * 60, 15 * 60)])
+    let newSecondary = dayOf(third, [event("c", "셋째 날", third, 20 * 60, 21 * 60)])
+    rig.editor.timelinesDidChange([newMain, newSecondary])
+    #expect(rig.editor.geometry.axis == TimelineAxis.browse(main: newMain, secondary: newSecondary))
+    let transition = try #require(rig.editor.transition)
+    // The centre minute moves by exactly the difference between the shapes, so it stays where it was on screen.
+    #expect(abs(transition.delta - (transition.to.y(minute: centre) - transition.from.y(minute: centre))) < 0.5)
 }

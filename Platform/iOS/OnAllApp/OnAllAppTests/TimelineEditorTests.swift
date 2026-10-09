@@ -411,7 +411,9 @@ private func busyDay() -> [CalendarEvent] {
     // Still editing the same event, now around 15:00.
     #expect(h.editor.isEditing && h.editor.selectedKey == block.eventKey)
     #expect(h.editor.editAnchors == [15 * 60, 16 * 60])                          // the handles follow the event to its new time
-    #expect(h.editor.scrollRequest != nil)
+    // The browse axis is held while editing, so nothing reshapes under the finger and no scroll correction is needed.
+    #expect(h.editor.geometry.axis == editing.axis)
+    #expect(h.editor.scrollRequest == nil)
 }
 
 @MainActor @Test func placingANewEventEnlargesTheMinuteAndFoldsBackWhetherSavedOrCancelled() async throws {

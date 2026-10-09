@@ -37,7 +37,7 @@ struct TimelineGeometry: Equatable {
     }
 
     /// The scale of the unfolded part of the axis. Only meaningful as a nominal size (for example a minimum height).
-    var pointsPerMinute: CGFloat { axis.segments.first(where: { !$0.isFolded })?.pointsPerMinute ?? axis.segments.first?.pointsPerMinute ?? 1 }
+    var pointsPerMinute: CGFloat { axis.segments.filter { !$0.isFolded }.map(\.pointsPerMinute).max() ?? axis.segments.first?.pointsPerMinute ?? 1 }
 
     /// The height of the scrolled content. While the axis changes shape it never shrinks below where it started: the scroll
     /// view holds its position until the change ends, and content that gets shorter under it would push the scroll position

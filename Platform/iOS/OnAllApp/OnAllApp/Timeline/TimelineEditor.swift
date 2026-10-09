@@ -165,10 +165,9 @@ final class TimelineEditor {
     }
     /// The days on screen, in order. They share one time axis, so the same minute is at the same height in every one.
     private(set) var timelines: [DayTimeline] = []
-    /// The days the shared axis is fitted to: the ones on screen and the neighbours a swipe brings in. Fitting to more than what is
-    /// on screen is what keeps a swipe from re-laying the whole day out: the axis changes only when a neighbour joining or leaving
-    /// the set actually adds or removes an event edge.
-    private var axisTimelines: [DayTimeline] = []
+    /// The browse axis held fixed for as long as an event is being edited, so what is under the finger never reshapes. Dropped (and
+    /// the axis recomputed, as a smooth change) when editing ends.
+    private var frozenBrowse: TimelineAxis?
     /// The first day on screen.
     var timeline: DayTimeline? { timelines.first }
     /// The longest of the days, in minutes (a daylight-saving day is shorter or longer than 24 hours).
@@ -247,9 +246,15 @@ final class TimelineEditor {
     // MARK: View modes
 
     /// Browse axis for the current day, or the uniform fallback before a timeline is known.
+    private var liveBrowseAxis: TimelineAxis {
+        guard let main = timelines.first else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
+        return TimelineAxis.browse(main: main, secondary: timelines.count > 1 ? timelines[1] : nil, parameters: parameters)
+    }
+
     private var browseAxis: TimelineAxis {
+        if let frozenBrowse { return frozenBrowse }
         guard !timelines.isEmpty else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
-        return TimelineAxis.browse(for: axisTimelines.isEmpty ? timelines : axisTimelines, parameters: parameters)
+        return liveBrowseAxis
     }
 
     /// The axis for a view shape: the browse axis, with the neighbourhood of each handle enlarged and/or one event opened
@@ -283,16 +288,15 @@ final class TimelineEditor {
 
     /// Several days at once. When the set of days changes (a swipe moved one over) and nothing is selected, the shared axis may
     /// change shape; that is a transition anchored at the minute at the top of the screen, so nothing visible jumps.
-    func timelinesDidChange(_ new: [DayTimeline], axisDays: [DayTimeline]? = nil) {
+    func timelinesDidChange(_ new: [DayTimeline]) {
         let before = currentAxis
         let daysChanged = new.map(\.day) != timelines.map(\.day)
         timelines = new
-        axisTimelines = axisDays ?? new
         func found(_ key: CalendarEventKey) -> EventBlock? { block(forKey: key) }
         if let key = expandedKey, found(key) == nil { expandedKey = nil }      // it is gone
         guard let key = selectedKey else {
             if daysChanged, mode == .idle, let visible = visibleRange?() {
-                publishAxisChange(from: before, anchorMinute: before.minute(atY: visible.lowerBound + 24))
+                publishAxisChange(from: before, anchorMinute: before.minute(atY: (visible.lowerBound + visible.upperBound) / 2))
             }
             return
         }
@@ -319,6 +323,8 @@ final class TimelineEditor {
         _ new: [Int]?, selected: CalendarEventKey?, expanded: CalendarEventKey? = nil, anchorMinute: Int?, from old: TimelineAxis,
         forcedDelta: CGFloat? = nil
     ) {
+        // Editing holds the browse axis as it is; leaving it lets the axis follow the days again.
+        if new != nil, frozenBrowse == nil { frozenBrowse = liveBrowseAxis } else if new == nil { frozenBrowse = nil }
         editAnchors = new
         if new == nil { createFocus = nil }
         selectedKey = selected
