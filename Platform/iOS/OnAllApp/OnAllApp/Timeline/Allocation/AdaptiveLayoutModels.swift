@@ -171,7 +171,7 @@ struct AllocationParameters: Equatable, Sendable {
     /// The row an overflow is written on (it is text, not a card).
     var overflowCard: CGFloat = 20
     /// The height of the header an event may have above its start.
-    var headerRow: CGFloat = 22
+    var headerRow: CGFloat = 16
     var detailRow: CGFloat = 20
     var secondaryHeader: CGFloat = 28
     /// The part of the screen the timeline keeps while something is in focus.

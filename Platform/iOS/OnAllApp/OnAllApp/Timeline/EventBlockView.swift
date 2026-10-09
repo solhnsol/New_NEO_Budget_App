@@ -157,6 +157,7 @@ struct EventBlockView: View {
     var hasHeader = false
     var zoneIdentifier = ""
     var endIsCovered = false
+    var startIsCovered = false
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -189,6 +190,13 @@ struct EventBlockView: View {
             if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
                 CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
                     .padding(.horizontal, 6).padding(.bottom, 5 * scale)
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            // The header has no time of its own: the start is in this card's top right corner.
+            if hasHeader, !startIsCovered, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty {
+                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
+                    .padding(.horizontal, 6).padding(.top, 5 * scale)
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }

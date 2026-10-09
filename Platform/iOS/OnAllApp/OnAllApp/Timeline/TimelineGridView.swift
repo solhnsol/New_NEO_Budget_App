@@ -298,7 +298,7 @@ struct TimelineGridView: View {
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
                         shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, zoneIdentifier: timeline.timeZoneIdentifier,
                         maxTitleWidth: item.titleMaxWidth,
-                        startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY, width: 48, height: 18)) }
+                        startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
                     )
                 }
             }
@@ -617,7 +617,8 @@ private struct BlockCell: View {
                 EventBlockView(
                     block: block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
                     shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
-                    endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) }
+                    endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
+                    startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) }
                 )
                 .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
                 .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
