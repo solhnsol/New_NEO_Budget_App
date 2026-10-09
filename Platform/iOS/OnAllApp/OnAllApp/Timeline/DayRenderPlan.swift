@@ -28,7 +28,7 @@ struct DayRenderPlan {
         let touchFrame: CGRect
         var title: DayContentLayout.TitlePlacement
         /// The header above the start boundary, when the engine moved the title there. Same event, not part of its time.
-        let header: CGRect?
+        var header: CGRect?
         /// False when the title is drawn in a header or in an overlap summary instead.
         var showsTitleInCard: Bool
         /// Linked transactions inside the event's time, in the order the card shows them, and how many it shows / sums up.
@@ -474,6 +474,23 @@ struct DayRenderPlan {
         }
         for index in lineItems.indices { (lineItems[index].frame, lineItems[index].touchFrame) = lineUp(lineItems[index].frame, lineItems[index].touchFrame) }
         for index in overflowItems.indices { (overflowItems[index].frame, overflowItems[index].touchFrame) = lineUp(overflowItems[index].frame, overflowItems[index].touchFrame) }
+        // A title with no room in its card goes in a small header tab above the card when that place is certainly free: nothing else (another
+        // event or its header, a crowd's card, a transaction row) is there, and it is inside the day. Otherwise the title stays out, as before.
+        var occupied: [CGRect] = eventItems.map(\.frame) + eventItems.compactMap(\.header) + summaries.map(\.frame)
+            + lineItems.map(\.frame) + overflowItems.map(\.frame)
+        let headerHeight = parameters.headerRow * scale
+        for index in eventItems.indices.sorted(by: { eventItems[$0].frame.minY < eventItems[$1].frame.minY }) {
+            let item = eventItems[index]
+            guard titlelessIDs.contains(item.block.id), item.header == nil, item.block.id != focused, item.block.id != expanded else { continue }
+            let width = min(item.frame.width, titleWidth(item.block.title) + 24)
+            let rect = CGRect(x: item.frame.minX, y: item.frame.minY - headerHeight, width: width, height: headerHeight)
+            guard rect.minY >= 0, !occupied.contains(where: { $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) && $0 != item.frame }) else { continue }
+            // Its own card is directly below the tab, so only the card's own frame may touch it.
+            guard !occupied.contains(where: { $0 != item.frame && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
+            eventItems[index].header = rect
+            eventItems[index].showsTitleInCard = false
+            occupied.append(rect)
+        }
         events = eventItems
         self.summaries = summaries
         lines = lineItems

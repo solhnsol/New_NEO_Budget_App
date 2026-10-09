@@ -352,3 +352,21 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(second.title == DayContentLayout.TitlePlacement())                                // the neighbour's title is not pushed aside by it
     #expect(first.frame.height <= max(3, second.frame.minY - first.frame.minY) + 0.01)         // and the first never runs on over the second (3pt is its floor)
 }
+
+@Test func aTitlelessSliverGetsAHeaderTabOnlyWhereTheSpaceAboveIsFree() throws {
+    let geometry = TimelineGeometry(totalMinutes: 1440)                                    // the plain axis: a 5 minute event is a sliver
+    func plan(_ events: [CalendarEvent]) throws -> DayRenderPlan {
+        DayRenderPlan(timeline: try timeline(events), role: nil, layout: nil, geometry: geometry, layoutWidth: layoutWidth, titleWidth: { _ in 30 })
+    }
+    // Free above: the sliver is the first thing of its stretch, so its title goes in a tab on top of the card.
+    let alone = try plan([event(1, "앞", 17 * 60, 17 * 60 + 5), event(2, "뒤", 17 * 60 + 5, 18 * 60 + 30)])
+    let sliver = try #require(alone.events.first { $0.block.title == "앞" })
+    #expect(!sliver.showsTitleInCard)
+    let tab = try #require(sliver.header)
+    #expect(tab.maxY <= sliver.frame.minY + 0.01 && tab.minX == sliver.frame.minX)                  // sits on the card, in its column
+    #expect(alone.events.filter { $0.block.title != "앞" }.allSatisfy { !$0.frame.intersects(tab) })  // and covers no other event
+    // Not free: another event is right above it, so a tab would land on that event and is not made.
+    let busy = try plan([event(3, "위", 16 * 60 + 40, 16 * 60 + 58), event(1, "앞", 17 * 60, 17 * 60 + 5), event(2, "뒤", 17 * 60 + 5, 18 * 60 + 30)])
+    let covered = try #require(busy.events.first { $0.block.title == "앞" })
+    #expect(covered.header.map { rect in !busy.events.contains { $0.block.title != "앞" && $0.frame.intersects(rect) } } ?? true)
+}

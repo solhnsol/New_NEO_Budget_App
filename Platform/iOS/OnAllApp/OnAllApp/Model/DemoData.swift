@@ -124,6 +124,7 @@ enum DemoData {
         transDrafts += [
             draft(school, "산업용생성AI", d3, (9, 0), (10, 50)), draft(appointments, "Upper", d3, (16, 0), (17, 50)), draft(life, "데이트", d3, (18, 0), (21, 0)), draft(life, "Scrim", d3, (22, 0), (23, 59)),
             draft(appointments, "Lower", d4, (8, 0), (9, 30)), draft(life, "LOL Match", d4, (20, 0), (23, 0)),
+            draft(school, "짧은 앞 일정", d4, (14, 0), (14, 5)), draft(life, "뒤에 오는 긴 일정", d4, (14, 5), (15, 30)),
             draft(appointments, "Push", d5, (8, 0), (10, 0)), draft(school, "인바디 측정", d5, (8, 0), (8, 30)),
             draft(life, "Date", d5, (16, 0), (17, 0)), draft(school, "자연어처리와RAG", d5, (19, 0), (21, 50)),
             draft(school, "회의 가", d6, (10, 50), (11, 5)), draft(school, "회의 나", d6, (11, 5), (11, 20)), draft(life, "Date", d6, (12, 0), (22, 0)),
