@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import NEOBudgetCalendar
 import NEOBudgetCore
 
@@ -103,7 +104,7 @@ struct DayRenderPlan {
     init(
         timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: TimelineGeometry, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        titleWidth: (String) -> CGFloat
+        settled: Bool = true, titleWidth: (String) -> CGFloat
     ) {
         let scale = max(0.5, textScale)
         let contentWidth = geometry.contentWidth(totalWidth: layoutWidth)
@@ -121,7 +122,9 @@ struct DayRenderPlan {
 
         // A day the engine did not lay out (one sliding in during a swipe) is drawn on the axis the two days on screen already have: every
         // event keeps its true start and end, never stretched to a minimum height, and what does not fit in its true height is cut back.
-        let incoming = role == nil || layout == nil
+        // The same goes for any day while the axis is still changing shape under it: the engine's decisions are for the axis it is heading
+        // to, and the room an event has on the way there is only what the axis gives it at that moment.
+        let incoming = role == nil || layout == nil || !settled
         let trueMinimumHeight: CGFloat = 3
 
         // Frames. An overlapping event keeps the full width, indented by at most one step; an inner one is also pulled in on the right.
@@ -130,7 +133,7 @@ struct DayRenderPlan {
             let shape = overlap(block)
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
             var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
-            if incoming, expanded != block.id, placement(block) == nil {
+            if incoming, expanded != block.id {
                 frame.size.height = max(trueMinimumHeight, geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute) - 1)
             }
             frames[block.id] = frame
@@ -143,7 +146,8 @@ struct DayRenderPlan {
             right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
             width: { titleWidth(byID[$0]?.title ?? "") },
             columnRight: contentLeft + contentWidth - EventTitleLayer.horizontalPadding,
-            minimumHeight: incoming ? trueMinimumHeight : geometry.minimumBlockHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale
+            minimumHeight: incoming ? trueMinimumHeight : geometry.minimumBlockHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
+            titlesOnly: incoming
         )
 
         // Overlap groups of three or more: their titles become one summary at the group's first card.

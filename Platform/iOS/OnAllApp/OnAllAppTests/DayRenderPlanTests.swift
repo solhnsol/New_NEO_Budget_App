@@ -287,3 +287,19 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let placed = try #require(plan.events.first)
     #expect(plan.summaries.isEmpty && placed.showsTitleInCard && placed.frame.height >= 24)
 }
+
+@Test func whileTheAxisIsStillChangingTheDayThatIsNowMainIsDrawnOnTheAxisItHasAtThatMoment() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))                 // the axis the move starts from
+    let target = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
+    let targetRender = render(target)                                                          // what the engine decided for the day itself
+    let plan = DayRenderPlan(
+        timeline: target, role: .main, layout: targetRender.layout, geometry: current.geometry, layoutWidth: layoutWidth,
+        settled: false, titleWidth: { _ in 30 }
+    )
+    #expect(plan.events.allSatisfy { $0.frame.minY == current.geometry.y(minute: $0.block.displayStartMinute) })
+    #expect(plan.events.allSatisfy { abs($0.frame.height - max(3, current.geometry.y(minute: $0.block.displayEndMinute) - $0.frame.minY - 1)) < 0.01 })
+    let crowd = plan.summaries.first { $0.countOnly }
+    #expect(plan.events.allSatisfy { $0.frame.height < 19 })                                         // the morning is squeezed on this axis
+    #expect(crowd?.items.count == 3)                                                               // so the three that follow one another are a count
+    #expect(plan.events.allSatisfy { !$0.showsTitleInCard })                                       // and no title is printed over another
+}

@@ -273,7 +273,7 @@ struct TimelineGridView: View {
         DayRenderPlan(
             timeline: timeline, role: role(of: timeline), layout: editor.adaptive, geometry: geometry, layoutWidth: width, textScale: textScale,
             expanded: timeline.blocks.first { editor.isExpanded($0) }?.id, focused: focusedID(in: timeline),
-            titleWidth: { editor.titleWidth(for: $0) }
+            settled: editor.transition == nil, titleWidth: { editor.titleWidth(for: $0) }
         )
     }
 

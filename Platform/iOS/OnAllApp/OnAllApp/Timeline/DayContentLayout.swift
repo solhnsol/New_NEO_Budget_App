@@ -109,7 +109,8 @@ struct DayContentLayout {
     /// its title stays at its own top and the others do not need to clear it.
     func titlePlacements(
         top: (BlockID) -> CGFloat, bottom: (BlockID) -> CGFloat, left: (BlockID) -> CGFloat, right: (BlockID) -> CGFloat,
-        width: (BlockID) -> CGFloat, columnRight: CGFloat, minimumHeight: CGFloat, focused: BlockID?, rowHeight: CGFloat = DayContentLayout.titleRowHeight
+        width: (BlockID) -> CGFloat, columnRight: CGFloat, minimumHeight: CGFloat, focused: BlockID?, rowHeight: CGFloat = DayContentLayout.titleRowHeight,
+        titlesOnly: Bool = false
     ) -> [BlockID: TitlePlacement] {
         var result: [BlockID: TitlePlacement] = [:]
         var placed: [(rect: CGRect, bottom: CGFloat)] = []
@@ -124,7 +125,7 @@ struct DayContentLayout {
                 let limit = max(0, trueBottom - trueTop - row)
                 for _ in 0..<8 {
                     let rect = CGRect(x: baseX + place.dx, y: trueTop + place.dy, width: wanted, height: row)
-                    guard let under = placed.first(where: { $0.bottom > trueTop && $0.rect.intersects(rect) }) else { break }
+                    guard let under = placed.first(where: { ($0.bottom > trueTop || titlesOnly) && $0.rect.intersects(rect) }) else { break }
                     let lower = under.rect.maxY - trueTop
                     let after = under.rect.maxX + Self.titleGap - baseX
                     if lower <= limit {
