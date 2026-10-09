@@ -107,6 +107,7 @@ struct WeekStripView: View {
             let cell = geometry.size.width / CGFloat(max(1, week.count))
             let ball = Self.ball
             ZStack(alignment: .topLeading) {
+            ZStack(alignment: .topLeading) {
                 if showsNextDay, position != nil {
                     let start = (leading + 0.5) * cell
                     // At the end of the week the capsule stops at the strip's edge, rounded, instead of being cut off flat.
@@ -115,15 +116,23 @@ struct WeekStripView: View {
                         .frame(width: max(ball, end - start), height: ball)
                         .offset(x: start, y: (Self.numberRow - ball) / 2)
                 }
-                if let position {
-                    Circle().fill(circleColor(for: position))
-                        .frame(width: ball, height: ball)
-                        .offset(x: (CGFloat(position) + 0.5) * cell - ball / 2, y: (Self.numberRow - ball) / 2)
-                        .id(position)
-                        .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.7)), removal: .opacity))
+            }
+            // The circle lives in its own day's cell: when the day changes it fades out where it was and grows in on the new day from
+            // that day's centre. It never travels.
+            HStack(spacing: 0) {
+                ForEach(week.indices, id: \.self) { index in
+                    ZStack {
+                        if index == position {
+                            Circle().fill(circleColor(for: index))
+                                .frame(width: ball, height: ball)
+                                .transition(.asymmetric(insertion: .scale(scale: 0.3).combined(with: .opacity), removal: .opacity))
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: Self.numberRow, maxHeight: Self.numberRow)
                 }
             }
             .animation(.easeOut(duration: 0.16), value: position)
+            }
         }
         .allowsHitTesting(false)
     }
