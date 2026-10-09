@@ -168,7 +168,7 @@ struct EventBlockView: View {
             let used = (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + rowsUsed + 6
             if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
                 CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
-                    .padding(.horizontal, 6).padding(.bottom, 2)
+                    .padding(.horizontal, 6).padding(.bottom, 5 * scale)
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
@@ -246,6 +246,6 @@ struct CornerTime: View {
     var scale: CGFloat = 1
 
     var body: some View {
-        Text(text).font(.system(size: 10 * scale)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1).fixedSize()
+        Text(text).font(.system(size: 9 * scale)).monospacedDigit().foregroundStyle(Color.secondary.opacity(0.7)).lineLimit(1).fixedSize()
     }
 }
