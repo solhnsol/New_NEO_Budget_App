@@ -14,6 +14,14 @@ import UIKit
 final class ScrollProbe {
     fileprivate(set) weak var scrollView: UIScrollView?
 
+    /// The part of the grid that is on screen now, in grid coordinates (the grid is inset by `gridInset` inside the scroll content).
+    func visibleGridRange(gridInset: CGFloat) -> ClosedRange<CGFloat>? {
+        guard let scrollView else { return nil }
+        let top = scrollView.contentOffset.y + scrollView.adjustedContentInset.top - gridInset
+        let height = scrollView.bounds.height - scrollView.adjustedContentInset.top - scrollView.adjustedContentInset.bottom
+        return top...(top + height)
+    }
+
     /// How far the content can still move by, for a layout whose content is `contentHeight` tall: down to the top edge and up to
     /// the bottom edge. A shift outside this is refused by the scroll view, and would show as a jump when the change ends.
     func shiftRange(contentHeight: CGFloat) -> ClosedRange<CGFloat>? {

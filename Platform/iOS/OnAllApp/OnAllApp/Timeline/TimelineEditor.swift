@@ -153,6 +153,8 @@ final class TimelineEditor {
     /// change of shape is planned inside this, because a shift the scroll view refuses would show as a jump when the change ends.
     /// Set by the grid; `nil` (tests, before it appears) means no limit.
     var scrollLimits: ((_ contentHeight: CGFloat, _ needsRoom: Bool) -> ClosedRange<CGFloat>?)?
+    /// The part of the grid on screen now (grid coordinates). Set by the grid; `nil` means no constraint.
+    var visibleRange: (() -> ClosedRange<CGFloat>?)?
     private(set) var transition: AxisTransition?
     private(set) var scrollCommit: ScrollCommit?
     /// The scroll the current transition will need, for callers and tests that ask what was requested.
@@ -199,9 +201,18 @@ final class TimelineEditor {
 
     /// Where the axis is enlarged now: the place a new event is being put, and the resting finger's zone. Never the handles of
     /// an event that is merely selected.
-    private var zoomCenters: [Int] { [createFocus, dwellCenter].compactMap { $0 } }
+    private var zoomWindows: [ClosedRange<Int>] {
+        var windows = browseAxis.handleZones(around: [createFocus].compactMap { $0 }, parameters: parameters)
+        if let dwellCenter {
+            windows.append(max(0, dwellCenter - dwellRadii.before)...min(timeline?.totalMinutes ?? 1440, dwellCenter + dwellRadii.after))
+        }
+        return windows
+    }
+    /// How far the resting finger's zone reaches each way. Smaller on the side that faces the event's other edge when a full zone
+    /// would push that edge off the screen.
+    private var dwellRadii: (before: Int, after: Int) = (45, 45)
     /// The enlarged minute windows, for drawing and tests.
-    var enlargedZones: [ClosedRange<Int>] { browseAxis.handleZones(around: zoomCenters, parameters: parameters) }
+    var enlargedZones: [ClosedRange<Int>] { zoomWindows }
 
     /// Whether the scroll view needs room beyond the end of the day. A zone opening under a resting finger moves the content by
     /// as much as it grew, which a short day could not do without it. Held until the zone is gone and the scroll has settled.
@@ -227,14 +238,14 @@ final class TimelineEditor {
 
     /// The axis for a view shape: the browse axis, with the neighbourhood of each handle enlarged and/or one event opened
     /// over its own range.
-    private func axis(anchors: [Int], expanded: CalendarEventKey?) -> TimelineAxis {
+    private func axis(windows: [ClosedRange<Int>], expanded: CalendarEventKey?) -> TimelineAxis {
         var result = browseAxis
-        if !anchors.isEmpty { result = result.expandedLocally(around: anchors, parameters: parameters) }
+        if !windows.isEmpty { result = result.expandedLocally(windows: windows, parameters: parameters) }
         if let spec = expansion(for: expanded) { result = result.expanded(over: spec.window, scale: spec.scale) }
         return result
     }
 
-    private var currentAxis: TimelineAxis { axis(anchors: zoomCenters, expanded: expandedKey) }
+    private var currentAxis: TimelineAxis { axis(windows: zoomWindows, expanded: expandedKey) }
 
     /// The minutes an expanded event occupies and how large they are drawn: large enough that the block is as tall as its
     /// content needs, but never smaller than browse scale.
@@ -422,6 +433,7 @@ final class TimelineEditor {
               let minute = edgeMinute(of: preview, in: timeline) else { return }
         let before = currentAxis
         guard before.pointsPerMinute(atMinute: minute) < parameters.editScale - 0.001, dwellCenter != minute else { return }
+        dwellRadii = radii(forZoomAt: minute, before: before, keepingInView: preview.kind == .resizeStart ? block.endMinute : block.startMinute)
         dwellCenter = minute
         publishAxisChange(from: before, anchorMinute: minute)
         let after = currentAxis
@@ -438,6 +450,30 @@ final class TimelineEditor {
 
     /// Where the finger is, in content coordinates, as far as the editor knows. For scripts and tests that stand in for a finger.
     var fingerContentY: CGFloat { lastFingerY }
+
+    /// How far a new zone at `minute` may reach each way. A full zone grows the stretch between the finger and the event's other
+    /// edge, and the content is scrolled to hold the finger, so repeated zones push the other edge off the screen and the event can
+    /// no longer be seen. So the side facing that edge is shortened, as far as needed, to keep it where it is on screen.
+    private func radii(forZoomAt minute: Int, before: TimelineAxis, keepingInView other: Int) -> (before: Int, after: Int) {
+        let full = parameters.handleRadius
+        guard let visible = visibleRange?() else { return (full, full) }
+        let margin: CGFloat = 24
+        let fingerY = before.y(minute: minute)
+        func inView(_ y: CGFloat) -> Bool { y >= visible.lowerBound + margin && y <= visible.upperBound - margin }
+        guard inView(before.y(minute: other)) else { return (full, full) }            // already out of view: not made worse here
+        let facingUp = other < minute
+        for reach in stride(from: full, through: 0, by: -15) {
+            let candidate = facingUp ? (before: reach, after: full) : (before: full, after: reach)
+            let window = max(0, minute - candidate.before)...min(timeline?.totalMinutes ?? 1440, minute + candidate.after)
+            let axis = self.axis(windows: zoomWindowsExcludingDwell + [window], expanded: expandedKey)
+            // The finger stays at `fingerY` on screen, so the other edge lands at its distance from the finger in the new shape.
+            let edgeY = fingerY + (axis.y(minute: other) - axis.y(minute: minute))
+            if inView(edgeY) { return candidate }
+        }
+        return facingUp ? (0, full) : (full, 0)
+    }
+
+    private var zoomWindowsExcludingDwell: [ClosedRange<Int>] { browseAxis.handleZones(around: [createFocus].compactMap { $0 }, parameters: parameters) }
 
     /// Ends the wait for the axis to settle. For tests, which have no animation to wait for.
     func endSettling() { settlesAt = .distantPast }
@@ -460,6 +496,7 @@ final class TimelineEditor {
         guard dwellCenter != nil else { return }
         let before = currentAxis
         dwellCenter = nil
+        dwellRadii = (parameters.handleRadius, parameters.handleRadius)
         publishAxisChange(from: before, anchorMinute: nil, roomAfter: roomAfter, forcedDelta: -dragShift)
         dragShift = 0
     }

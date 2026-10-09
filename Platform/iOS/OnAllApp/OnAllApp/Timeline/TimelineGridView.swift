@@ -66,6 +66,7 @@ struct TimelineGridView: View {
             .onAppear {
                 scrollToStart(proxy, geometry: editor.geometry)
                 // The editor asks how far the content may be shifted before it plans a change of shape.
+                editor.visibleRange = { [probe] in probe.visibleGridRange(gridInset: Self.edgePadding) }
                 editor.scrollLimits = { [probe] contentHeight, needsRoom in
                     probe.shiftRange(contentHeight: contentHeight + 2 * Self.edgePadding + (needsRoom ? Self.editScrollRoom : 0))
                 }

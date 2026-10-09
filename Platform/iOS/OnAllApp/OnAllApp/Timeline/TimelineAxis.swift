@@ -219,7 +219,12 @@ struct TimelineAxis: Equatable {
     /// `rampScale` on both sides so the change of size is gradual. The rest of the axis, including a long event's folded
     /// middle, is untouched, so the whole thing grows by a few hundred points at most however long the event is.
     func expandedLocally(around handles: [Int], parameters: Parameters = .standard) -> TimelineAxis {
-        let zones = handleZones(around: handles, parameters: parameters)
+        expandedLocally(windows: handleZones(around: handles, parameters: parameters), parameters: parameters)
+    }
+
+    /// The same for windows chosen by the caller, which need not be centred on their minute: a zone can be lopsided so that the
+    /// side facing something that must stay in view grows less.
+    func expandedLocally(windows zones: [ClosedRange<Int>], parameters: Parameters = .standard) -> TimelineAxis {
         var result = self
         for zone in zones {
             let ramp = max(0, zone.lowerBound - parameters.handleRamp)...min(totalMinutes, zone.upperBound + parameters.handleRamp)

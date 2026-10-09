@@ -1211,3 +1211,36 @@ private func zoomShapes() -> [EventShape] {
     // The view goes back to exactly where it was when the handle was grabbed, not to wherever the last zone left it.
     #expect(abs(release.delta + shifted) < 0.001, "shifted \(shifted), release \(release.delta)")
 }
+
+/// Drags the end handle of a 09:00-17:00 event up and down through the compressed middle, resting each time so a zone opens, in a
+/// scroll view whose visible part follows the scrolling the zones cause. Returns whether the event's start stayed on screen.
+@MainActor
+private func startStaysVisible(constrained: Bool) async throws -> (stayed: Bool, lowestStart: CGFloat) {
+    let h = try await Harness.make(events: [longEvent("w", "워크숍", from: at(9), to: at(17))])
+    let block = try h.block("워크숍")
+    var visible: ClosedRange<CGFloat> = 0...480                                          // a screen of grid, from the top of the day
+    if constrained { h.editor.visibleRange = { visible } }
+    _ = try grabHandle(h, .resizeEnd, block)
+    var lowest: CGFloat = .infinity
+    for minute in [14 * 60, 11 * 60, 15 * 60, 10 * 60 + 30, 14 * 60 + 30, 11 * 60 + 30] {
+        h.editor.endSettling()
+        h.editor.update(fingerY: h.editor.geometry.y(minute: minute))
+        h.editor.zoomAtFinger()
+        if let transition = h.editor.transition {
+            visible = (visible.lowerBound + transition.delta)...(visible.upperBound + transition.delta)
+            h.editor.completeTransition(id: transition.id)
+        }
+        let startY = h.editor.geometry.y(minute: 9 * 60)
+        lowest = min(lowest, startY - visible.lowerBound)
+    }
+    h.editor.cancel()
+    return (lowest >= 0, lowest)
+}
+
+@MainActor @Test func repeatedZonesNeverScrollTheEventsOtherEdgeOutOfView() async throws {
+    let free = try await startStaysVisible(constrained: false)
+    let kept = try await startStaysVisible(constrained: true)
+    // Without the constraint the zones push the start above the screen; with it the start stays where it can be seen.
+    #expect(!free.stayed, "unconstrained start offset \(free.lowestStart)")
+    #expect(kept.stayed, "constrained start offset \(kept.lowestStart)")
+}
