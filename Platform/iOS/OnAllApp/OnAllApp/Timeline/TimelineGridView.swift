@@ -305,8 +305,8 @@ struct TimelineGridView: View {
                     if let block = timeline.blocks.first(where: { $0.id == id }) { editor.toggleExpanded(block) }
                 }
             }
-            ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale) }
-            ForEach(plan.overflows, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale) }
+            ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale, edge: geometry.gutterWidth) }
+            ForEach(plan.overflows, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale, edge: geometry.gutterWidth) }
             if timeline.day == today { NowLine(timeline: timeline, geometry: geometry, width: width) }
         }
     }

@@ -16,18 +16,40 @@ enum AmountKindNames {
     }
 }
 
-/// One transaction on its own line, at the time it happened. Its name and amount are ordinary text at full contrast: a transaction is
-/// never drawn as if it were disabled. A link to an event is a small extra: a link mark, a dashed edge and a short label.
+/// The small mark a transaction leaves on the timeline: a dot on the day's edge and a thin line leading out to its text, as if the text
+/// were written into the calendar. A transaction that is linked to an event or only approximately placed leads out with a dashed line.
+private struct Leader: View {
+    var dashed = false
+    var hollow = false
+    /// How far the line runs on after the dot: out of the day's edge to where the text starts.
+    var length: CGFloat = 10
+    let scale: CGFloat
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Color.clear.frame(width: 3, height: 1)
+            Circle().strokeBorder(Color.secondary.opacity(0.8), lineWidth: hollow ? 1 : 0).background(Circle().fill(hollow ? Color.clear : Color.secondary.opacity(0.8)))
+                .frame(width: 5 * scale, height: 5 * scale)
+            Path { path in path.move(to: .zero); path.addLine(to: CGPoint(x: length, y: 0)) }
+                .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 0.75, dash: dashed ? [2, 2] : []))
+                .frame(width: length, height: 1)
+        }
+    }
+}
+
+/// One transaction on its own line, at the time it happened, written like a line of the calendar's own text: a dot and a line out of the
+/// timeline, then its name and its amount. Both are ordinary text at full contrast: a transaction is never drawn as if it were disabled.
 struct TransactionLineView: View {
     let item: DayRenderPlan.LineItem
     let scale: CGFloat
+    /// Where the day's own column begins (after the hour gutter): the line leads out from there.
+    var edge: CGFloat = 60
 
     var body: some View {
         let display = item.display
         let refund = display?.flow == .refund
         HStack(spacing: 4) {
-            Image(systemName: item.link != nil ? "link" : (refund ? "arrow.uturn.backward" : "creditcard"))
-                .font(.system(size: 9 * scale)).foregroundStyle(.secondary)
+            Leader(dashed: item.link != nil || (display?.isApproximate ?? false), length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
             VStack(alignment: .leading, spacing: 0) {
                 Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
                 if let label = item.linkedEventTitle {
@@ -37,22 +59,14 @@ struct TransactionLineView: View {
             Spacer(minLength: 2)
             if let display {
                 Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
-                    .font(.system(size: 12 * scale, weight: .semibold).monospacedDigit())
+                    .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
                     .foregroundStyle(refund ? Color.green : Color.primary)
                     .lineLimit(1).fixedSize()
             }
         }
-        .padding(.horizontal, 8)
-        .frame(width: item.frame.width, height: item.frame.height)
-        .background(Color(.systemBackground).opacity(0.96))
-        .overlay(alignment: .bottom) {
-            Rectangle().stroke(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 0.75, dash: item.link != nil || (display?.isApproximate ?? false) ? [3, 2] : []))
-                .frame(height: 0.75)
-        }
-        .overlay(alignment: .leading) {
-            if item.link != nil { Rectangle().fill(Color.accentColor.opacity(0.7)).frame(width: 2) }
-        }
-        .offset(x: item.frame.minX, y: item.frame.minY)
+        .padding(.trailing, 6)
+        .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
     }
@@ -66,34 +80,48 @@ struct TransactionLineView: View {
     }
 }
 
-/// Transaction lines that could not each have a line of their own. A small summary card, unlike an event: count first, the kinds when
-/// there are several, a total only when the engine says it is one kind in one currency. It says nothing about the transactions belonging
-/// together.
+/// Transaction lines that could not each have a line of their own, written the same way: a dot and a line out of the timeline, "거래 5건",
+/// and under it only the total when it is one kind in one currency (else the kinds). It says nothing about the transactions belonging together.
 struct OverflowCardView: View {
     let item: DayRenderPlan.OverflowItem
     let scale: CGFloat
+    var edge: CGFloat = 60
 
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "ellipsis.rectangle").font(.system(size: 10 * scale)).foregroundStyle(.secondary)
-            // The count is what matters: when the whole summary does not fit, the count alone is shown, never a cut-off number.
-            ViewThatFits(in: .horizontal) {
-                Text(Self.summary(item)).fixedSize()
-                Text(Self.countOnly(item)).minimumScaleFactor(0.5)
+        let twoLines = item.frame.height >= 28 * scale
+        HStack(spacing: 4) {
+            Leader(hollow: true, length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
+            if twoLines {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(Self.countOnly(item)).font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary)
+                    if let second = Self.secondLine(item) {
+                        Text(second).font(.system(size: 10 * scale).monospacedDigit()).foregroundStyle(.secondary).minimumScaleFactor(0.7)
+                    }
+                }
+                .lineLimit(1)
+            } else {
+                // The count is what matters: when the whole summary does not fit, the count alone is shown, never a cut-off number.
+                ViewThatFits(in: .horizontal) {
+                    Text(Self.summary(item)).fixedSize()
+                    Text(Self.countOnly(item)).minimumScaleFactor(0.5)
+                }
+                .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             }
-            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
-            Image(systemName: "chevron.right").font(.system(size: 8 * scale, weight: .semibold)).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 8)
-        .frame(width: item.frame.width, height: item.frame.height)
-        .background(Color(.tertiarySystemFill), in: Capsule())
-        .overlay(Capsule().stroke(Color.secondary.opacity(0.45), lineWidth: 0.75))
-        .clipShape(Capsule())
-        .offset(x: item.frame.minX, y: item.frame.minY)
+        .padding(.trailing, 6)
+        .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
         .accessibilityHint("거래 목록을 엽니다")
+    }
+
+    /// The total under the count, or the kinds when there is no single total.
+    static func secondLine(_ item: DayRenderPlan.OverflowItem) -> String? {
+        if item.showsAmountTotal, let total = item.amountTotals.first { return Formatting.money(total.minorUnits, currency: total.currency) }
+        if item.countsByKind.count > 1 { return item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)" }.joined(separator: " ") }
+        return nil
     }
 
     /// "거래 5건", "거래 5건 · 소비 3 · 환불 2", and for one kind in one currency "소비 5건 · 12,300원".
