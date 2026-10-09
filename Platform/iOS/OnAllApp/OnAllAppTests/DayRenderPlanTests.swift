@@ -249,3 +249,41 @@ private let longTitle = "아주 긴 일정 제목입니다"
     #expect(line.frame.height == AllocationParameters().transactionRow)
     #expect(AllocationParameters().overflowCard <= AllocationParameters().transactionRow)
 }
+
+// MARK: A day sliding in uses the axis already on screen
+
+private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayRenderPlan {
+    DayRenderPlan(
+        timeline: incoming, role: nil, layout: current.layout, geometry: current.geometry, layoutWidth: layoutWidth, titleWidth: { _ in 30 }
+    )
+}
+
+@Test func anIncomingDayKeepsItsTrueTimesOnTheAxisItIsDrawnOn() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))                 // the morning is compressed on this axis
+    let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
+    let plan = incomingPlan(incoming, on: current)
+    #expect(plan.events.count == 3)
+    for placed in plan.events {
+        #expect(placed.frame.minY == current.geometry.y(minute: placed.block.displayStartMinute))              // the start is never moved
+        let trueHeight = current.geometry.y(minute: placed.block.displayEndMinute) - placed.frame.minY - 1
+        #expect(abs(placed.frame.height - max(3, trueHeight)) < 0.01)                                           // nor is the end stretched
+    }
+}
+
+@Test func shortEventsCrowdedByTheAxisBecomeOneCountInsteadOfAPileOfTitles() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
+    let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
+    let plan = incomingPlan(incoming, on: current)
+    let crowd = try #require(plan.summaries.first { $0.countOnly })
+    #expect(crowd.items.count == 3)
+    #expect(plan.events.allSatisfy { !$0.showsTitleInCard })                                                   // no title is printed over another
+    #expect(plan.events.count == 3)                                                                             // the events themselves are all still there
+}
+
+@Test func anIncomingEventThatHasRoomKeepsItsCardAndTitle() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
+    let incoming = try timeline([event(1, "회의", 13 * 60, 14 * 60)])                                          // in the part of the axis that has room
+    let plan = incomingPlan(incoming, on: current)
+    let placed = try #require(plan.events.first)
+    #expect(plan.summaries.isEmpty && placed.showsTitleInCard && placed.frame.height >= 24)
+}

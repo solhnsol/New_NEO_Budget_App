@@ -44,6 +44,9 @@ struct DayRenderPlan {
     struct Summary {
         let frame: CGRect
         let items: [(id: BlockID, title: String)]
+        /// A crowd of events that cannot each be named at the room the axis gives them (a day sliding in): only how many, and the events
+        /// themselves stay in view as thin cards at their true times.
+        var countOnly = false
     }
 
     struct LineItem {
@@ -116,12 +119,21 @@ struct DayRenderPlan {
         }
         func overlap(_ block: EventBlock) -> EventOverlap? { placement(block)?.overlap ?? analysed[block.id.rawValue] }
 
+        // A day the engine did not lay out (one sliding in during a swipe) is drawn on the axis the two days on screen already have: every
+        // event keeps its true start and end, never stretched to a minimum height, and what does not fit in its true height is cut back.
+        let incoming = role == nil || layout == nil
+        let trueMinimumHeight: CGFloat = 3
+
         // Frames. An overlapping event keeps the full width, indented by at most one step; an inner one is also pulled in on the right.
         var frames: [BlockID: CGRect] = [:]
         for block in blocks {
             let shape = overlap(block)
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
-            frames[block.id] = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
+            var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
+            if incoming, expanded != block.id, placement(block) == nil {
+                frame.size.height = max(trueMinimumHeight, geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute) - 1)
+            }
+            frames[block.id] = frame
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let places = content.titlePlacements(
@@ -131,7 +143,7 @@ struct DayRenderPlan {
             right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
             width: { titleWidth(byID[$0]?.title ?? "") },
             columnRight: contentLeft + contentWidth - EventTitleLayer.horizontalPadding,
-            minimumHeight: geometry.minimumBlockHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale
+            minimumHeight: incoming ? trueMinimumHeight : geometry.minimumBlockHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale
         )
 
         // Overlap groups of three or more: their titles become one summary at the group's first card.
@@ -157,6 +169,34 @@ struct DayRenderPlan {
                 items: members.map { ($0.id, $0.title) }
             ))
             for member in members where member.id != focused && member.id != expanded { hiddenByGroup.insert(member.id) }
+        }
+
+        // Incoming day: events whose titles cannot be kept apart at the room they have (or that sit on one that cannot) are one crowd per
+        // run: a count, with the events left as thin cards at their true times. Events with room keep their cards and titles untouched.
+        if incoming {
+            let near = parameters.titleRow * scale
+            let moved = blocks.filter { (places[$0.id] ?? .init()) != DayContentLayout.TitlePlacement() }
+            let crowded = blocks.filter { block in
+                guard let frame = frames[block.id], !hiddenByGroup.contains(block.id), block.id != focused, block.id != expanded else { return false }
+                return moved.contains { $0.id == block.id } || moved.contains { abs((frames[$0.id]?.minY ?? 0) - frame.minY) < near }
+            }.sorted { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
+            var runs: [[EventBlock]] = []
+            for block in crowded {
+                if let last = runs.last?.last, let lastY = frames[last.id]?.minY, let y = frames[block.id]?.minY, y - lastY < near * 2 {
+                    runs[runs.count - 1].append(block)
+                } else {
+                    runs.append([block])
+                }
+            }
+            for run in runs where run.count >= 2 {
+                guard let first = run.first, let firstFrame = frames[first.id] else { continue }
+                let union = run.compactMap { frames[$0.id] }.reduce(firstFrame) { $0.union($1) }
+                summaries.append(Summary(
+                    frame: CGRect(x: union.minX, y: firstFrame.minY, width: union.width, height: parameters.titleRow * scale),
+                    items: run.map { ($0.id, $0.title) }, countOnly: true
+                ))
+                for member in run { hiddenByGroup.insert(member.id) }
+            }
         }
 
         // Events, back to front.

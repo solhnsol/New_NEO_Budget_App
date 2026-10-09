@@ -232,10 +232,11 @@ struct OverlapSummaryView: View {
         } label: {
             HStack(spacing: 3) {
                 Image(systemName: "square.on.square").font(.system(size: 9 * scale))
-                Text("일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
-                    .font(.system(size: 11 * scale, weight: .semibold)).lineLimit(1)
+                Text(summary.countOnly ? "일정 \(summary.items.count)개" : "일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
+                    .font(.system(size: summary.countOnly ? 10 * scale : 11 * scale, weight: .semibold)).lineLimit(1)
                 Spacer(minLength: 0)
             }
+            .halo(summary.countOnly)
             .foregroundStyle(.primary)
             .padding(.horizontal, 6)
             .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
@@ -249,7 +250,7 @@ struct OverlapSummaryView: View {
 extension View {
     /// A thin outline of the page colour around text that sits over something coloured, so it stays readable without a background.
     @ViewBuilder
-    fileprivate func halo(_ on: Bool) -> some View {
+    func halo(_ on: Bool) -> some View {
         if on {
             self.shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8).shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8)
         } else {

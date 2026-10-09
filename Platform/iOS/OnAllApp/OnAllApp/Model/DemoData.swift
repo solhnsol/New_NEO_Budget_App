@@ -96,7 +96,29 @@ enum DemoData {
             draft(appointments, "아주 긴 일정 제목입니다 정말로", today, (20, 0), (20, 30)),
             draft(school, "팀 회의", tomorrow, (15, 0), (16, 0)),
         ]
-        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
+        // `-demo-trans`: days whose busy hours differ, to check the days that slide in during a swipe: a quiet today (one afternoon event),
+        // a morning cluster of short events the day before and two days on, a busy afternoon tomorrow, and a full day three days on.
+        let day2 = today.adding(days: 2), day3 = today.adding(days: 3)
+        var transDrafts: [CalendarEventDraft] = [
+            draft(life, "점심 회의", today, (13, 0), (14, 0)),
+            draft(life, "조회 가", yesterday, (9, 0), (9, 20)),
+            draft(life, "조회 나", yesterday, (9, 20), (9, 40)),
+            draft(life, "조회 다", yesterday, (9, 40), (10, 0)),
+            draft(life, "조회 라", yesterday, (10, 0), (10, 15)),
+            draft(school, "오후 수업", yesterday, (14, 0), (17, 0)),
+            draft(appointments, "오후 미팅 가", tomorrow, (14, 0), (14, 30)),
+            draft(appointments, "오후 미팅 나", tomorrow, (14, 30), (15, 0)),
+            draft(appointments, "오후 미팅 다", tomorrow, (15, 0), (15, 30)),
+            draft(life, "저녁 약속", tomorrow, (16, 0), (18, 0)),
+            draft(school, "아침 스탠드업", day2, (9, 0), (9, 15)),
+            draft(school, "아침 리뷰", day2, (9, 10), (9, 40)),
+            draft(school, "아침 기획", day2, (9, 30), (10, 30)),
+            draft(life, "아침 메모", day2, (9, 5), (9, 25)),
+            draft(life, "커피 챗", day2, (10, 0), (10, 15)),
+        ]
+        for hour in 8..<20 { transDrafts.append(draft(life, "일정 \(hour)시", day3, (hour, 0), (hour, 50))) }
+        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-trans") ? transDrafts
+            : ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
             : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-dense") ? denseDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-overlap") ? overlapDrafts
