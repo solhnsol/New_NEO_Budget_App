@@ -101,6 +101,12 @@ struct TimelineAxis: Equatable {
         return segment.startMinute + Int((fraction * CGFloat(segment.minutes)).rounded())
     }
 
+    /// How many points one minute is drawn at, at `minute`. A boundary belongs to the later stretch; the end of the day to the last.
+    func pointsPerMinute(atMinute minute: Int) -> CGFloat {
+        guard let index = index(containingMinute: minute) else { return segments.first?.pointsPerMinute ?? 1 }
+        return segments[index].pointsPerMinute
+    }
+
     func isFolded(minute: Int) -> Bool {
         guard let index = index(containingMinute: minute) else { return false }
         // The boundary between two stretches belongs to the unfolded one so its label stays visible.

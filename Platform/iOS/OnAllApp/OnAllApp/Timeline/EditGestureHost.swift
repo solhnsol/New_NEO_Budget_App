@@ -116,7 +116,12 @@ struct EditGestureHost: UIViewRepresentable {
         @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
             let point = recognizer.location(in: self)
             switch recognizer.state {
-            case .began: configuration?.pan(.began, point)
+            case .began:
+                // A pan is recognised only after the finger has already moved a little (more, the faster it goes), so its
+                // location is no longer where the touch landed. The drag starts from the touch-down point, which is what was
+                // hit-tested, and then catches up to the finger.
+                configuration?.pan(.began, touchDown)
+                configuration?.pan(.moved, point)
             case .changed: configuration?.pan(.moved, point)
             case .ended, .cancelled, .failed: configuration?.pan(.ended, point)
             default: break

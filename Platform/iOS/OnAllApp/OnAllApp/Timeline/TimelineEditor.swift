@@ -104,6 +104,9 @@ final class TimelineEditor {
     /// each is drawn enlarged; the rest of the day, including the middle of a long event, keeps its browse shape.
     /// `nil` is browse mode.
     private(set) var editAnchors: [Int]?
+    /// While an edge handle is dragged and the finger rests over a compressed stretch, the minute the enlarged zone has
+    /// moved to. It is the selected time, so the handle stays exactly where the finger is when the zone appears.
+    private(set) var dwellCenter: Int?
     /// The event being edited. `nil` while only a focus exists means a new event is being placed.
     private(set) var selectedKey: CalendarEventKey?
     /// The event opened in place to show what it means and every linked transaction. Only one at a time, and never
@@ -114,6 +117,22 @@ final class TimelineEditor {
     private let parameters = TimelineAxis.Parameters.standard
     private var fingerAnchorY: CGFloat = 0
     private var settlesAt: Date = .distantPast
+    /// How long the axis takes to change shape, during which finger readings are not real drags.
+    private static let settleSeconds = 0.35
+
+    // MARK: Zoom while a handle rests
+
+    /// How long the finger must rest over a compressed stretch before the enlarged zone moves to it.
+    var dwellInterval: Duration = .milliseconds(400)
+    /// Waits `dwellInterval`. Replaceable so tests need no real time.
+    var dwellWait: @MainActor (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+    /// A move smaller than this (points) is hand tremor, not movement, and does not restart the wait.
+    private static let restTolerance: CGFloat = 4
+    private(set) var dwellArmCount = 0
+    private var dwellTask: Task<Void, Never>?
+    private var dwellAnchorY: CGFloat = 0
+    private var lastFingerY: CGFloat = 0
+    private var draggedKind: TimelineEditPlanner.Kind?
 
     private let environment: Environment
     private var planner: TimelineEditPlanner?
@@ -127,8 +146,18 @@ final class TimelineEditor {
     }
 
     var isEditing: Bool { editAnchors != nil }
+
+    /// Everything that changes the shape of the axis while editing, for animating it.
+    struct AxisShape: Equatable {
+        let anchors: [Int]?
+        let dwell: Int?
+    }
+    var axisShape: AxisShape { AxisShape(anchors: editAnchors, dwell: dwellCenter) }
+
+    /// Where the axis is enlarged now: the handles, plus the resting finger's zone while one exists.
+    private var allAnchors: [Int]? { editAnchors.map { $0 + (dwellCenter.map { [$0] } ?? []) } }
     /// The enlarged minute windows, for drawing and tests.
-    var enlargedZones: [ClosedRange<Int>] { editAnchors.map { browseAxis.handleZones(around: $0, parameters: parameters) } ?? [] }
+    var enlargedZones: [ClosedRange<Int>] { allAnchors.map { browseAxis.handleZones(around: $0, parameters: parameters) } ?? [] }
     var isActive: Bool { mode != .idle }
     var activeBlockID: BlockID? { block?.id }
     /// Whether the picked-up block is being created rather than edited.
@@ -157,7 +186,7 @@ final class TimelineEditor {
         return result
     }
 
-    private var currentAxis: TimelineAxis { axis(anchors: editAnchors, expanded: expandedKey) }
+    private var currentAxis: TimelineAxis { axis(anchors: allAnchors, expanded: expandedKey) }
 
     /// The minutes an expanded event occupies and how large they are drawn: large enough that the block is as tall as its
     /// content needs, but never smaller than browse scale.
@@ -278,11 +307,84 @@ final class TimelineEditor {
     /// The finger's content position now, relative to where this drag began. Ignored while the axis is still settling.
     func update(fingerY y: CGFloat) {
         guard Date() >= settlesAt else { return }
+        lastFingerY = y
         update(translationY: y - fingerAnchorY)
+        armDwell(at: y)
     }
 
     /// The finger position that corresponds to "no movement yet".
-    func setFingerAnchor(y: CGFloat) { fingerAnchorY = y }
+    func setFingerAnchor(y: CGFloat) {
+        fingerAnchorY = y
+        lastFingerY = y
+        dwellAnchorY = y
+    }
+
+    // MARK: Zoom while a handle rests
+
+    /// Starts (or restarts) the wait for the finger to rest. Only an edge handle zooms: a move or a new event is placed
+    /// by distance, not by a precise time, and must not change the axis under the finger.
+    private func armDwell(at y: CGFloat) {
+        guard mode == .dragging, let kind = preview?.kind, kind == .resizeStart || kind == .resizeEnd else { return }
+        if dwellTask != nil, abs(y - dwellAnchorY) <= Self.restTolerance { return }
+        dwellAnchorY = y
+        dwellTask?.cancel()
+        dwellArmCount += 1
+        let interval = dwellInterval
+        dwellTask = Task { [weak self] in
+            guard let self else { return }
+            do { try await dwellWait(interval) } catch { return }
+            guard !Task.isCancelled else { return }
+            zoomAtFinger()
+        }
+    }
+
+    /// Moves the enlarged zone to the minute the handle is at, if that stretch is compressed. Nothing the user can see in
+    /// numbers changes: the selected time stays, and the content scrolls by exactly how far that time moved, so the handle
+    /// stays under the resting finger. The drag is re-based to the new axis so the next movement continues from there.
+    func zoomAtFinger() {
+        dwellTask = nil
+        guard mode == .dragging, let preview, let timeline, let block,
+              let minute = edgeMinute(of: preview, in: timeline) else { return }
+        let before = currentAxis
+        guard before.pointsPerMinute(atMinute: minute) < parameters.editScale - 0.001, dwellCenter != minute else { return }
+        dwellCenter = minute
+        let after = currentAxis
+        let delta = after.y(minute: minute) - before.y(minute: minute)
+        if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
+        let geometry = TimelineGeometry(axis: after)
+        planner = TimelineEditPlanner(policy: environment.policy, zone: environment.zone, geometry: geometry, timeline: timeline)
+        // The finger has not moved on screen, so in content coordinates it is `delta` further along, and it is at `minute`.
+        let original = preview.kind == .resizeStart ? block.startMinute : block.endMinute
+        fingerAnchorY = (lastFingerY + delta) - (after.y(minute: minute) - after.y(minute: original))
+        lastFingerY += delta
+        settlesAt = Date().addingTimeInterval(Self.settleSeconds)
+    }
+
+    /// Ends the wait for the axis to settle. For tests, which have no animation to wait for.
+    func endSettling() { settlesAt = .distantPast }
+
+    /// The minute the previewed edge is at.
+    private func edgeMinute(of preview: Preview, in timeline: DayTimeline) -> Int? {
+        guard preview.kind == .resizeStart || preview.kind == .resizeEnd else { return nil }
+        let milliseconds = preview.kind == .resizeStart ? preview.range.startUnixMilliseconds : preview.range.endUnixMilliseconds
+        return min(max(Int((milliseconds - timeline.dayStartUnixMilliseconds) / 60_000), 0), timeline.totalMinutes)
+    }
+
+    private func cancelDwell() {
+        dwellTask?.cancel()
+        dwellTask = nil
+    }
+
+    /// Drops the finger's zone, scrolling so `anchorMinute` stays where it is on screen.
+    private func releaseDwell(keeping anchorMinute: Int?) {
+        cancelDwell()
+        guard dwellCenter != nil else { return }
+        let before = currentAxis
+        dwellCenter = nil
+        guard let anchorMinute else { return }
+        let delta = currentAxis.y(minute: anchorMinute) - before.y(minute: anchorMinute)
+        if abs(delta) > 0.5 { scrollRequest = ScrollRequest(delta: delta) }
+    }
 
     // MARK: Gesture phases
 
@@ -298,6 +400,8 @@ final class TimelineEditor {
         guard let edit = planner.preview(kind, block: block, translationY: 0) else { return false }
         self.planner = planner
         self.block = block
+        draggedKind = kind
+        cancelDwell()
         mode = .dragging
         feedback = nil
         preview = Preview(
@@ -343,6 +447,7 @@ final class TimelineEditor {
     /// State changes happen synchronously, so a dialog dismissing right after this call sees the new mode.
     func finish() {
         guard mode == .dragging, let preview, let planner else { return }
+        cancelDwell()                    // the finger is up: nothing is resting any more
         if preview.kind == .create {
             guard environment.calendars().contains(where: \.isWritable) else {
                 rollback()
@@ -432,6 +537,7 @@ final class TimelineEditor {
 
     private func run(_ command: CalendarCommand) async {
         let before = currentAxis               // what the user was looking at, to keep the event still when the axis re-centres
+        let kind = draggedKind
         let outcome = await environment.perform(command)
         // Whatever happened, show the calendar's truth: the preview goes away only after the fresh read.
         await environment.reload()
@@ -445,7 +551,9 @@ final class TimelineEditor {
         } else if let key = selectedKey {
             // An edited event stays selected so it can be adjusted again; the enlarged region follows it.
             if let block = timeline?.blocks.first(where: { $0.eventKey == key }) {
-                setAnchors(anchors(for: block, fallback: block.startMinute), selected: key, anchorMinute: block.startMinute, from: before)
+                // Keep the edge that was just moved where it was on screen.
+                let anchor = kind == .resizeEnd ? block.endMinute : block.startMinute
+                setAnchors(anchors(for: block, fallback: block.startMinute), selected: key, anchorMinute: anchor, from: before)
             } else {
                 setAnchors(nil, selected: nil, anchorMinute: nil, from: before)
             }
@@ -453,11 +561,16 @@ final class TimelineEditor {
     }
 
     private func rollback() {
+        if dwellCenter != nil, let preview, let timeline {
+            releaseDwell(keeping: edgeMinute(of: preview, in: timeline) ?? dwellCenter)
+        }
         clear()
         if selectedKey == nil { exitEditMode() }       // a cancelled placement folds the day back up
     }
 
     private func clear() {
+        cancelDwell()
+        dwellCenter = nil
         mode = .idle
         preview = nil
         planner = nil

@@ -45,6 +45,7 @@ struct TimelineGridView: View {
 
     private static let transition = Animation.easeInOut(duration: 0.28)
     private static let edgePadding: CGFloat = EditHit.handleRadius
+    private static let editScrollRoom: CGFloat = 320
 
     var body: some View {
         let geometry = editor.geometry
@@ -97,9 +98,11 @@ struct TimelineGridView: View {
                     }
                     .background { gestureHost(width: width, geometry: geometry) }
                     .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width) }
+                    // The zone moved to where the finger rested: a small tick says the time can now be set precisely.
+                    .onChange(of: editor.dwellCenter) { _, center in if center != nil { Haptics.snap() } }
                 }
                 .frame(height: geometry.contentHeight)
-                .animation(Self.transition, value: editor.editAnchors)
+                .animation(Self.transition, value: editor.axisShape)
                 .animation(Self.transition, value: editor.expandedKey)
                 // Scroll anchors need real layout frames; `offset` does not move a view's frame.
                 .background(alignment: .top) {
@@ -111,6 +114,9 @@ struct TimelineGridView: View {
                 }
                 // Room for a handle (and the first hour label) at the very top or bottom of the day.
                 .padding(.vertical, Self.edgePadding)
+                // While editing, room to scroll past the end. When a zone opens under a resting finger the content must be able
+                // to move by exactly as much as the zone grew, even on a day short enough to fit the screen.
+                .padding(.bottom, editor.isEditing ? Self.editScrollRoom : 0)
             }
             .scrollDisabled(editor.isActive)
             .onAppear { scrollToStart(proxy, geometry: geometry) }
@@ -333,6 +339,24 @@ private struct PreviewBlockView: View {
         .background(Color.accentColor.opacity(0.28), in: RoundedRectangle(cornerRadius: 6))
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(preview.wasClamped ? Color.orange : Color.accentColor, lineWidth: 2))
         .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+        // The edge being dragged keeps its handle, so there is always something under the finger to follow.
+        .overlay {
+            GeometryReader { size in
+                if preview.kind == .resizeStart {
+                    DraggedHandleDot().position(x: size.size.width - EditHit.handleInset, y: 0)
+                } else if preview.kind == .resizeEnd {
+                    DraggedHandleDot().position(x: EditHit.handleInset, y: size.size.height)
+                }
+            }
+        }
+    }
+}
+
+private struct DraggedHandleDot: View {
+    var body: some View {
+        Circle().fill(Color.accentColor).frame(width: 14, height: 14)
+            .overlay(Circle().stroke(.white, lineWidth: 2))
+            .shadow(color: .black.opacity(0.25), radius: 2, y: 1)
     }
 }
 
