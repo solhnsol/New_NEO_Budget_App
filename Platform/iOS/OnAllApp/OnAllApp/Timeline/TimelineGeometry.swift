@@ -13,8 +13,8 @@ struct TimelineGeometry: Equatable {
     var totalMinutes: Int { axis.totalMinutes }
     /// Space on the left for hour labels.
     var gutterWidth: CGFloat = 60
-    /// Space on the right for transaction markers.
-    var markerRailWidth: CGFloat = 76
+    /// Space left of the screen edge after the day's content column.
+    var trailingPadding: CGFloat = 6
     var columnSpacing: CGFloat = 2
     /// A block never draws shorter than this, however folded the axis is, so it stays readable and tappable.
     var minimumBlockHeight: CGFloat = 24
@@ -57,25 +57,27 @@ struct TimelineGeometry: Equatable {
     /// The nearest minute at a vertical position, clamped to the day.
     func minute(atY y: CGFloat) -> Int { axis.minute(atY: y) }
 
-    /// An expanded block takes the whole width (it opens over its neighbours); otherwise it keeps its overlap column.
-    func blockFrame(_ block: EventBlock, totalWidth: CGFloat, expanded: Bool = false) -> CGRect {
-        let available = max(0, totalWidth - gutterWidth - markerRailWidth)
-        let columns = expanded ? 1 : CGFloat(max(1, block.layout.columnCount))
-        let columnWidth = available / columns
+    /// The width of the day's content column: everything of a day (events, transactions) is laid out in it.
+    func contentWidth(totalWidth: CGFloat) -> CGFloat { max(0, totalWidth - gutterWidth - trailingPadding) }
+
+    /// An expanded block takes the whole column (it opens over its neighbours); otherwise it keeps its stacking insets.
+    /// The top and bottom are exactly where the event's time puts them.
+    func blockFrame(_ block: EventBlock, totalWidth: CGFloat, expanded: Bool = false, insets: CardInsets = .zero) -> CGRect {
+        let available = contentWidth(totalWidth: totalWidth)
+        let used = expanded ? CardInsets.zero : insets
         let top = y(minute: block.displayStartMinute)
         let bottom = y(minute: block.displayEndMinute)
         return CGRect(
-            x: gutterWidth + columnWidth * CGFloat(expanded ? 0 : block.layout.column),
+            x: gutterWidth + used.left,
             y: top,
-            width: max(0, columnWidth - columnSpacing),
+            width: max(0, available - used.left - used.right - columnSpacing),
             height: max(minimumBlockHeight, bottom - top - 1)
         )
     }
 
-    /// Vertical positions for markers so labels never overlap: each marker sits at its own minute unless that
-    /// would be closer than `minimumSpacing` to the marker above it, then it is pushed down. Result order matches
-    /// the input order.
-    func markerYPositions(minutes: [Int], minimumSpacing: CGFloat = 22) -> [CGFloat] {
+    /// Vertical positions for cards that must not overlap one another: each sits at its own minute unless that would be closer than
+    /// `minimumSpacing` to the one above it, then it is pushed down. Result order matches the input order.
+    func stackedYPositions(minutes: [Int], minimumSpacing: CGFloat = 22) -> [CGFloat] {
         let order = minutes.indices.sorted { (minutes[$0], $0) < (minutes[$1], $1) }
         var result = [CGFloat](repeating: 0, count: minutes.count)
         var previous: CGFloat?

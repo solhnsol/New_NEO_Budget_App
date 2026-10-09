@@ -90,6 +90,10 @@ struct TimelineGridView: View {
         let covered = badges.map(\.y)
         return GeometryReader { size in
             let width = size.size.width
+            let layout = DayContentLayout(blocks: timeline.blocks)
+            let frames = cardFrames(layout: layout, geometry: geometry, width: width)
+            let places = titlePlacements(layout: layout, geometry: geometry, frames: frames)
+            let drawOrder = self.drawOrder(layout: layout)
             ZStack(alignment: .topLeading) {
                 Color.clear.contentShape(Rectangle())
                     .onTapGesture { location in
@@ -104,20 +108,22 @@ struct TimelineGridView: View {
                 ForEach(geometry.foldMarks, id: \.startMinute) { fold in
                     FoldRow(fold: fold, geometry: geometry, width: width, coveredBy: covered)
                 }
-                ForEach(timeline.blocks.filter { !editor.isExpanded($0) }, id: \.id) { block in
-                    let frame = frame(of: block, width: width, geometry: geometry)
-                    BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                // Back to front; the opened event is drawn last so it sits over its neighbours.
+                ForEach(drawOrder, id: \.id) { block in
+                    let frame = frames[block.id] ?? .zero
+                    if editor.isExpanded(block) { QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone) }
+                    BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
                 }
-                // The opened event is drawn last so it sits over its neighbours.
-                ForEach(timeline.blocks.filter { editor.isExpanded($0) }, id: \.id) { block in
-                    let frame = frame(of: block, width: width, geometry: geometry)
-                    QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone)
-                    BlockCell(block: block, frame: frame, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor)
+                // Titles are drawn over every card, so a card stacked on another never hides the title under it.
+                ForEach(drawOrder.filter { !editor.isExpanded($0) }, id: \.id) { block in
+                    if let frame = frames[block.id], !titleIsCovered(block, frame: frame, place: places[block.id] ?? .init(), frames: frames) {
+                        EventTitleLayer(block: block, frame: frame, place: places[block.id] ?? .init())
+                    }
                 }
-                MarkerRail(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+                TransactionCards(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
                 // The handles are positioned from the same geometry as the block they belong to, so they move with it.
                 if let block = selectedBlock, !editor.isExpanded(block), !editor.isActive {
-                    let frame = frame(of: block, width: width, geometry: geometry)
+                    let frame = frames[block.id] ?? frame(of: block, width: width, geometry: geometry)
                     if !block.continuesFromPreviousDay {
                         EditHandle(kind: .resizeStart, block: block, center: EditHit.startHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
                     }
@@ -262,16 +268,62 @@ struct TimelineGridView: View {
         return EditHit.handle(at: point, frame: frame, canResizeStart: !block.continuesFromPreviousDay, canResizeEnd: !block.continuesToNextDay)
     }
 
-    /// The topmost block under a point in grid coordinates.
-    private func block(at point: CGPoint, width: CGFloat) -> EventBlock? {
-        // The opened event is on top, then later blocks over earlier ones.
-        let ordered = timeline.blocks.filter { !editor.isExpanded($0) } + timeline.blocks.filter { editor.isExpanded($0) }
-        return ordered.last { frame(of: $0, width: width).contains(point) }
+    /// The block id that is drawn on top of everything: the opened event, else the selected one.
+    private var focusedID: BlockID? {
+        timeline.blocks.first { editor.isExpanded($0) }?.id ?? timeline.blocks.first { editor.isSelected($0) }?.id
     }
 
-    /// Where a block is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
+    /// Blocks back to front: stacking order, with the focused one last.
+    private func drawOrder(layout: DayContentLayout) -> [EventBlock] {
+        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return layout.hitOrder(focused: focusedID).reversed().compactMap { byID[$0] }
+    }
+
+    /// Where every block is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
+    private func cardFrames(layout: DayContentLayout, geometry: TimelineGeometry, width: CGFloat) -> [BlockID: CGRect] {
+        let available = geometry.contentWidth(totalWidth: width)
+        var result: [BlockID: CGRect] = [:]
+        for block in timeline.blocks {
+            result[block.id] = geometry.blockFrame(
+                block, totalWidth: width, expanded: editor.isExpanded(block),
+                insets: DayContentLayout.insets(for: layout.slot(of: block.id), available: available)
+            )
+        }
+        return result
+    }
+
+    /// A title is hidden while the opened or selected event, which is drawn over everything, sits on top of it.
+    private func titleIsCovered(_ block: EventBlock, frame: CGRect, place: DayContentLayout.TitlePlacement, frames: [BlockID: CGRect]) -> Bool {
+        guard let focus = focusedID, focus != block.id, let cover = frames[focus] else { return false }
+        return cover.intersects(CGRect(x: frame.minX + place.dx, y: frame.minY + place.dy, width: frame.width - place.dx, height: DayContentLayout.titleRowHeight))
+    }
+
+    /// Where each title is drawn, so overlapping events keep every title readable.
+    private func titlePlacements(layout: DayContentLayout, geometry: TimelineGeometry, frames: [BlockID: CGRect]) -> [BlockID: DayContentLayout.TitlePlacement] {
+        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return layout.titlePlacements(
+            top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
+            bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
+            left: { (frames[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
+            right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
+            width: { DayContentLayout.estimatedTitleWidth(byID[$0]?.title ?? "", extra: 14) },
+            minimumHeight: geometry.minimumBlockHeight,
+            focused: focusedID
+        )
+    }
+
+    /// The topmost block under a point in grid coordinates.
+    private func block(at point: CGPoint, width: CGFloat) -> EventBlock? {
+        let layout = DayContentLayout(blocks: timeline.blocks)
+        let frames = cardFrames(layout: layout, geometry: editor.geometry, width: width)
+        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return layout.topmost(at: point, frames: frames, focused: focusedID).flatMap { byID[$0] }
+    }
+
+    /// Where a block is in `geometry`.
     private func frame(of block: EventBlock, width: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect {
-        (geometry ?? editor.geometry).blockFrame(block, totalWidth: width, expanded: editor.isExpanded(block))
+        let layout = DayContentLayout(blocks: timeline.blocks)
+        return cardFrames(layout: layout, geometry: geometry ?? editor.geometry, width: width)[block.id] ?? .zero
     }
 
     /// After an event opens, bring all of it into view; its content is taller than the block was.
@@ -293,10 +345,6 @@ struct TimelineGridView: View {
     }
 }
 
-private extension TimelineGeometry {
-    func blockFrame(_ block: EventBlock, width: CGFloat) -> CGRect { blockFrame(block, totalWidth: width) }
-}
-
 // MARK: Pieces
 
 /// One event. A tap opens it in place (or closes it). In edit mode the selected event also shows its two resize
@@ -304,6 +352,7 @@ private extension TimelineGeometry {
 private struct BlockCell: View {
     let block: EventBlock
     let frame: CGRect
+    let title: DayContentLayout.TitlePlacement
     let zoneIdentifier: String
     let editor: TimelineEditor
 
@@ -314,7 +363,7 @@ private struct BlockCell: View {
             if expanded {
                 ExpandedBlockView(block: block, zoneIdentifier: zoneIdentifier)
             } else {
-                EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height)
+                EventBlockView(block: block, zoneIdentifier: zoneIdentifier, height: frame.height, titleOffset: title.dy)
                     .opacity(editor.activeBlockID == block.id ? 0.3 : 1)
                     .overlay { if selected { RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: 2) } }
             }
@@ -507,36 +556,28 @@ private struct NowLine: View {
     }
 }
 
-/// Transactions that are not wholly accounted for inside an event block: they stay on the time axis as their own markers.
-private struct MarkerRail: View {
+/// Transactions that are not wholly accounted for inside an event block, drawn in the same column as the events, each as its
+/// own card at its time. A transaction with no event is ordinary, not an exception: it has no special rail or warning colour.
+/// One during an event is drawn over that event but is never counted as part of it; only an explicit link does that.
+private struct TransactionCards: View {
     let timeline: DayTimeline
     let geometry: TimelineGeometry
     let width: CGFloat
     let onSelect: (TimelineSelection) -> Void
 
     var body: some View {
-        let positions = geometry.markerYPositions(minutes: timeline.markers.map(\.positionMinute))
+        let content = geometry.contentWidth(totalWidth: width)
+        let cardWidth = TransactionCardPlan.width(content: content)
+        let positions = geometry.stackedYPositions(minutes: timeline.markers.map(\.positionMinute), minimumSpacing: TransactionCardPlan.height + 2)
         ForEach(Array(timeline.markers.enumerated()), id: \.element.transactionID) { index, marker in
+            let style = TransactionCardPlan.style(for: marker)
             Button { onSelect(.marker(marker)) } label: {
-                HStack(spacing: 3) {
-                    Image(systemName: marker.flow == .refund ? "arrow.uturn.backward.circle.fill" : "creditcard.fill")
-                        .font(.caption2)
-                    Text(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency))
-                        .font(.caption2.monospacedDigit().weight(.semibold))
-                        .lineLimit(1).minimumScaleFactor(0.7)
-                }
-                .padding(.horizontal, 6).padding(.vertical, 3)
-                .foregroundStyle(marker.flow == .refund ? Color.green : Color.orange)
-                .background((marker.flow == .refund ? Color.green : Color.orange).opacity(0.14), in: Capsule())
-                .overlay(Capsule().stroke(
-                    marker.flow == .refund ? Color.green : Color.orange,
-                    style: StrokeStyle(lineWidth: 1, dash: marker.timePrecision == .approximate ? [3] : [])
-                ))
+                TransactionCardView(marker: marker, style: style, showsTitle: TransactionCardPlan.showsTitle(width: cardWidth))
             }
             .buttonStyle(.plain)
-            .frame(width: geometry.markerRailWidth - 4, alignment: .trailing)
-            .offset(x: width - geometry.markerRailWidth, y: positions[index] - 10)
-            .accessibilityLabel("지출 \(marker.title ?? "") \(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency))")
+            .frame(width: cardWidth, height: TransactionCardPlan.height)
+            .offset(x: geometry.gutterWidth + content - cardWidth - geometry.columnSpacing, y: positions[index] - TransactionCardPlan.height / 2)
+            .accessibilityLabel(TransactionCardPlan.accessibilityText(marker))
         }
     }
 }

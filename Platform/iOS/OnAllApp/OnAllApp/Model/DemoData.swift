@@ -55,7 +55,22 @@ enum DemoData {
         // `-demo-long`: events of 30 minutes, 2 hours and 8 hours today and one that fills tomorrow, to check editing of
         // long events. Replaces the usual events so nothing overlaps them.
         let fullDay = try? TimedRange(startUnixMilliseconds: at(tomorrow, 0), endUnixMilliseconds: at(tomorrow.adding(days: 1), 0))
-        let drafts: [CalendarEventDraft] = !ProcessInfo.processInfo.arguments.contains("-demo-long") ? usualDrafts : [
+        // `-demo-overlap`: a workshop that holds a class (which holds a break), a partial overlap, and three events starting
+        // together, with unlinked transactions during and outside them.
+        let overlapDrafts: [CalendarEventDraft] = [
+            draft(life, "종일 워크숍", today, (9, 0), (17, 0)),
+            draft(school, "알고리즘 수업", today, (10, 0), (11, 30), location: "공학관 302"),
+            draft(life, "휴식", today, (10, 30), (11, 0)),
+            draft(appointments, "점심 약속", today, (12, 0), (13, 0), location: "성수"),
+            draft(life, "스터디", today, (12, 30), (14, 30)),
+            draft(appointments, "A 회의", today, (16, 0), (17, 30)),
+            draft(life, "B 통화", today, (16, 0), (17, 0)),
+            draft(life, "C 메모", today, (16, 5), (16, 40)),
+            draft(life, "저녁 운동", today, (19, 0), (20, 30)),
+            draft(school, "팀 회의", tomorrow, (15, 0), (16, 0)),
+        ]
+        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-overlap") ? overlapDrafts
+            : !ProcessInfo.processInfo.arguments.contains("-demo-long") ? usualDrafts : [
             draft(life, "30분 일정", today, (8, 0), (8, 30)),
             draft(life, "2시간 일정", today, (10, 0), (12, 0)),
             draft(appointments, "8시간 일정", today, (13, 0), (21, 0)),

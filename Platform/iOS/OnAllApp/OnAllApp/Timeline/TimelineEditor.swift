@@ -81,8 +81,7 @@ final class TimelineEditor {
         let range: TimedRange
         let wasClamped: Bool
         let blockID: BlockID?
-        let column: Int
-        let columnCount: Int
+        let slot: CardSlot
         let title: String?
     }
 
@@ -225,7 +224,7 @@ final class TimelineEditor {
     /// Where to draw the preview, in grid coordinates.
     func previewFrame(totalWidth: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect? {
         guard let planner, let preview else { return nil }
-        return planner.previewFrame(preview.range, column: preview.column, columns: preview.columnCount, totalWidth: totalWidth, geometry: geometry)
+        return planner.previewFrame(preview.range, slot: preview.slot, totalWidth: totalWidth, geometry: geometry)
     }
 
     // MARK: View modes
@@ -522,7 +521,7 @@ final class TimelineEditor {
         feedback = nil
         preview = Preview(
             kind: kind, range: edit.range, wasClamped: edit.wasClamped, blockID: block.id,
-            column: block.layout.column, columnCount: block.layout.columnCount, title: block.title
+            slot: DayContentLayout(blocks: timeline.blocks).slot(of: block.id), title: block.title
         )
         armDwell(at: lastFingerY)          // a handle held still, without moving, also opens a precise zone
         return true
@@ -533,7 +532,7 @@ final class TimelineEditor {
               let edit = planner.preview(current.kind, block: block, translationY: translationY) else { return }
         let next = Preview(
             kind: current.kind, range: edit.range, wasClamped: edit.wasClamped, blockID: current.blockID,
-            column: current.column, columnCount: current.columnCount, title: current.title
+            slot: current.slot, title: current.title
         )
         if next != current { preview = next }
     }
@@ -549,14 +548,14 @@ final class TimelineEditor {
         mode = .dragging
         feedback = nil
         let edit = planner.createPreview(fromY: y, toY: y)
-        preview = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, column: 0, columnCount: 1, title: nil)
+        preview = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil)
         return true
     }
 
     func updateCreate(toY y: CGFloat) {
         guard mode == .dragging, let planner, preview?.kind == .create else { return }
         let edit = planner.createPreview(fromY: createAnchorY, toY: y)
-        let next = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, column: 0, columnCount: 1, title: nil)
+        let next = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil)
         if next != preview { preview = next }
     }
 

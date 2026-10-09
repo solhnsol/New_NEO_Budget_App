@@ -89,27 +89,54 @@ enum LinkedTotal {
     }
 }
 
+/// The first line of an event card: its title and the small marks next to it. Drawn in a layer above all cards (see
+/// `TimelineGridView`), so the card it belongs to can sit under another card without losing its title.
+struct EventTitleLayer: View {
+    let block: EventBlock
+    let frame: CGRect
+    let place: DayContentLayout.TitlePlacement
+    static let horizontalPadding: CGFloat = 6
+
+    var body: some View {
+        let titleOffset = place.dy
+        let available = frame.height - titleOffset
+        let plan = InlineAllocationPlan.make(
+            allocationCount: block.allocations.count, blockHeight: available,
+            showsTime: InlineAllocationPlan.showsTime(blockHeight: available)
+        )
+        let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
+        HStack(spacing: 3) {
+            if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
+            Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
+            if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
+            Spacer(minLength: 2)
+            if plan.showsSummaryChip, let total { SummaryChip(count: block.allocations.count, total: total) }
+        }
+        .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
+        .frame(width: max(0, frame.width - place.dx), height: InlineAllocationPlan.titleHeight + 3, alignment: .leading)
+        .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct EventBlockView: View {
     let block: EventBlock
     let zoneIdentifier: String
     let height: CGFloat
+    /// How far down the title is drawn (see `DayContentLayout.titlePlacements`); the rows below follow it.
+    var titleOffset: CGFloat = 0
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
         let missing = block.state == .eventMissing
-        let showsTime = InlineAllocationPlan.showsTime(blockHeight: height)
-        let plan = InlineAllocationPlan.make(allocationCount: block.allocations.count, blockHeight: height, showsTime: showsTime)
+        let available = height - titleOffset
+        let showsTime = InlineAllocationPlan.showsTime(blockHeight: available)
+        let plan = InlineAllocationPlan.make(allocationCount: block.allocations.count, blockHeight: available, showsTime: showsTime)
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         VStack(alignment: .leading, spacing: 1) {
-            HStack(spacing: 3) {
-                if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
-                Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
-                if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
-                Spacer(minLength: 2)
-                if plan.showsSummaryChip, let total {
-                    SummaryChip(count: block.allocations.count, total: total)
-                }
-            }
+            // The title itself is in `EventTitleLayer`; this keeps its room.
+            Color.clear.frame(height: InlineAllocationPlan.titleHeight + titleOffset)
             if showsTime {
                 Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -127,6 +154,7 @@ struct EventBlockView: View {
         .padding(.horizontal, 6).padding(.vertical, 3)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(color.opacity(missing ? 0.08 : 0.22), in: RoundedRectangle(cornerRadius: 6))
+        .background(Color(.systemBackground), in: RoundedRectangle(cornerRadius: 6))
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3).clipShape(RoundedRectangle(cornerRadius: 2)) }
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
         .opacity(missing ? 0.7 : 1)
@@ -180,7 +208,7 @@ private struct MoreRow: View {
     }
 }
 
-private struct SummaryChip: View {
+fileprivate struct SummaryChip: View {
     let count: Int
     let total: String
 

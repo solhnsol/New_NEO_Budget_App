@@ -483,7 +483,7 @@ private func busyDay() -> [CalendarEvent] {
     let height = opened.y(minute: block.displayEndMinute) - opened.y(minute: block.displayStartMinute)
     #expect(height >= ExpandedBlockPlan.height(for: block) - 1)
     let frame = opened.blockFrame(block, totalWidth: 400, expanded: true)
-    #expect(frame.minX == opened.gutterWidth && frame.width >= 400 - opened.gutterWidth - opened.markerRailWidth - opened.columnSpacing - 0.001)
+    #expect(frame.minX == opened.gutterWidth && frame.width >= 400 - opened.gutterWidth - opened.trailingPadding - opened.columnSpacing - 0.001)
     // Opening only grows the event's own minutes, so everything above it, including its top edge, stays exactly where it
     // was on screen and no scroll correction is needed.
     #expect(abs(opened.y(minute: block.displayStartMinute) - browse.y(minute: block.displayStartMinute)) < 0.001)

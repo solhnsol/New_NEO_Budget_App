@@ -104,19 +104,18 @@ struct TimelineEditPlanner {
 
     // MARK: Drawing
 
-    /// The frame of a previewed range inside the grid, kept inside the selected day. `column`/`columns` come from the
-    /// block being edited so a preview stays in its column; a new event uses the whole width.
-    func previewFrame(_ range: TimedRange, column: Int, columns: Int, totalWidth: CGFloat, geometry override: TimelineGeometry? = nil) -> CGRect {
+    /// The frame of a previewed range inside the grid, kept inside the selected day. `slot` comes from the block being edited so a
+    /// preview keeps its stacking position; a new event uses the whole column.
+    func previewFrame(_ range: TimedRange, slot: CardSlot, totalWidth: CGFloat, geometry override: TimelineGeometry? = nil) -> CGRect {
         let geometry = override ?? self.geometry
         let first = max(0, Int((range.startUnixMilliseconds - dayStartUnixMilliseconds) / 60_000))
         let last = min(geometry.totalMinutes, Int((range.endUnixMilliseconds - dayStartUnixMilliseconds + 59_999) / 60_000))
-        let available = max(0, totalWidth - geometry.gutterWidth - geometry.markerRailWidth)
-        let count = CGFloat(max(1, columns))
-        let columnWidth = available / count
+        let available = geometry.contentWidth(totalWidth: totalWidth)
+        let insets = DayContentLayout.insets(for: slot, available: available)
         return CGRect(
-            x: geometry.gutterWidth + columnWidth * CGFloat(column),
+            x: geometry.gutterWidth + insets.left,
             y: geometry.y(minute: first),
-            width: max(0, columnWidth - geometry.columnSpacing),
+            width: max(0, available - insets.left - insets.right - geometry.columnSpacing),
             height: max(geometry.y(minute: policy.minimumDurationMinutes), geometry.y(minute: last) - geometry.y(minute: first) - 1)
         )
     }

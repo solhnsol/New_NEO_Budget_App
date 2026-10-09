@@ -33,36 +33,18 @@ private func blocks(_ spans: [(start: Int, end: Int)]) -> [EventBlock] {
     #expect(geometry.minute(atY: 100_000) == 1440)
 }
 
-@Test func overlappingBlocksShareTheWidthWithoutGaps() {
-    var geometry = TimelineGeometry(totalMinutes: 1440, pointsPerMinute: 1)
-    geometry.gutterWidth = 50
-    geometry.markerRailWidth = 70
-    geometry.columnSpacing = 2
-    let built = blocks([(600, 660), (630, 690)])
-    #expect(built.map(\.layout.columnCount) == [2, 2])
-    #expect(Set(built.map(\.layout.column)) == [0, 1])
-    let ordered = built.sorted { $0.layout.column < $1.layout.column }
-    let first = geometry.blockFrame(ordered[0], totalWidth: 420)
-    let second = geometry.blockFrame(ordered[1], totalWidth: 420)
-    // 420 - 50 - 70 = 300 available, two columns of 150 each minus spacing.
-    #expect(first.minX == 50 && first.width == 148)
-    #expect(second.minX == 200 && second.width == 148)
-    #expect(first.maxX <= second.minX)
-    #expect(first.height == 59 && second.height == 59)
-    #expect(first.minY == CGFloat(ordered[0].displayStartMinute))
-}
-
-@Test func aSingleBlockUsesTheWholeAvailableWidth() {
+@Test func aSingleBlockUsesTheWholeContentColumn() {
     let geometry = TimelineGeometry(totalMinutes: 1440, pointsPerMinute: 1)
     let frame = geometry.blockFrame(blocks([(540, 555)])[0], totalWidth: 400)
-    #expect(frame.width == 400 - geometry.gutterWidth - geometry.markerRailWidth - geometry.columnSpacing)
+    #expect(frame.minX == geometry.gutterWidth)
+    #expect(frame.width == 400 - geometry.gutterWidth - geometry.trailingPadding - geometry.columnSpacing)
 }
 
-@Test func markersThatWouldOverlapArePushedDownInOrder() {
+@Test func cardsThatWouldOverlapArePushedDownInOrder() {
     let geometry = TimelineGeometry(totalMinutes: 1440, pointsPerMinute: 1)
-    let positions = geometry.markerYPositions(minutes: [740, 720, 721, 900], minimumSpacing: 22)
+    let positions = geometry.stackedYPositions(minutes: [740, 720, 721, 900], minimumSpacing: 22)
     #expect(positions == [764, 720, 742, 900])
-    #expect(geometry.markerYPositions(minutes: []).isEmpty)
+    #expect(geometry.stackedYPositions(minutes: []).isEmpty)
 }
 
 @Test func hourMarksLabelWallClockHoursEvenOnATransitionDay() throws {
