@@ -303,3 +303,18 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(crowd?.items.count == 3)                                                               // so the three that follow one another are a count
     #expect(plan.events.allSatisfy { !$0.showsTitleInCard })                                       // and no title is printed over another
 }
+
+@Test func aShortEventRightBeforeAnotherDoesNotPushItAsideOrRunOverIt() throws {
+    // 20:00-20:10 is drawn at least a quarter hour tall, which reaches over the event that starts at 20:10; their real times do not overlap.
+    let r = render(try timeline([event(0, "짧은 준비", 20 * 60, 20 * 60 + 10), event(1, "밤 작업", 20 * 60 + 10, 23 * 60)]))
+    let short = try item(r, "짧은 준비"), long = try item(r, "밤 작업")
+    #expect(long.frame.minX == short.frame.minX)                                  // side by side in one column: no indent for a touch that is not there
+    #expect(short.frame.maxY <= long.frame.minY)                                  // the short card stops where the next one starts
+    #expect(short.frame.minY == r.geometry.y(minute: short.block.displayStartMinute))
+}
+
+@Test func eventsThatReallyOverlapStillIndent() throws {
+    let r = render(try timeline([event(0, "가", 600, 660), event(1, "나", 630, 720)]))
+    let first = try item(r, "가"), second = try item(r, "나")
+    #expect(second.frame.minX > first.frame.minX)
+}

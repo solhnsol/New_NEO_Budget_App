@@ -119,6 +119,7 @@ struct DayRenderPlan {
         let contentLeft = geometry.gutterWidth
         let blocks = timeline.blocks
         let content = DayContentLayout(blocks: blocks)
+        let byRealEnd: [String: Int] = Dictionary(blocks.map { ($0.id.rawValue, max($0.endMinute, $0.startMinute + 1)) }, uniquingKeysWith: { first, _ in first })
         let allocationDay = AllocationDay(timeline)
         let analysed = EventOverlapAnalysis.analyse(allocationDay.events.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) })
 
@@ -127,6 +128,14 @@ struct DayRenderPlan {
             return layout.events.first { $0.key.role == role && $0.id == block.id.rawValue }
         }
         func overlap(_ block: EventBlock) -> EventOverlap? { placement(block)?.overlap ?? analysed[block.id.rawValue] }
+        // Which events lie on one another is judged by their real times. The engine counts an event as at least a quarter hour long (what is
+        // drawn), so a short event just before another would be called overlapping it and push it aside; on screen it is only the card's
+        // minimum that reaches over, which is cut back below instead.
+        let realOverlap: [String: EventOverlap] = EventOverlapAnalysis.analyse(
+            allocationDay.events.map {
+                AllocationEvent(id: $0.id, title: $0.title, startMinute: $0.startMinute, endMinute: byRealEnd[$0.id] ?? $0.endMinute, linked: $0.linked)
+            }.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) }
+        )
 
         // A day the engine did not lay out (one sliding in during a swipe) is drawn on the axis the two days on screen already have: every
         // event keeps its true start and end, never stretched to a minimum height, and what does not fit in its true height is cut back.
@@ -138,12 +147,23 @@ struct DayRenderPlan {
         // Frames. An overlapping event keeps the full width, indented by at most one step; an inner one is also pulled in on the right.
         var frames: [BlockID: CGRect] = [:]
         for block in blocks {
-            let shape = overlap(block)
+            let shape = realOverlap[block.id.rawValue] ?? overlap(block)
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
             var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
             if incoming, expanded != block.id {
                 frame.size.height = max(trueMinimumHeight, geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute) - 1)
             }
+            frames[block.id] = frame
+        }
+        // A card that is only as tall as it is because of the minimum height does not run on over an event that begins after it ends: it stops
+        // short of that event's start (never above its own true end).
+        for block in blocks where expanded != block.id {
+            guard var frame = frames[block.id], block.id != focused else { continue }
+            let realEnd = max(block.endMinute, block.startMinute + 1)
+            let nextStarts = blocks.filter { $0.id != block.id && $0.startMinute >= realEnd && frames[$0.id].map { $0.minY > frame.minY + 0.5 && $0.minY < frame.maxY - 1 } == true && abs((frames[$0.id]?.minX ?? 0) - frame.minX) < 1 }
+            guard let next = nextStarts.min(by: { (frames[$0.id]?.minY ?? 0) < (frames[$1.id]?.minY ?? 0) }), let nextY = frames[next.id]?.minY else { continue }
+            let trueHeight = max(trueMinimumHeight, geometry.y(minute: realEnd) - frame.minY - 1)
+            frame.size.height = max(trueHeight, nextY - frame.minY - 1)
             frames[block.id] = frame
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
