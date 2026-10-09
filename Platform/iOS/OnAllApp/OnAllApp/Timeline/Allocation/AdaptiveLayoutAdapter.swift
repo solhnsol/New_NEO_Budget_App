@@ -19,7 +19,9 @@ extension AllocationDay {
                 linked: block.allocations.map { item in
                     AllocationTransaction(
                         id: item.transactionID.rawValue, minute: minute(item.occurredAtUnixMilliseconds), kind: kind(item.flow),
-                        currency: item.transactionAmount.currency, minorUnits: item.allocatedAmount.knownValue
+                        currency: item.transactionAmount.currency, minorUnits: item.transactionAmount.minorUnits,
+                        allocatedMinorUnits: item.allocatedAmount.knownValue, isPartlyLinked: item.isPartOfTransaction,
+                        dayOffset: item.occursOnSelectedDay ? 0 : (item.occurredAtUnixMilliseconds < timeline.dayStartUnixMilliseconds ? -1 : 1)
                     )
                 }
             )
