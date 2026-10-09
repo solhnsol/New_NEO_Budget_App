@@ -7,6 +7,9 @@ struct DayTimelineScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: TimelineSelection?
     @State private var infoEvent: CalendarEventKey?
+    /// How far a swipe has carried the two days sideways. Owned here so the week strip above follows it together with the grid.
+    @State private var swipeOffset: CGFloat = 0
+    @State private var screenWidth: CGFloat = 0
 
     var body: some View {
         NavigationStack {
@@ -48,11 +51,17 @@ struct DayTimelineScreen: View {
         }
     }
 
+    /// How many days a swipe has carried the timeline: one column's width is one day, and fingers moving left go to the next day.
+    private var swipeDays: CGFloat {
+        let column = (screenWidth - 60) / 2
+        return column > 0 ? -swipeOffset / column : 0
+    }
+
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         return VStack(spacing: 0) {
             DayHeader(model: model)
-            WeekStripView(week: model.week, selected: model.selectedDay) { day in Task { await model.select(day) } }
+            WeekStripView(week: model.week, selected: model.selectedDay, swipeDays: swipeDays) { day in Task { await model.select(day) } }
             Divider()
             if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
@@ -62,12 +71,18 @@ struct DayTimelineScreen: View {
                     onMoveDays: { days in
                         // The days already read are shown in this frame; the one that just came into the strip is read after.
                         if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.reload() } }
-                    }
+                    },
+                    swipeOffset: $swipeOffset
                 )
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
             Divider()
             SummaryBar(timelines: timelines)
+        }
+        .background {
+            GeometryReader { proxy in
+                Color.clear.onAppear { screenWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in screenWidth = width }
+            }
         }
         .sheet(item: $selection) { item in
             EventDetailView(selection: item, zoneIdentifier: zoneIdentifier)

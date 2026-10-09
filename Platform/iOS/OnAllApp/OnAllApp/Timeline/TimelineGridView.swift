@@ -92,7 +92,7 @@ struct TimelineGridView: View {
     var onMoveDays: (Int) -> Void = { _ in }
     @State private var reveal: EditGestureHost.RevealRequest?
     /// How far the strip of days is dragged sideways of its resting place, during a swipe and while it settles.
-    @State private var swipeOffset: CGFloat = 0
+    @Binding var swipeOffset: CGFloat
     @State private var settling = false
     @State private var choice: TouchChoice?
     @Environment(\.dynamicTypeSize) private var dynamicType
