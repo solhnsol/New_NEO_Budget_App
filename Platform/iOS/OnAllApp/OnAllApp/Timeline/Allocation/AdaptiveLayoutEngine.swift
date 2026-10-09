@@ -253,6 +253,31 @@ private extension AdaptiveLayoutEngine {
 
         func height(of unit: Unit) -> CGFloat { (unit.isOverflow ? parameters.overflowCard : parameters.transactionRow) * scale }
 
+        // MARK: Fitting what is shown to an axis that is given
+
+        /// What every event and transaction shows on `axis`: an event the highest level whose height its minutes have, two neighbouring
+        /// lines apart where the axis keeps them at least a row apart and merged where it does not. Judged by the axis alone, so the axis
+        /// and what is drawn on it can never disagree, and with no budget or earlier layout to depend on.
+        func stateFitting(_ axis: TimelineAxis) -> [ItemKey: Int] {
+            var state = initialState(previous: nil)
+            for day in days {
+                for event in day.events {
+                    guard let heights = day.heights[event.id] else { continue }
+                    let room = axis.y(minute: event.effectiveEnd) - axis.y(minute: event.startMinute)
+                    var level = EventLevel.title
+                    for candidate in [EventLevel.preview, .full] where candidate <= heights.topLevel && room + 0.5 >= heights.height(of: candidate) {
+                        level = candidate
+                    }
+                    state[ItemKey(role: day.role, kind: .event, id: event.id)] = level.rawValue
+                }
+                for link in day.links where link.isMergeable {
+                    let room = axis.y(minute: day.lines[link.index + 1].transaction.minute) - axis.y(minute: day.lines[link.index].transaction.minute)
+                    state[link.key] = room + 0.5 >= pitch ? 1 : 0
+                }
+            }
+            return state
+        }
+
         // MARK: Axis
 
         func demands(for state: [ItemKey: Int]) -> [Demand] {
@@ -355,8 +380,12 @@ private extension AdaptiveLayoutEngine {
     static func compute(_ input: AllocationInput, focus: FocusLayout?) -> AdaptiveLayout {
         let scale = max(0.5, input.textScale)
         let context = Context(input: input, scale: scale)
-        var state = context.initialState(previous: input.previous)
         let budget = max(0, input.viewportHeight)
+        // An axis decided elsewhere: what is shown follows from the room that axis gives, in one pass.
+        if let fixed = input.fixedAxis, fixed.totalMinutes == context.totalMinutes {
+            return build(context: context, state: context.stateFitting(fixed), budget: budget, focus: focus, fixedAxis: fixed)
+        }
+        var state = context.initialState(previous: input.previous)
 
         // Too big for the screen: give back detail, last in the priority order first, until it fits or nothing is left to give.
         var height = context.axis(for: state).height
@@ -389,14 +418,14 @@ private extension AdaptiveLayoutEngine {
         title.unicodeScalars.reduce(CGFloat(0)) { $0 + ($1.value >= 0x2E80 ? 12 : 7) } * scale + 12
     }
 
-    static func build(context: Context, state: [ItemKey: Int], budget: CGFloat, focus: FocusLayout?) -> AdaptiveLayout {
+    static func build(context: Context, state: [ItemKey: Int], budget: CGFloat, focus: FocusLayout?, fixedAxis: TimelineAxis? = nil) -> AdaptiveLayout {
         let p = context.parameters
         let scale = context.scale
         let width = max(1, context.input.contentWidth)
         let lineWidth = min(width, max(p.minimumLineWidth, width * p.lineWidthShare))
         let titleRoom = width - lineWidth - 4                                  // what a title may use without reaching a line
 
-        var axis = context.axis(for: state)
+        var axis = fixedAxis ?? context.axis(for: state)
         var extra: [Demand] = []
         var resolutions: [ItemKey: TitleResolution] = [:]
         var headers: [ItemKey: EventHeader] = [:]
@@ -455,8 +484,9 @@ private extension AdaptiveLayoutEngine {
             }
         }
         if !extra.isEmpty {
-            let enlarged = context.axis(for: state, extra: extra)
-            if enlarged.height <= budget + 0.5 {
+            // On a fixed axis there is nothing to enlarge: the cut title is the answer.
+            let enlarged = fixedAxis == nil ? context.axis(for: state, extra: extra) : nil
+            if let enlarged, enlarged.height <= budget + 0.5 {
                 axis = enlarged
             } else {
                 // No room to enlarge: the cut title is the fallback, never a title printed over a line.
@@ -696,27 +726,32 @@ enum EventOverlapAnalysis {
 // MARK: - Read-only views of what the engine asks for (used to plan an axis that is stable between days; nothing here changes a layout)
 
 extension AdaptiveLayoutEngine {
-    /// The axes one day asks for by itself at three amounts of detail: everything in its smallest form (`minimum`), events with their
-    /// first rows and close transactions kept apart (`preferred`), and every row shown (`expanded`). The same demand rules as `layout`,
+    /// The axes one day asks for by itself at four amounts of detail: everything in its smallest form (`minimum`), its close transactions
+    /// kept apart as lines of their own (`separated`), that and events with their first rows (`preferred`), and every row shown (`expanded`). The same demand rules as `layout`,
     /// with no budget applied, so they are the room the day wants and not the room it was given.
     static func soloAxes(of day: AllocationDay, parameters: AllocationParameters = AllocationParameters(), textScale: CGFloat = 1)
-        -> (minimum: TimelineAxis, preferred: TimelineAxis, expanded: TimelineAxis) {
+        -> (minimum: TimelineAxis, separated: TimelineAxis, preferred: TimelineAxis, expanded: TimelineAxis) {
         let scale = max(0.5, textScale)
         let input = AllocationInput(main: day, secondary: nil, viewportHeight: 0, contentWidth: 300, textScale: scale, parameters: parameters)
         let context = Context(input: input, scale: scale)
         let minimum = context.initialState(previous: nil)
+        var separated = minimum
         var preferred = minimum
         var expanded = minimum
         for step in context.steps {
             switch step.action {
-            case .eventTo(.preview), .separate:
+            case .separate:
+                _ = context.apply(step, in: &separated)
+                _ = context.apply(step, in: &preferred)
+                _ = context.apply(step, in: &expanded)
+            case .eventTo(.preview):
                 _ = context.apply(step, in: &preferred)
                 _ = context.apply(step, in: &expanded)
             case .eventTo:
                 _ = context.apply(step, in: &expanded)
             }
         }
-        return (context.axis(for: minimum), context.axis(for: preferred), context.axis(for: expanded))
+        return (context.axis(for: minimum), context.axis(for: separated), context.axis(for: preferred), context.axis(for: expanded))
     }
 
     /// The axis two days need together in their smallest form: the least the engine's own layout can ever be asked to show.

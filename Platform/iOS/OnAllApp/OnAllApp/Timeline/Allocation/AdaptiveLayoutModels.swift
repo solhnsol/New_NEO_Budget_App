@@ -216,6 +216,10 @@ struct AllocationInput: Sendable {
     /// content or text size, never per frame). A title missing here is estimated from its characters.
     var titleWidths: [String: CGFloat] = [:]
     var parameters = AllocationParameters()
+    /// A time axis decided elsewhere (see `AxisStabilizer`). The layout then takes this axis as it is and decides what every event and
+    /// transaction shows from the room this axis gives it, instead of shaping an axis from a budget. Nothing is spent or given back, and
+    /// there is no previous layout to stay close to: the same axis and days always give the same layout.
+    var fixedAxis: TimelineAxis?
 }
 
 // MARK: Output

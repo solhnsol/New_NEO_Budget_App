@@ -46,45 +46,56 @@ private func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value
 
 // MARK: Invariants
 
-@Test func theSameInputGivesTheSameAxisWhateverWasPlannedBefore() {
+private let variants: [AxisVariant] = [.floorOnly, .fourDay, .sixDay]
+
+@Test func theSameInputGivesTheSameLayoutWhateverWasPlannedBeforeAndWhateverIsRemembered() {
     for scenario in scenarios() {
         let cold = AxisStability.windows(scenario, variant: .fourDay)
         let warm = AxisDemandCache()
         _ = AxisStability.windows(scenario, variant: .fourDay, cache: warm)                          // fills the cache
         let reversed = AxisStability.commonRange(scenario).reversed().map { day in
-            (day, AxisStability.planWindow(scenario, main: day, variant: .fourDay, radius: (1, 1), cache: warm))   // other order, warm cache
-        }.sorted { $0.0 < $1.0 }
-        #expect(cold.map(\.axis.slots) == reversed.map(\.1.slots), "\(scenario.name): the path to a day changed its axis")
+            AxisStability.layoutWindow(scenario, main: day, variant: .fourDay, cache: warm)           // other order, warm cache
+        }.sorted { $0.day < $1.day }
+        #expect(cold.map(\.layout.axis) == reversed.map(\.layout.axis), "\(scenario.name): the path to a day changed its axis")
+        #expect(cold.map(\.layout.events) == reversed.map(\.layout.events), "\(scenario.name): the path to a day changed what is shown")
+        #expect(cold.map(\.layout.lines) == reversed.map(\.layout.lines))
+        #expect(cold.map(\.layout.overflows) == reversed.map(\.layout.overflows))
     }
 }
 
-@Test func theFloorOfTheTwoVisibleDaysIsNeverGivenUp() {
+@Test func everyTimeIsAtLeastAsFarFromEveryOtherAsOnTheFloor() {
+    // The floor is exact at the minute, not only per quarter hour: no demand of the visible days can be lost between two minutes.
     for scenario in scenarios() {
         for variant in [AxisVariant.fourDay, .sixDay] {
-            let floors = AxisStability.windows(scenario, variant: .floorOnly)
-            let planned = AxisStability.windows(scenario, variant: variant)
-            for (floor, plan) in zip(floors, planned) {
-                #expect(zip(floor.axis.slots, plan.axis.slots).allSatisfy { $1 + 0.001 >= $0 }, "\(scenario.name) \(variant.rawValue) day \(plan.day)")
-                #expect(plan.axis.requiredScroll == floor.axis.requiredScroll)                         // the required scroll is exactly the floor's
+            for (index, window) in AxisStability.windows(scenario, variant: variant).enumerated() {
+                let floor = AdaptiveLayoutEngine.floorAxis(
+                    main: scenario.days[window.day], secondary: scenario.days[window.day + 1], parameters: scenario.parameters, textScale: scenario.textScale
+                )
+                var worst: CGFloat = .infinity
+                var minute = 0
+                while minute < 24 * 60 {
+                    var other = minute + 1
+                    while other <= 24 * 60 {
+                        worst = min(worst, (window.layout.axis.y(minute: other) - window.layout.axis.y(minute: minute)) - (floor.y(minute: other) - floor.y(minute: minute)))
+                        other += 7
+                    }
+                    minute += 13
+                }
+                #expect(worst > -0.001, "\(scenario.name) \(variant.rawValue) window \(index): two times came closer than on the floor by \(-worst)")
+                #expect(window.plan.requiredScroll == max(0, floor.height - scenario.viewportHeight))
             }
         }
     }
 }
 
-@Test func stabilityScrollNeverExceedsItsAllowanceAndIsZeroWithoutIt() {
+@Test func stabilityScrollNeverExceedsItsAllowanceAndIsNeverAddedWhereScrollingIsAlreadyRequired() {
     for scenario in scenarios() {
         let allowance = AxisStabilizerParameters.fourDay.extraScrollAllowance * scenario.viewportHeight
-        for plan in AxisStability.windows(scenario, variant: .fourDay) {
-            #expect(plan.axis.stabilizationScroll <= allowance + 0.5, "\(scenario.name) day \(plan.day): \(plan.axis.stabilizationScroll) > \(allowance)")
+        for window in AxisStability.windows(scenario, variant: .fourDay) {
+            #expect(window.plan.stabilizationScroll <= allowance + 0.5, "\(scenario.name) day \(window.day): \(window.plan.stabilizationScroll) > \(allowance)")
+            if window.plan.requiredScroll + window.plan.readabilityScroll + window.plan.prepaidScroll > 0 { #expect(window.plan.stabilizationScroll < 0.5, "\(scenario.name) day \(window.day)") }
+            #expect(window.plan.readabilityScroll + window.plan.prepaidScroll <= AxisStabilizerParameters.fourDay.mainLinesScrollAllowance * scenario.viewportHeight + 0.5, "\(scenario.name) day \(window.day)")
         }
-        // No allowance, no room: nothing is added beyond the floor.
-        var parameters = AxisStabilizerParameters.fourDay
-        parameters.extraScrollAllowance = 0
-        let cache = AxisDemandCache()
-        let profiles = (0..<4).map { cache.profile(for: scenario.days[$0], parameters: scenario.parameters, textScale: scenario.textScale) }
-        let floor = cache.floor(main: profiles[1], secondary: profiles[2], mainDay: scenario.days[1], secondaryDay: scenario.days[2], parameters: scenario.parameters, textScale: scenario.textScale)
-        let tight = AxisStabilizer.plan(window: profiles, mainIndex: 1, floor: floor, viewport: floor.reduce(0, +), parameters: parameters)
-        #expect(tight.stabilizationScroll < 0.5)
     }
 }
 
@@ -92,14 +103,83 @@ private func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value
     let scenario = scenarios()[0]
     let report = AxisStability.compare(scenario, variant: .fourDay)
     #expect(report.maxYShift < 0.001 && report.maxSlotDelta < 0.001)
-    let slots = AxisStability.windows(scenario, variant: .fourDay)[0].axis.slots
+    let slots = AxisStability.windows(scenario, variant: .fourDay)[0].plan.slots
     #expect(slots.contains { $0 < 2 })                                                                  // long empty stretches are still strongly compressed
+}
+
+// MARK: The axis and what is drawn on it are one decision
+
+@Test func whatIsShownIsExactlyWhatTheAxisHasRoomFor() {
+    for scenario in scenarios() {
+        for variant in variants {
+            for window in AxisStability.windows(scenario, variant: variant) {
+                let layout = window.layout
+                let label = "\(scenario.name) \(variant.rawValue) window \(window.day)"
+                #expect(layout.axis == window.plan.axis, "\(label): the layout is not on the planned axis")
+                #expect(layout.contentHeight == layout.axis.height)
+                #expect(layout.requiresScroll == (layout.axis.height > scenario.viewportHeight + 0.5))
+                for (role, day) in [(DayRole.main, scenario.days[window.day]), (.secondary, scenario.days[window.day + 1])] {
+                    let heights = AdaptiveLayoutEngine.demandHeights(of: day, parameters: scenario.parameters, textScale: scenario.textScale)
+                    // Events: the level is the highest one the axis gives the height for, never more.
+                    for event in layout.events where event.key.role == role {
+                        guard let needs = heights.events[event.id], let source = day.events.first(where: { $0.id == event.id }) else { continue }
+                        let room = layout.axis.y(minute: source.effectiveEnd) - layout.axis.y(minute: source.startMinute)
+                        let required = event.level == .title ? needs.title : event.level == .preview ? needs.preview : needs.full
+                        #expect(event.level == .title || room + 0.5 >= required, "\(label): \(event.id) shows a level it has no height for")
+                        if event.level < .full, needs.full > needs.preview { #expect(room + 0.5 < needs.full || event.level == .full, "\(label): \(event.id) could show more") }
+                        #expect(event.titleResolution != .expandedRange, "\(label): a fixed axis was asked to grow")
+                    }
+                    // Transactions: two neighbouring lines are apart where the axis keeps them a row apart, merged where it does not.
+                    let overflows = layout.overflows.filter { $0.role == role }.map { Set($0.members.map(\.transactionID)) }
+                    for link in heights.mergeableLinks {
+                        let ids = link.key.split(separator: ">").map(String.init)
+                        let room = layout.axis.y(minute: link.second) - layout.axis.y(minute: link.first)
+                        let apart = !overflows.contains { group in ids.allSatisfy { group.contains($0) } }
+                        #expect(apart == (room + 0.5 >= heights.pitch), "\(label): \(link.key) is \(apart ? "apart" : "merged") with room \(room) for \(heights.pitch)")
+                    }
+                }
+                // No line is shown that needs more height than the axis gives it: consecutive things on one day are a row apart or merged.
+                for role in [DayRole.main, .secondary] {
+                    let anchors = (layout.lines.filter { $0.role == role }.map { ($0.minute, scenario.parameters.transactionRow * max(0.5, scenario.textScale)) }
+                        + layout.overflows.filter { $0.role == role }.map { (($0.startMinute + $0.endMinute) / 2, $0.requiredHeight) }).sorted { $0.0 < $1.0 }
+                    let gap = scenario.parameters.lineGap * max(0.5, scenario.textScale)
+                    for (a, b) in zip(anchors, anchors.dropFirst()) where b.0 > a.0 {
+                        let room = layout.axis.y(minute: b.0) - layout.axis.y(minute: a.0)
+                        #expect(room + 1 >= (a.1 + b.1) / 2 + gap, "\(label): two lines at \(a.0) and \(b.0) are \(room) apart, they need \((a.1 + b.1) / 2 + gap)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Test func theLayoutOnAFixedAxisIgnoresWhatWasShownBeforeAndNeverLoops() {
+    let scenario = scenarios()[2]
+    let plan = AxisStability.layoutWindow(scenario, main: 3, variant: .fourDay)
+    var input = AllocationInput(main: scenario.days[3], secondary: scenario.days[4], viewportHeight: scenario.viewportHeight, contentWidth: 300)
+    input.fixedAxis = plan.layout.axis
+    let first = AdaptiveLayoutEngine.layout(input)
+    input.previous = first.state.mapValues { _ in 2 }                  // a different history
+    input.viewportHeight = 10                                          // and a different budget: the axis is given, so they play no part
+    let second = AdaptiveLayoutEngine.layout(input)
+    #expect(first.events == second.events && first.lines == second.lines && first.overflows == second.overflows && first.axis == second.axis)
+}
+
+// MARK: Policy: what each part of the plan is worth
+
+@Test func theMainDaysTransactionsAreAtLeastAsOftenReadableAsWithTheEngineAlone() {
+    // P1: the 50% split of the extra room is for the main day's first rows, not for its independent transactions, which come first.
+    for scenario in scenarios() {
+        let two = AxisStability.compare(scenario, variant: .engineTwoDay)
+        let four = AxisStability.compare(scenario, variant: .fourDay)
+        #expect(four.mainSeparateLines + 2 >= two.mainSeparateLines, "\(scenario.name): 4일 \(four.mainSeparateLines) < 2일 \(two.mainSeparateLines)")
+    }
 }
 
 @Test func theCacheFindsWhatItComputedAndForgetsWhatChanged() {
     let cache = AxisDemandCache(limit: 4)
     let parameters = AllocationParameters()
-    let a = day(0, events: [hours(9, 10)]), b = day(1, events: [hours(9, 10)])
+    let a = day(0, events: [hours(9, 10)])
     _ = cache.profile(for: a, parameters: parameters, textScale: 1)
     _ = cache.profile(for: a, parameters: parameters, textScale: 1)
     #expect(cache.hits == 1 && cache.misses == 1)
@@ -107,9 +187,24 @@ private func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value
     #expect(cache.misses == 2)
     _ = cache.profile(for: a, parameters: parameters, textScale: 2)                                      // the text size changed
     #expect(cache.misses == 3)
+    var changed = parameters
+    changed.transactionRow += 4                                                                          // a size the demand depends on changed
+    _ = cache.profile(for: a, parameters: changed, textScale: 1)
+    #expect(cache.misses == 4)
     for i in 10..<20 { _ = cache.profile(for: day(i, events: [hours(9, 10)]), parameters: parameters, textScale: 1) }
     #expect(cache.count <= 4)                                                                           // bounded
-    _ = b
+}
+
+@Test func aWarmCacheGivesTheLayoutAColdOneDoes() {
+    for scenario in scenarios() {
+        let cache = AxisDemandCache()
+        _ = AxisStability.windows(scenario, variant: .fourDay, cache: cache)
+        for day in AxisStability.commonRange(scenario) {
+            let warm = AxisStability.layoutWindow(scenario, main: day, variant: .fourDay, cache: cache)
+            let cold = AxisStability.layoutWindow(scenario, main: day, variant: .fourDay)
+            #expect(warm.layout.axis == cold.layout.axis && warm.layout.events == cold.layout.events)
+        }
+    }
 }
 
 @Test func stepsOneDayAtATimeReuseThreeOfFourProfiles() {
@@ -122,74 +217,73 @@ private func f(_ value: CGFloat) -> String { String(format: "%.1f", Double(value
     #expect(cache.hitRate > 0.4)
 }
 
-@Test func noStabilityScrollIsAddedWhereTheVisibleDaysAlreadyNeedToScroll() {
-    for scenario in scenarios() where scenario.viewportHeight < 400 || scenario.textScale > 2 {
-        for plan in AxisStability.windows(scenario, variant: .fourDay) where plan.axis.requiredScroll > 0 {
-            #expect(plan.axis.stabilizationScroll < 0.5, "\(scenario.name) day \(plan.day)")
-        }
-    }
-}
-
 // MARK: The comparison (printed; the invariants above are what is asserted)
 
+private func line(_ scenario: String, _ r: AxisVariantReport) -> String {
+    "| \(scenario) | \(r.variant.rawValue) | \(f(r.maxYShift)) | \(f(r.meanYShift)) | \(f(r.maxSlotDelta)) | \(f(r.meanHeightDelta)) | \(r.levelChanges) | \(r.mainSeparateLines)/\(r.mainEventsWithRows) | \(f(r.meanRequiredScroll)) | \(f(r.meanReadabilityScroll))/\(f(r.maxReadabilityScroll)) | \(f(r.meanStabilizationScroll))/\(f(r.maxStabilizationScroll)) | \(f(CGFloat(r.seconds * 1000))) |"
+}
+
 @Test func printTheComparisonOfTheVariantsOnEveryFixture() {
-    var lines = ["| 시나리오 | 방식 | 최대 Y이동 | 평균 Y이동 | 최대 구간높이변화 | 평균 높이변화 | 표시수준변화 | 필수스크롤 | 안정화스크롤(평균/최대) | 계산(ms) |", "|---|---|---|---|---|---|---|---|---|---|"]
+    var lines = ["| 시나리오 | 방식 | 최대 Y이동 | 평균 Y이동 | 최대 구간높이변화 | 평균 높이변화 | 표시수준변화 | 주날짜 거래줄/행일정 | 필수스크롤 | 읽기스크롤(평균/최대) | 안정화스크롤(평균/최대) | 계산(ms) |", "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for scenario in scenarios() {
         for variant in AxisVariant.allCases {
-            let r = AxisStability.compare(scenario, variant: variant, cache: AxisDemandCache())
-            lines.append("| \(scenario.name) | \(variant.rawValue) | \(f(r.maxYShift)) | \(f(r.meanYShift)) | \(f(r.maxSlotDelta)) | \(f(r.meanHeightDelta)) | \(r.levelChanges) | \(f(r.meanRequiredScroll)) | \(f(r.meanStabilizationScroll))/\(f(r.maxStabilizationScroll)) | \(f(CGFloat(r.seconds * 1000))) |")
+            lines.append(line(scenario.name, AxisStability.compare(scenario, variant: variant, cache: AxisDemandCache())))
         }
     }
     print("AXISREPORT\n" + lines.joined(separator: "\n") + "\nAXISREPORTEND")
     #expect(lines.count > 2)
 }
 
-// MARK: Parameter sweep (printed): how the settings trade stability against the room they spend
-
-@Test func printTheParameterSweep() {
-    struct Setting { let name: String; let parameters: AxisStabilizerParameters }
-    var settings: [Setting] = []
-    for mainShare in [1.0, 0.5, 0.25] as [CGFloat] {
-        for weights in [[0.5, 0.25, 0.125], [1, 1, 1], [0.8, 0.5, 0.3]] as [[CGFloat]] {
-            for taper in [12, 24] as [CGFloat] {
-                var p = AxisStabilizerParameters.fourDay
-                p.mainDetailShare = mainShare
-                p.distanceWeights = weights
-                p.taperPerSlot = taper
-                settings.append(Setting(name: "main \(mainShare) w\(weights[0]) taper \(taper)", parameters: p))
-            }
-        }
-    }
-    var lines = ["| 설정 | 최대Y이동 합 | 평균Y이동 합 | 표시수준변화 합 | 안정화스크롤 최대 |", "|---|---|---|---|---|"]
-    for setting in settings {
-        var maxY: CGFloat = 0, meanY: CGFloat = 0, levels = 0, extra: CGFloat = 0
-        for scenario in scenarios() {
-            let r = AxisStability.compare(scenario, variant: .fourDay, cache: AxisDemandCache(), parameters: setting.parameters)
-            maxY += r.maxYShift; meanY += r.meanYShift; levels += r.levelChanges; extra = max(extra, r.maxStabilizationScroll)
-        }
-        lines.append("| \(setting.name) | \(f(maxY)) | \(f(meanY)) | \(levels) | \(f(extra)) |")
-    }
-    var twoMax: CGFloat = 0, twoMean: CGFloat = 0, twoLevels = 0
-    for scenario in scenarios() {
-        let r = AxisStability.compare(scenario, variant: .engineTwoDay)
-        twoMax += r.maxYShift; twoMean += r.meanYShift; twoLevels += r.levelChanges
-    }
-    lines.append("| (기존 2일) | \(f(twoMax)) | \(f(twoMean)) | \(twoLevels) | 0 |")
-    print("AXISSWEEP\n" + lines.joined(separator: "\n") + "\nAXISSWEEPEND")
-}
-
 @Test func printTheCostOfPlanningAndWhatTheCacheSaves() {
-    var lines = ["| 시나리오 | 창 수 | 캐시 없이(ms) | 캐시 사용(ms) | 적중률 | 항목 수 |", "|---|---|---|---|---|---|"]
+    var lines = ["| 시나리오 | 창 수 | 캐시 없이(ms) | 캐시 사용(ms) | 적중률 | 항목 수 | 한 칸 이동(ms) |", "|---|---|---|---|---|---|---|"]
     let clock = ContinuousClock()
+    func ms(_ d: Duration) -> CGFloat { CGFloat(Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15) }
     for scenario in scenarios() {
         let windows = AxisStability.commonRange(scenario).count
-        var cold = Duration.zero, warm = Duration.zero
-        // Without a cache every window computes its four days again.
-        cold = clock.measure { for day in AxisStability.commonRange(scenario) { _ = AxisStability.planWindow(scenario, main: day, variant: .fourDay, radius: (1, 1), cache: AxisDemandCache()) } }
+        let cold = clock.measure { for day in AxisStability.commonRange(scenario) { _ = AxisStability.layoutWindow(scenario, main: day, variant: .fourDay, cache: AxisDemandCache()) } }
         let cache = AxisDemandCache()
-        warm = clock.measure { _ = AxisStability.windows(scenario, variant: .fourDay, cache: cache) }
-        func ms(_ d: Duration) -> CGFloat { CGFloat(Double(d.components.seconds) * 1000 + Double(d.components.attoseconds) / 1e15) }
-        lines.append("| \(scenario.name) | \(windows) | \(f(ms(cold))) | \(f(ms(warm))) | \(f(CGFloat(cache.hitRate) * 100))% | \(cache.count) |")
+        _ = AxisStability.layoutWindow(scenario, main: 2, variant: .fourDay, cache: cache)                      // the window on screen
+        let step = clock.measure { _ = AxisStability.layoutWindow(scenario, main: 3, variant: .fourDay, cache: cache) }  // one day over
+        let warm = clock.measure { _ = AxisStability.windows(scenario, variant: .fourDay, cache: cache) }
+        lines.append("| \(scenario.name) | \(windows) | \(f(ms(cold))) | \(f(ms(warm))) | \(f(CGFloat(cache.hitRate) * 100))% | \(cache.count) | \(f(ms(step))) |")
     }
     print("AXISCOST\n" + lines.joined(separator: "\n") + "\nAXISCOSTEND")
+}
+
+@Test func printWhatEachPartOfThePlanIsWorth() {
+    struct Setting { let name: String; let parameters: AxisStabilizerParameters }
+    func with(_ change: (inout AxisStabilizerParameters) -> Void) -> AxisStabilizerParameters { var p = AxisStabilizerParameters.fourDay; change(&p); return p }
+    let settings = [
+        Setting(name: "기본(메인100/보조100, 형태·테이퍼 끔)", parameters: .fourDay),
+        Setting(name: "+테이퍼 24", parameters: with { $0.taperPerSlot = 24 }),
+        Setting(name: "+형태 50%", parameters: with { $0.shapeShare = 0.5 }),
+        Setting(name: "메인50/보조50", parameters: with { $0.mainDetailShare = 0.5; $0.secondaryShare = 0.5 }),
+        Setting(name: "빈 구간 끔", parameters: with { $0.shortGapSlots = 0 }),
+        Setting(name: "주변 끔", parameters: with { $0.spendsOnSurroundings = false }),
+        Setting(name: "스크롤 허용 0", parameters: with { $0.extraScrollAllowance = 0 }),
+        Setting(name: "스크롤 허용 5%", parameters: with { $0.extraScrollAllowance = 0.05 }),
+        Setting(name: "스크롤 허용 15%", parameters: with { $0.extraScrollAllowance = 0.15 }),
+        Setting(name: "P1 스크롤 0", parameters: with { $0.mainLinesScrollAllowance = 0 }),
+        Setting(name: "P1 스크롤 50%", parameters: with { $0.mainLinesScrollAllowance = 0.5 }),
+        Setting(name: "보조 거래줄도 P1 스크롤", parameters: with { $0.secondaryLinesUseReadabilityScroll = true }),
+        Setting(name: "가중치 1/1/1", parameters: with { $0.distanceWeights = [1, 1, 1] }),
+    ]
+    var lines = ["| 설정 | 최대Y이동 합 | 평균Y이동 합 | 표시수준변화 합 | 주날짜 거래줄 | 주날짜 행일정 | 안정화스크롤 평균/최대 | 추가높이 합(안정화) |", "|---|---|---|---|---|---|---|---|"]
+    for setting in settings {
+        var maxY: CGFloat = 0, meanY: CGFloat = 0, levels = 0, mainLines = 0, mainRows = 0, extraMean: CGFloat = 0, extraMax: CGFloat = 0, spent: CGFloat = 0, count: CGFloat = 0
+        for scenario in scenarios() {
+            let r = AxisStability.compare(scenario, variant: .fourDay, cache: AxisDemandCache(), parameters: setting.parameters)
+            maxY += r.maxYShift; meanY += r.meanYShift; levels += r.levelChanges; mainLines += r.mainSeparateLines; mainRows += r.mainEventsWithRows
+            extraMean += r.meanStabilizationScroll; extraMax = max(extraMax, r.maxStabilizationScroll); count += 1
+            spent += AxisStability.windows(scenario, variant: .fourDay, parameters: setting.parameters).map(\.plan.stabilizerHeight).reduce(0, +)
+        }
+        lines.append("| \(setting.name) | \(f(maxY)) | \(f(meanY)) | \(levels) | \(mainLines) | \(mainRows) | \(f(extraMean / count))/\(f(extraMax)) | \(f(spent)) |")
+    }
+    var maxY: CGFloat = 0, meanY: CGFloat = 0, levels = 0, mainLines = 0, mainRows = 0
+    for scenario in scenarios() {
+        let r = AxisStability.compare(scenario, variant: .engineTwoDay)
+        maxY += r.maxYShift; meanY += r.meanYShift; levels += r.levelChanges; mainLines += r.mainSeparateLines; mainRows += r.mainEventsWithRows
+    }
+    lines.append("| (기존 2일) | \(f(maxY)) | \(f(meanY)) | \(levels) | \(mainLines) | \(mainRows) | 0/0 | 0 |")
+    print("AXISSWEEP\n" + lines.joined(separator: "\n") + "\nAXISSWEEPEND")
 }

@@ -370,3 +370,40 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let covered = try #require(busy.events.first { $0.block.title == "앞" })
     #expect(covered.header.map { rect in !busy.events.contains { $0.block.title != "앞" && $0.frame.intersects(rect) } } ?? true)
 }
+
+// MARK: On an axis planned for stability, what is drawn is what the axis has room for
+
+@Test func onAStabilizedAxisEveryLineSitsAtItsTimeAndEveryRowHasItsHeight() throws {
+    let events = try [event(0, "회의", 9 * 60, 11 * 60), event(1, "점심", 12 * 60, 13 * 60), event(2, "짧은", 15 * 60, 15 * 60 + 10)]
+    let spends = try [spend("a", minute: 9 * 60 + 30), spend("b", minute: 9 * 60 + 36), spend("c", minute: 9 * 60 + 44), spend("d", minute: 14 * 60), spend("e", minute: 14 * 60 + 3)]
+    let tl = try timeline(events, spends, link: ["a": 0, "c": 0])
+    let main = AllocationDay(tl)
+    let empty = { (offset: Int) in AllocationDay(day: main.day.adding(days: offset), totalMinutes: main.totalMinutes, events: [], transactions: []) }
+    for viewport in [320, 640, 900] as [CGFloat] {
+        let made = StabilizedLayout.make(
+            days: [empty(-1), main, empty(1), empty(2)], mainIndex: 1, viewport: viewport,
+            contentWidth: TimelineGeometry(totalMinutes: 1440).contentWidth(totalWidth: layoutWidth)
+        )
+        let geometry = TimelineGeometry(axis: made.layout.axis)
+        let plan = DayRenderPlan(timeline: tl, role: .main, layout: made.layout, geometry: geometry, layoutWidth: layoutWidth, titleWidth: { _ in 40 })
+        // Events: a card that shows more than its title has the height that level needs, on this very axis.
+        for item in plan.events {
+            guard let placed = item.placement else { continue }
+            if placed.level != .title { #expect(item.frame.height + 1 >= placed.requiredHeight, "\(viewport): \(item.block.title) shows rows without their height") }
+            if placed.titleResolution == .externalHeader { #expect(item.header != nil) }
+        }
+        // Lines: each one drawn at the minute it happened (never pushed down to make room), and none over another.
+        let lines = plan.lines.sorted { $0.frame.minY < $1.frame.minY }
+        for line in lines {
+            let exact = geometry.y(minute: made.layout.lines.first { $0.transactionID == line.id }?.minute ?? 0)
+            #expect(abs(line.frame.midY - exact) < 0.6, "\(viewport): \(line.id) was moved off its time")
+        }
+        for (a, b) in zip(lines, lines.dropFirst()) { #expect(a.frame.maxY <= b.frame.minY + 0.5, "\(viewport): two lines overlap") }
+        // Overflows: made only where two lines could not be a row apart on the axis.
+        for overflow in plan.overflows {
+            let minutes = overflow.members.map(\.minute)
+            guard let first = minutes.min(), let last = minutes.max(), minutes.count > 1 else { continue }
+            #expect(geometry.y(minute: last) - geometry.y(minute: first) < (AllocationParameters().transactionRow + AllocationParameters().lineGap) * CGFloat(minutes.count - 1) + 0.5)
+        }
+    }
+}
