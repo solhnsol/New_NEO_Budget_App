@@ -44,32 +44,37 @@ struct DayTimelineScreen: View {
                 await model.reload()
             }
         case .ready:
-            if let timeline = model.timeline { ready(timeline) }
+            if !model.visibleTimelines.isEmpty { ready(model.visibleTimelines) }
         }
     }
 
-    private func ready(_ timeline: DayTimeline) -> some View {
-        VStack(spacing: 0) {
+    private func ready(_ timelines: [DayTimeline]) -> some View {
+        let zoneIdentifier = model.dayZone.identifier
+        return VStack(spacing: 0) {
             DayHeader(model: model)
             WeekStripView(week: model.week, selected: model.selectedDay) { day in Task { await model.select(day) } }
             Divider()
-            if !timeline.allDay.isEmpty {
-                AllDayRow(items: timeline.allDay) { selection = .allDay($0) }
-                Divider()
-            }
-            if let editor = model.editor {
-                TimelineGridView(timeline: timeline, zone: model.dayZone, isToday: model.isToday, editor: editor, onSelect: { selection = $0 }, onEditInfo: { infoEvent = $0.eventKey })
-                    .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
+            if let editor = model.editor, timelines.count == 2 {
+                TimelineGridView(
+                    strip: model.strip, today: model.today, zone: model.dayZone, editor: editor,
+                    onSelect: { selection = $0 },
+                    onEditInfo: { infoEvent = $0.eventKey },
+                    onMoveDays: { days in
+                        // The days already read are shown in this frame; the one that just came into the strip is read after.
+                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.reload() } }
+                    }
+                )
+                .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
             Divider()
-            SummaryBar(summary: timeline.summary)
+            SummaryBar(timelines: timelines)
         }
         .sheet(item: $selection) { item in
-            EventDetailView(selection: item, zoneIdentifier: timeline.timeZoneIdentifier)
+            EventDetailView(selection: item, zoneIdentifier: zoneIdentifier)
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
-        .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: timeline.timeZoneIdentifier))
+        .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: zoneIdentifier))
     }
 
     private func openSettings() async {
@@ -102,7 +107,7 @@ private struct DayHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(Formatting.dayTitle(model.selectedDay)).font(.title2.bold())
+            Text(Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
             Spacer()
             Button("오늘") { Task { await model.goToday() } }
                 .buttonStyle(.bordered).disabled(model.isToday)
@@ -116,27 +121,34 @@ private struct DayHeader: View {
     }
 }
 
+/// One line per day on screen: how many events, how many transactions belong to none, and what was spent.
 private struct SummaryBar: View {
-    let summary: DaySummary
+    let timelines: [DayTimeline]
 
     var body: some View {
-        HStack(spacing: 14) {
-            Label("\(summary.eventCount + summary.allDayCount)", systemImage: "calendar")
-            if summary.unlinkedTransactionCount > 0 {
-                Label("활동 없는 지출 \(summary.unlinkedTransactionCount)건", systemImage: "creditcard")
-            }
-            Spacer()
-            ForEach(summary.totals, id: \.currency) { total in
-                let spent = total.linkedNetMinorUnits + total.unlinkedNetMinorUnits
-                Text(Formatting.money(spent, currency: total.currency) + (total.uncertainNetMinorUnits > 0 ? " + 미정" : ""))
-                    .font(.subheadline.monospacedDigit().bold())
+        VStack(spacing: 2) {
+            ForEach(timelines, id: \.day) { timeline in
+                let summary = timeline.summary
+                HStack(spacing: 10) {
+                    Text("\(timeline.day.day)일").font(.footnote.weight(.semibold)).frame(width: 34, alignment: .leading)
+                    Label("\(summary.eventCount + summary.allDayCount)", systemImage: "calendar")
+                    if summary.unlinkedTransactionCount > 0 {
+                        Label("활동 없는 지출 \(summary.unlinkedTransactionCount)건", systemImage: "creditcard")
+                    }
+                    Spacer()
+                    ForEach(summary.totals, id: \.currency) { total in
+                        let spent = total.linkedNetMinorUnits + total.unlinkedNetMinorUnits
+                        Text(Formatting.money(spent, currency: total.currency) + (total.uncertainNetMinorUnits > 0 ? " + 미정" : ""))
+                            .font(.footnote.monospacedDigit().bold())
+                    }
+                }
+                .accessibilityElement(children: .combine)
             }
         }
         .font(.footnote)
         .foregroundStyle(.secondary)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .accessibilityElement(children: .combine)
     }
 }
 

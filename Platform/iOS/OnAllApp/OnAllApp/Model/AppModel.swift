@@ -5,6 +5,13 @@ import NEOBudgetEventKit
 import NEOBudgetInMemoryCalendar
 import Observation
 
+/// One day of the strip around the two visible days. `timeline` is `nil` until it has been read.
+struct StripDay: Identifiable {
+    let day: LocalDate
+    let timeline: DayTimeline?
+    var id: LocalDate { day }
+}
+
 /// Everything the Day Timeline screen shows, derived from the calendar provider and the pure
 /// `DayTimelineBuilder`. The view never touches a provider or a platform calendar object.
 @MainActor
@@ -20,7 +27,19 @@ final class AppModel {
 
     private(set) var phase: Phase = .loading
     private(set) var selectedDay: LocalDate
-    private(set) var timeline: DayTimeline?
+    /// The first of the two days on screen. `selectedDay` is its date.
+    var timeline: DayTimeline? { cache[selectedDay] }
+    /// The two consecutive days on screen, in order. They share one time axis.
+    var visibleTimelines: [DayTimeline] { [cache[selectedDay], cache[selectedDay.adding(days: 1)]].compactMap { $0 } }
+    /// One day either side of the two on screen, so a swipe has a neighbour ready to slide in and nothing waits on a read.
+    /// Entries are `nil` until loaded.
+    var strip: [StripDay] {
+        (-1...2).map { offset in
+            let day = selectedDay.adding(days: offset)
+            return StripDay(day: day, timeline: cache[day])
+        }
+    }
+    private var cache: [LocalDate: DayTimeline] = [:]
     private(set) var week: [WeekStripDay] = []
     private(set) var calendars: [CalendarDescriptor] = []
     /// What an event's info sheet can choose from (types, places, people).
@@ -148,14 +167,26 @@ final class AppModel {
     // MARK: Navigation
 
     func select(_ day: LocalDate) async {
-        guard day != selectedDay else { return }
-        selectedDay = day
+        guard moveTo(day) else { return }
         await reload()
+    }
+
+    /// Moves the two visible days so the first is `day`, using days already read, with no waiting: a swipe that has just come to
+    /// rest shows its result in the same frame. The caller reads whatever the new strip is missing (`reload`).
+    @discardableResult
+    func moveTo(_ day: LocalDate) -> Bool {
+        guard day != selectedDay else { return false }
+        selectedDay = day
+        if visibleTimelines.count == 2 { editor?.timelinesDidChange(visibleTimelines) }
+        return true
     }
 
     func shift(days: Int) async { await select(selectedDay.adding(days: days)) }
 
     func goToday() async { await select(dayZone.localDate(of: Self.nowMilliseconds())) }
+
+    /// Today's date in the display zone.
+    var today: LocalDate { dayZone.localDate(of: Self.nowMilliseconds()) }
 
     var isToday: Bool { selectedDay == dayZone.localDate(of: Self.nowMilliseconds()) }
 
@@ -166,12 +197,15 @@ final class AppModel {
         generation += 1
         let mine = generation
         do {
-            let loadedTimeline = try await service.dayTimeline(for: selectedDay)
+            let first = selectedDay
+            var loaded: [LocalDate: DayTimeline] = [:]
+            for offset in -1...2 { loaded[first.adding(days: offset)] = try await service.dayTimeline(for: first.adding(days: offset)) }
             let loadedWeek = try await service.weekStrip(containing: selectedDay, firstWeekday: 0)
             let loadedCalendars = try await provider.calendars()
             guard mine == generation else { return }
-            timeline = loadedTimeline
-            editor?.timelineDidChange(loadedTimeline)
+            cache = loaded
+            let shown = visibleTimelines
+            if shown.count == 2 { editor?.timelinesDidChange(shown) }
             week = loadedWeek
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }

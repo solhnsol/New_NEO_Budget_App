@@ -67,19 +67,21 @@ private func placements(_ layout: DayContentLayout, _ blocks: [EventBlock], focu
         left: { (all[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
         right: { (all[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
         width: { DayContentLayout.estimatedTitleWidth(byID[$0]?.title ?? "", extra: 14) },
+        columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
         minimumHeight: geometry.minimumBlockHeight, focused: focused
     )
 }
 
 /// Where each title is drawn on screen: its box.
-private func titleBoxes(_ layout: DayContentLayout, _ blocks: [EventBlock], focused: BlockID? = nil) -> [BlockID: CGRect] {
+private func titleBoxes(_ layout: DayContentLayout, _ blocks: [EventBlock], focused: BlockID? = nil, width: CGFloat = phoneWidth) -> [BlockID: CGRect] {
     let byID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
-    let all = frames(layout, blocks)
-    let places = placements(layout, blocks, focused: focused)
+    let all = frames(layout, blocks, width: width)
+    let places = placements(layout, blocks, focused: focused, width: width)
     return Dictionary(uniqueKeysWithValues: layout.order.compactMap { id in
         guard let frame = all[id], let place = places[id], let block = byID[id] else { return nil }
         let wanted = DayContentLayout.estimatedTitleWidth(block.title, extra: 14)
-        let width = min(wanted, frame.maxX - EventTitleLayer.horizontalPadding - (frame.minX + EventTitleLayer.horizontalPadding + place.dx))
+        let reach = place.overflows ? geometry.gutterWidth + geometry.contentWidth(totalWidth: width) : frame.maxX - EventTitleLayer.horizontalPadding
+        let width = min(wanted, reach - (frame.minX + EventTitleLayer.horizontalPadding + place.dx))
         return (id, CGRect(x: frame.minX + EventTitleLayer.horizontalPadding + place.dx, y: frame.minY + place.dy, width: width, height: DayContentLayout.titleRowHeight))
     })
 }
@@ -259,4 +261,14 @@ func aTransactionCardKeepsItsAmountReadableOnEveryPhoneWidth(screenWidth: CGFloa
 @Test func theCardLeavesTheStartOfTheEventUnderItReadable() {
     let content = geometry.contentWidth(totalWidth: 320)
     #expect(content - TransactionCardPlan.width(content: content) >= 80)       // room left of the card for an event title
+}
+
+@Test(arguments: [217.5, 250.0, 300.0])
+func fiveEventsStartingTogetherKeepEveryTitleApartEvenInTheNarrowestDayColumn(layoutWidth: CGFloat) throws {
+    // 217.5 is one of two columns on a 375 point phone; the others are wider and narrower still.
+    let cluster = try timeline(events: [event(0, 16 * 60, 17 * 60 + 30), event(1, 16 * 60, 17 * 60), event(2, 16 * 60 + 5, 16 * 60 + 40), event(3, 16 * 60, 17 * 60 + 10), event(4, 16 * 60 + 10, 16 * 60 + 55)])
+    let layout = DayContentLayout(blocks: cluster.blocks)
+    let boxes = Array(titleBoxes(layout, cluster.blocks, width: layoutWidth).values)
+    #expect(boxes.count == 5)
+    for (index, box) in boxes.enumerated() { for other in boxes[(index + 1)...] { #expect(!box.intersects(other)) } }
 }

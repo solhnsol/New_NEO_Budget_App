@@ -36,20 +36,38 @@ enum Haptics {
 /// - second long press on the selected event, then drag: move it. Haptic when it picks up.
 /// This view only draws and forwards touches to the editor; nothing here writes to the calendar.
 struct TimelineGridView: View {
-    let timeline: DayTimeline
+    /// One day either side of the two on screen: `strip[1]` and `strip[2]` are the days shown, the others slide in during a swipe.
+    let strip: [StripDay]
+    let today: LocalDate
     let zone: DisplayTimeZone
-    let isToday: Bool
     let editor: TimelineEditor
     let onSelect: (TimelineSelection) -> Void
     var onEditInfo: (EventBlock) -> Void = { _ in }
+    /// Called, synchronously, when a swipe has come to rest on another day: the strip must already show it in this frame.
+    var onMoveDays: (Int) -> Void = { _ in }
     @State private var reveal: EditGestureHost.RevealRequest?
+    /// How far the strip of days is dragged sideways of its resting place, during a swipe and while it settles.
+    @State private var swipeOffset: CGFloat = 0
+    @State private var settling = false
 
     private static let transition = Animation.easeInOut(duration: 0.28)
+    private static let settleDuration = 0.22
     private static let edgePadding: CGFloat = EditHit.handleRadius
     private static let editScrollRoom: CGFloat = 320
     @State private var probe = ScrollProbe()
 
+    /// The two days on screen; either may still be waiting to be read.
+    private var visible: [DayTimeline?] { [strip[safe: 1]?.timeline, strip[safe: 2]?.timeline] }
+
     var body: some View {
+        VStack(spacing: 0) {
+            DayHeaderStrip(strip: strip, today: today, swipeOffset: swipeOffset, onSelect: { onSelect(.allDay($0)) })
+            Divider()
+            scrollingGrid
+        }
+    }
+
+    private var scrollingGrid: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 // While the axis changes shape the clock, not an animation, says how far along it is (`AxisTransition.progress`):
@@ -72,7 +90,6 @@ struct TimelineGridView: View {
                     probe.shiftRange(contentHeight: contentHeight + 2 * Self.edgePadding + (needsRoom ? Self.editScrollRoom : 0))
                 }
             }
-            .onChange(of: timeline.day) { _, _ in scrollToStart(proxy, geometry: editor.geometry) }
             .task(id: editor.transition?.id) {
                 // The change ends when its time is up: the scroll view takes the whole shift in one step and the content shift is
                 // dropped in the same update.
@@ -83,18 +100,20 @@ struct TimelineGridView: View {
         }
     }
 
+    private func columns(width: CGFloat, geometry: TimelineGeometry) -> DayColumns {
+        DayColumns(count: 2, gutterWidth: geometry.gutterWidth, trailingPadding: geometry.trailingPadding, totalWidth: width)
+    }
+
     /// The hour grid for one frame. `geometry` may be a blend of two shapes; `shift` is how far the content is moved up so the
     /// anchor minute stays put while the scroll view itself stays where it is.
     private func grid(geometry: TimelineGeometry, shift: CGFloat) -> some View {
-        let marks = geometry.hourMarks(dayStartUnixMilliseconds: timeline.dayStartUnixMilliseconds, zone: zone)
+        let first = visible[0] ?? strip[safe: 1]?.timeline
+        let marks = first.map { geometry.hourMarks(dayStartUnixMilliseconds: $0.dayStartUnixMilliseconds, zone: zone) } ?? []
         let badges = editBadges(geometry: geometry)
         let covered = badges.map(\.y)
         return GeometryReader { size in
             let width = size.size.width
-            let layout = DayContentLayout(blocks: timeline.blocks)
-            let frames = cardFrames(layout: layout, geometry: geometry, width: width)
-            let places = titlePlacements(layout: layout, geometry: geometry, frames: frames)
-            let drawOrder = self.drawOrder(layout: layout)
+            let columns = columns(width: width, geometry: geometry)
             ZStack(alignment: .topLeading) {
                 Color.clear.contentShape(Rectangle())
                     .onTapGesture { location in
@@ -109,36 +128,44 @@ struct TimelineGridView: View {
                 ForEach(geometry.foldMarks, id: \.startMinute) { fold in
                     FoldRow(fold: fold, geometry: geometry, width: width, coveredBy: covered)
                 }
-                // Back to front; the opened event is drawn last so it sits over its neighbours.
-                ForEach(drawOrder, id: \.id) { block in
-                    let frame = frames[block.id] ?? .zero
-                    if editor.isExpanded(block) { QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone) }
-                    BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onEditInfo: onEditInfo)
-                }
-                // Titles are drawn over every card, so a card stacked on another never hides the title under it.
-                ForEach(drawOrder.filter { !editor.isExpanded($0) }, id: \.id) { block in
-                    if let frame = frames[block.id], !titleIsCovered(block, frame: frame, place: places[block.id] ?? .init(), frames: frames) {
-                        EventTitleLayer(block: block, frame: frame, place: places[block.id] ?? .init())
+                // Each day is laid out as a lone day would be, in a column of its own, and slid into place. They are keyed by date,
+                // so a day that moves one place over in a swipe is the same view, not a new one.
+                // The strip is cut at the gutter, so the days that slide in or out never cover the hour labels.
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(strip.enumerated()), id: \.element.day) { position, entry in
+                        if let timeline = entry.timeline {
+                            dayContent(timeline, geometry: geometry, layoutWidth: columns.dayLayoutWidth)
+                                .frame(width: columns.dayLayoutWidth, height: geometry.contentHeight, alignment: .topLeading)
+                                .offset(x: columns.originX(of: position - 1) + swipeOffset - columns.gutterWidth)
+                        }
                     }
                 }
-                TransactionCards(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+                .frame(width: max(0, width - columns.gutterWidth), height: geometry.contentHeight, alignment: .topLeading)
+                .clipped()
+                .offset(x: columns.gutterWidth)
                 // The handles are positioned from the same geometry as the block they belong to, so they move with it.
-                if let block = selectedBlock, !editor.isExpanded(block), !editor.isActive {
-                    let frame = frames[block.id] ?? frame(of: block, width: width, geometry: geometry)
-                    if !block.continuesFromPreviousDay {
-                        EditHandle(kind: .resizeStart, block: block, center: EditHit.startHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
-                    }
-                    if !block.continuesToNextDay {
-                        EditHandle(kind: .resizeEnd, block: block, center: EditHit.endHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
+                ForEach(0..<2, id: \.self) { column in
+                    if let timeline = visible[column], let block = selectedBlock(in: timeline), !editor.isExpanded(block), !editor.isActive {
+                        let frame = frame(of: block, in: timeline, width: columns.dayLayoutWidth, geometry: geometry)
+                        let origin = columns.originX(of: column) + swipeOffset
+                        ZStack(alignment: .topLeading) {
+                            if !block.continuesFromPreviousDay {
+                                EditHandle(kind: .resizeStart, block: block, center: EditHit.startHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
+                            }
+                            if !block.continuesToNextDay {
+                                EditHandle(kind: .resizeEnd, block: block, center: EditHit.endHandle(of: frame), editor: editor, zoneIdentifier: timeline.timeZoneIdentifier)
+                            }
+                        }
+                        .offset(x: origin)
                     }
                 }
-                if let frame = editor.previewFrame(totalWidth: width, geometry: geometry), let preview = editor.preview {
-                    PreviewBlockView(preview: preview, zoneIdentifier: timeline.timeZoneIdentifier)
+                if let preview = editor.preview, let frame = editor.previewFrame(totalWidth: columns.dayLayoutWidth, geometry: geometry),
+                   let zoneIdentifier = visible[safe: preview.column]??.timeZoneIdentifier ?? first?.timeZoneIdentifier {
+                    PreviewBlockView(preview: preview, zoneIdentifier: zoneIdentifier)
                         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-                        .offset(x: frame.minX, y: frame.minY)
+                        .offset(x: frame.minX + columns.originX(of: preview.column), y: frame.minY)
                         .allowsHitTesting(false)
                 }
-                if isToday { NowLine(timeline: timeline, geometry: geometry, width: width) }
                 // The times being set, on the hour axis, where a finger over the block cannot hide them.
                 ForEach(badges, id: \.minute) { badge in
                     EditTimeBadge(text: badge.text, y: badge.y, width: geometry.gutterWidth)
@@ -146,7 +173,7 @@ struct TimelineGridView: View {
             }
             .background { gestureHost(width: width, geometry: geometry) }
             .offset(y: -shift)
-            .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width) }
+            .onChange(of: editor.expandedKey) { _, key in revealWhenOpened(key, width: width, geometry: geometry) }
             // The zone moved to where the finger rested: a small tick says the time can now be set precisely.
             .onChange(of: editor.dwellCenter) { _, center in if center != nil { Haptics.snap() } }
         }
@@ -166,6 +193,31 @@ struct TimelineGridView: View {
         .padding(.bottom, editor.needsScrollRoom ? Self.editScrollRoom : 0)
     }
 
+    /// Everything of one day: events stacked in its column, then its transactions as cards in the same column.
+    private func dayContent(_ timeline: DayTimeline, geometry: TimelineGeometry, layoutWidth width: CGFloat) -> some View {
+        let layout = DayContentLayout(blocks: timeline.blocks)
+        let focus = focusedID(in: timeline)
+        let frames = cardFrames(layout: layout, in: timeline, geometry: geometry, width: width)
+        let places = titlePlacements(layout: layout, in: timeline, geometry: geometry, frames: frames, width: width, focused: focus)
+        let drawOrder = self.drawOrder(layout: layout, in: timeline, focused: focus)
+        return ZStack(alignment: .topLeading) {
+            // Back to front; the opened event is drawn last so it sits over its neighbours.
+            ForEach(drawOrder, id: \.id) { block in
+                let frame = frames[block.id] ?? .zero
+                if editor.isExpanded(block) { QuarterMarks(block: block, geometry: geometry, timeline: timeline, zone: zone) }
+                BlockCell(block: block, frame: frame, title: places[block.id] ?? .init(), zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, onEditInfo: onEditInfo)
+            }
+            // Titles are drawn over every card, so a card stacked on another never hides the title under it.
+            ForEach(drawOrder.filter { !editor.isExpanded($0) }, id: \.id) { block in
+                if let frame = frames[block.id], !titleIsCovered(block, frame: frame, place: places[block.id] ?? .init(), frames: frames, focused: focus) {
+                    EventTitleLayer(block: block, frame: frame, place: places[block.id] ?? .init(), columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width))
+                }
+            }
+            TransactionCards(timeline: timeline, geometry: geometry, width: width, onSelect: onSelect)
+            if timeline.day == today { NowLine(timeline: timeline, geometry: geometry, width: width) }
+        }
+    }
+
     /// The time of each edge being changed, and where it is on the axis. A resize shows the edge that moves; a move or a new event shows
     /// both. The hour labels and folds under a badge are hidden while it is there, so nothing is drawn over anything else.
     private struct EditBadge {
@@ -175,7 +227,7 @@ struct TimelineGridView: View {
     }
 
     private func editBadges(geometry: TimelineGeometry) -> [EditBadge] {
-        guard let preview = editor.preview else { return [] }
+        guard let preview = editor.preview, let timeline = visible[safe: preview.column] ?? nil else { return [] }
         let instants: [Int64]
         switch preview.kind {
         case .resizeStart: instants = [preview.range.startUnixMilliseconds]
@@ -191,42 +243,75 @@ struct TimelineGridView: View {
     // MARK: Gestures
 
     private func gestureHost(width: CGFloat, geometry: TimelineGeometry) -> some View {
-        EditGestureHost(
+        let columns = columns(width: width, geometry: geometry)
+        return EditGestureHost(
             probe: probe,
             panEnabled: editor.isEditing,
+            swipeEnabled: !editor.isEditing && !editor.isActive && !settling,
             scrollCommit: editor.scrollCommit,
             reveal: reveal,
-            longPress: { phase, point in longPress(phase, point, width: width) },
+            longPress: { phase, point in longPress(phase, point, columns: columns) },
             panStartsAt: { point in
-                TimelineGestureRouter.panBegins(on: touchTarget(at: point, width: width), isEditing: editor.isEditing)
+                TimelineGestureRouter.panBegins(on: touchTarget(at: point, columns: columns), isEditing: editor.isEditing)
             },
-            pan: { phase, point in pan(phase, point, width: width) }
+            pan: { phase, point in pan(phase, point, columns: columns) },
+            swipe: { phase, translation, velocity in swipe(phase, translation, velocity, columnWidth: columns.columnWidth) }
         )
+    }
+
+    /// Horizontal swipe: the strip of days follows the finger (never more than one day) and, on release, comes to rest on one
+    /// whole day, either the one it was on or the next one over. Vertical movement is scrolling and never reaches this.
+    private func swipe(_ phase: EditGestureHost.Phase, _ translation: CGFloat, _ velocity: CGFloat, columnWidth: CGFloat) {
+        switch phase {
+        case .began:
+            break
+        case .moved:
+            swipeOffset = DaySwipe.liveOffset(translation: translation, columnWidth: columnWidth)
+        case .ended:
+            let days = DaySwipe.daysToMove(translation: translation, velocity: velocity, columnWidth: columnWidth)
+            settling = true
+            withAnimation(.easeOut(duration: Self.settleDuration)) {
+                swipeOffset = DaySwipe.settledOffset(days: days, columnWidth: columnWidth)
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(Self.settleDuration + 0.02))
+                // The new first day and the offset go back to rest in one update, so the days do not move on screen.
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    if days != 0 { onMoveDays(days) }
+                    swipeOffset = 0
+                    settling = false
+                }
+                if days != 0 { Haptics.snap() }
+            }
+        }
     }
 
     /// Long press. On an event: the first one enters edit mode and nothing moves; once that event is selected, a long press on
     /// it picks it up, and the drag that follows moves it. On a handle: nothing (the handle's own drag does the work). On
     /// empty time: starts a new event there.
-    private func longPress(_ phase: EditGestureHost.Phase, _ point: CGPoint, width: CGFloat) {
+    private func longPress(_ phase: EditGestureHost.Phase, _ point: CGPoint, columns: DayColumns) {
         switch phase {
         case .began:
             let pressMinute = editor.geometry.minute(atY: point.y)
-            let target = touchTarget(at: point, width: width)
-            let hitBlock = block(at: point, width: width)
+            let column = columns.column(atX: point.x)
+            let target = touchTarget(at: point, columns: columns)
+            let hit = located(at: point, columns: columns)
             switch TimelineGestureRouter.longPress(on: target, isEditing: editor.isEditing) {
             case .ignore:
                 return
             case .pickUp:
                 // Second long press: pick the selected event up. The axis is already settled, so the finger stays put.
-                guard let block = hitBlock else { return }
+                guard let hit else { return }
                 editor.setFingerAnchor(y: point.y)
-                if editor.begin(.move, block: block, timeline: timeline, geometry: editor.geometry) { Haptics.pickUp() }
+                if editor.begin(.move, block: hit.block, timeline: hit.timeline, geometry: editor.geometry, column: hit.column) { Haptics.pickUp() }
             case .enterEditMode:
-                if let block = hitBlock, editor.enterEditMode(for: block, pressMinute: pressMinute) { Haptics.enterEdit() }
+                if let hit, editor.enterEditMode(for: hit.block, pressMinute: pressMinute) { Haptics.enterEdit() }
             case .startNewEvent:
-                guard editor.focusForCreate(atMinute: pressMinute) else { return }
+                guard let timeline = visible[column], editor.focusForCreate(atMinute: pressMinute) else { return }
                 let after = editor.geometry
-                if editor.beginCreate(atY: after.y(minute: pressMinute), timeline: timeline, geometry: after) { Haptics.pickUp() }
+                if editor.beginCreate(atY: after.y(minute: pressMinute), timeline: timeline, geometry: after, column: column) { Haptics.pickUp() }
             }
         case .moved:
             guard editor.mode == .dragging else { return }
@@ -238,12 +323,12 @@ struct TimelineGridView: View {
 
     /// Pan, edit mode only, and only for a touch that began on a handle: changes that edge. A touch anywhere else never
     /// reaches this; it scrolls.
-    private func pan(_ phase: EditGestureHost.Phase, _ point: CGPoint, width: CGFloat) {
+    private func pan(_ phase: EditGestureHost.Phase, _ point: CGPoint, columns: DayColumns) {
         switch phase {
         case .began:
-            guard let block = selectedBlock, let hit = editHandle(at: point, width: width) else { return }
+            guard let found = editHandle(at: point, columns: columns) else { return }
             editor.setFingerAnchor(y: point.y)
-            if editor.begin(hit == .resizeStart ? .resizeStart : .resizeEnd, block: block, timeline: timeline, geometry: editor.geometry) {
+            if editor.begin(found.hit == .resizeStart ? .resizeStart : .resizeEnd, block: found.block, timeline: found.timeline, geometry: editor.geometry, column: found.column) {
                 Haptics.pickUp()
             }
         case .moved:
@@ -253,35 +338,54 @@ struct TimelineGridView: View {
         }
     }
 
-    private var selectedBlock: EventBlock? { timeline.blocks.first { editor.isSelected($0) } }
+    private func selectedBlock(in timeline: DayTimeline) -> EventBlock? { timeline.blocks.first { editor.isSelected($0) } }
 
     /// Classifies a point in grid coordinates for `TimelineGestureRouter`.
-    private func touchTarget(at point: CGPoint, width: CGFloat) -> TimelineTouchTarget {
-        if let handle = editHandle(at: point, width: width) { return .handle(handle) }
-        guard let hit = block(at: point, width: width) else { return .emptyTime }
-        return editor.isSelected(hit) ? .selectedEvent : .otherEvent
+    private func touchTarget(at point: CGPoint, columns: DayColumns) -> TimelineTouchTarget {
+        if let found = editHandle(at: point, columns: columns) { return .handle(found.hit) }
+        guard let hit = located(at: point, columns: columns) else { return .emptyTime }
+        return editor.isSelected(hit.block) ? .selectedEvent : .otherEvent
     }
 
     /// The handle of the selected event under a point (grid coordinates), if any.
-    private func editHandle(at point: CGPoint, width: CGFloat) -> EditHit? {
-        guard editor.isEditing, editor.mode == .idle, let block = selectedBlock, !editor.isExpanded(block) else { return nil }
-        let frame = frame(of: block, width: width)
-        return EditHit.handle(at: point, frame: frame, canResizeStart: !block.continuesFromPreviousDay, canResizeEnd: !block.continuesToNextDay)
+    private func editHandle(at point: CGPoint, columns: DayColumns) -> (hit: EditHit, block: EventBlock, timeline: DayTimeline, column: Int)? {
+        guard editor.isEditing, editor.mode == .idle else { return nil }
+        for column in 0..<2 {
+            guard let timeline = visible[column], let block = selectedBlock(in: timeline), !editor.isExpanded(block) else { continue }
+            let frame = frame(of: block, in: timeline, width: columns.dayLayoutWidth)
+            let local = columns.localPoint(point, column: column)
+            if let hit = EditHit.handle(at: local, frame: frame, canResizeStart: !block.continuesFromPreviousDay, canResizeEnd: !block.continuesToNextDay) {
+                return (hit, block, timeline, column)
+            }
+        }
+        return nil
     }
 
-    /// The block id that is drawn on top of everything: the opened event, else the selected one.
-    private var focusedID: BlockID? {
+    /// The topmost event under a point in grid coordinates, and the day it is on.
+    private func located(at point: CGPoint, columns: DayColumns) -> (block: EventBlock, timeline: DayTimeline, column: Int)? {
+        let column = columns.column(atX: point.x)
+        guard let timeline = visible[column] else { return nil }
+        let local = columns.localPoint(point, column: column)
+        let layout = DayContentLayout(blocks: timeline.blocks)
+        let frames = cardFrames(layout: layout, in: timeline, geometry: editor.geometry, width: columns.dayLayoutWidth)
+        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        guard let id = layout.topmost(at: local, frames: frames, focused: focusedID(in: timeline)), let block = byID[id] else { return nil }
+        return (block, timeline, column)
+    }
+
+    /// The block id that is drawn on top of everything in a day: the opened event, else the selected one.
+    private func focusedID(in timeline: DayTimeline) -> BlockID? {
         timeline.blocks.first { editor.isExpanded($0) }?.id ?? timeline.blocks.first { editor.isSelected($0) }?.id
     }
 
     /// Blocks back to front: stacking order, with the focused one last.
-    private func drawOrder(layout: DayContentLayout) -> [EventBlock] {
+    private func drawOrder(layout: DayContentLayout, in timeline: DayTimeline, focused: BlockID?) -> [EventBlock] {
         let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return layout.hitOrder(focused: focusedID).reversed().compactMap { byID[$0] }
+        return layout.hitOrder(focused: focused).reversed().compactMap { byID[$0] }
     }
 
-    /// Where every block is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
-    private func cardFrames(layout: DayContentLayout, geometry: TimelineGeometry, width: CGFloat) -> [BlockID: CGRect] {
+    /// Where every block of a day is, in `geometry` (a blend while the axis is changing, otherwise the current shape).
+    private func cardFrames(layout: DayContentLayout, in timeline: DayTimeline, geometry: TimelineGeometry, width: CGFloat) -> [BlockID: CGRect] {
         let available = geometry.contentWidth(totalWidth: width)
         var result: [BlockID: CGRect] = [:]
         for block in timeline.blocks {
@@ -294,13 +398,13 @@ struct TimelineGridView: View {
     }
 
     /// A title is hidden while the opened or selected event, which is drawn over everything, sits on top of it.
-    private func titleIsCovered(_ block: EventBlock, frame: CGRect, place: DayContentLayout.TitlePlacement, frames: [BlockID: CGRect]) -> Bool {
-        guard let focus = focusedID, focus != block.id, let cover = frames[focus] else { return false }
-        return cover.intersects(CGRect(x: frame.minX + place.dx, y: frame.minY + place.dy, width: frame.width - place.dx, height: DayContentLayout.titleRowHeight))
+    private func titleIsCovered(_ block: EventBlock, frame: CGRect, place: DayContentLayout.TitlePlacement, frames: [BlockID: CGRect], focused: BlockID?) -> Bool {
+        guard let focus = focused, focus != block.id, let cover = frames[focus] else { return false }
+        return cover.intersects(CGRect(x: frame.minX + place.dx, y: frame.minY + place.dy, width: max(0, frame.width - place.dx), height: DayContentLayout.titleRowHeight))
     }
 
     /// Where each title is drawn, so overlapping events keep every title readable.
-    private func titlePlacements(layout: DayContentLayout, geometry: TimelineGeometry, frames: [BlockID: CGRect]) -> [BlockID: DayContentLayout.TitlePlacement] {
+    private func titlePlacements(layout: DayContentLayout, in timeline: DayTimeline, geometry: TimelineGeometry, frames: [BlockID: CGRect], width: CGFloat, focused: BlockID?) -> [BlockID: DayContentLayout.TitlePlacement] {
         let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return layout.titlePlacements(
             top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
@@ -308,42 +412,45 @@ struct TimelineGridView: View {
             left: { (frames[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
             right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
             width: { DayContentLayout.estimatedTitleWidth(byID[$0]?.title ?? "", extra: 14) },
+            columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width) - EventTitleLayer.horizontalPadding,
             minimumHeight: geometry.minimumBlockHeight,
-            focused: focusedID
+            focused: focused
         )
     }
 
-    /// The topmost block under a point in grid coordinates.
-    private func block(at point: CGPoint, width: CGFloat) -> EventBlock? {
+    /// Where a block is in `geometry`, in its day's own layout.
+    private func frame(of block: EventBlock, in timeline: DayTimeline, width: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect {
         let layout = DayContentLayout(blocks: timeline.blocks)
-        let frames = cardFrames(layout: layout, geometry: editor.geometry, width: width)
-        let byID = Dictionary(timeline.blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        return layout.topmost(at: point, frames: frames, focused: focusedID).flatMap { byID[$0] }
-    }
-
-    /// Where a block is in `geometry`.
-    private func frame(of block: EventBlock, width: CGFloat, geometry: TimelineGeometry? = nil) -> CGRect {
-        let layout = DayContentLayout(blocks: timeline.blocks)
-        return cardFrames(layout: layout, geometry: geometry ?? editor.geometry, width: width)[block.id] ?? .zero
+        return cardFrames(layout: layout, in: timeline, geometry: geometry ?? editor.geometry, width: width)[block.id] ?? .zero
     }
 
     /// After an event opens, bring all of it into view; its content is taller than the block was.
-    private func revealWhenOpened(_ key: CalendarEventKey?, width: CGFloat) {
-        guard let key, let block = timeline.blocks.first(where: { $0.eventKey == key }) else { return }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(340))          // after the open animation settles
-            guard editor.expandedKey == key else { return }
-            reveal = EditGestureHost.RevealRequest(rect: frame(of: block, width: width))
+    private func revealWhenOpened(_ key: CalendarEventKey?, width: CGFloat, geometry: TimelineGeometry) {
+        guard let key else { return }
+        let columns = columns(width: width, geometry: geometry)
+        for column in 0..<2 {
+            guard let timeline = visible[column], let block = timeline.blocks.first(where: { $0.eventKey == key }) else { continue }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(340))          // after the open animation settles
+                guard editor.expandedKey == key else { return }
+                let rect = frame(of: block, in: timeline, width: columns.dayLayoutWidth)
+                reveal = EditGestureHost.RevealRequest(rect: rect.offsetBy(dx: columns.originX(of: column), dy: 0))
+            }
+            return
         }
     }
 
     /// A day that already fits about one screen stays at the top. A taller one opens near the current time (today).
     private func scrollToStart(_ proxy: ScrollViewProxy, geometry: TimelineGeometry) {
-        guard isToday, geometry.contentHeight > 760 else { return }
+        guard let timeline = visible.compactMap({ $0 }).first(where: { $0.day == today }), geometry.contentHeight > 760 else { return }
         let nowMinute = Int((Date().timeIntervalSince1970 * 1_000 - Double(timeline.dayStartUnixMilliseconds)) / 60_000)
         guard let segment = geometry.axis.segments.last(where: { $0.startMinute <= max(0, nowMinute - 60) }) else { return }
         proxy.scrollTo("segment-\(segment.startMinute)", anchor: .top)
     }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? { indices.contains(index) ? self[index] : nil }
 }
 
 // MARK: Pieces

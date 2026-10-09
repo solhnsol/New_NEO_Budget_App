@@ -94,6 +94,8 @@ struct DayContentLayout {
     struct TitlePlacement: Equatable {
         var dy: CGFloat = 0
         var dx: CGFloat = 0
+        /// The title runs past its own card, to the edge of the day's column, because there was no other room for it.
+        var overflows = false
     }
 
     /// Titles narrower than this are not worth placing beside another one.
@@ -107,7 +109,7 @@ struct DayContentLayout {
     /// its title stays at its own top and the others do not need to clear it.
     func titlePlacements(
         top: (BlockID) -> CGFloat, bottom: (BlockID) -> CGFloat, left: (BlockID) -> CGFloat, right: (BlockID) -> CGFloat,
-        width: (BlockID) -> CGFloat, minimumHeight: CGFloat, focused: BlockID?
+        width: (BlockID) -> CGFloat, columnRight: CGFloat, minimumHeight: CGFloat, focused: BlockID?
     ) -> [BlockID: TitlePlacement] {
         var result: [BlockID: TitlePlacement] = [:]
         var placed: [(rect: CGRect, bottom: CGFloat)] = []
@@ -129,14 +131,20 @@ struct DayContentLayout {
                         place.dy = lower
                     } else if baseX + after + Self.minimumTitleWidth <= right(id) {
                         place.dx = after
+                    } else if baseX + after + Self.minimumTitleWidth <= columnRight {
+                        place.dx = after
+                        place.overflows = true
                     } else {
-                        break
+                        // No room beside it either: it takes the next free line below, even past the bottom of its own card. A title
+                        // that runs on below its card is better than one printed over another.
+                        place.dy = lower
                     }
                 }
             }
             result[id] = place
             if id != focused {
-                placed.append((CGRect(x: baseX + place.dx, y: trueTop + place.dy, width: min(wanted, max(0, right(id) - baseX - place.dx)), height: row), trueBottom))
+                let reach = place.overflows ? columnRight : right(id)
+                placed.append((CGRect(x: baseX + place.dx, y: trueTop + place.dy, width: min(wanted, max(0, reach - baseX - place.dx)), height: row), trueBottom))
             }
         }
         return result

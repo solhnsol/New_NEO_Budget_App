@@ -13,12 +13,17 @@ struct EventActivitySheet: View {
     @State private var newPerson = ""
     @State private var failure: String?
 
-    private var block: EventBlock? { model.timeline?.blocks.first { $0.eventKey == eventKey } }
+    /// The event and the day it is on, among the days on screen.
+    private var located: (block: EventBlock, timeline: DayTimeline)? {
+        for day in model.visibleTimelines { if let block = day.blocks.first(where: { $0.eventKey == eventKey }) { return (block, day) } }
+        return nil
+    }
+    private var block: EventBlock? { located?.block }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let block, let timeline = model.timeline { form(block, timeline) } else { ContentUnavailableView("일정을 찾을 수 없습니다", systemImage: "calendar.badge.exclamationmark") }
+                if let located { form(located.block, located.timeline) } else { ContentUnavailableView("일정을 찾을 수 없습니다", systemImage: "calendar.badge.exclamationmark") }
             }
             .navigationTitle(block?.title ?? "일정")
             .navigationBarTitleDisplayMode(.inline)

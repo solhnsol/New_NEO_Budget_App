@@ -95,11 +95,13 @@ struct EventTitleLayer: View {
     let block: EventBlock
     let frame: CGRect
     let place: DayContentLayout.TitlePlacement
+    /// Where the day's column ends, in the same coordinates as `frame`: the farthest a title that had to move may run.
+    var columnRight: CGFloat = 0
     static let horizontalPadding: CGFloat = 6
 
     var body: some View {
         let titleOffset = place.dy
-        let available = frame.height - titleOffset
+        let available = max(0, frame.height - titleOffset)
         let plan = InlineAllocationPlan.make(
             allocationCount: block.allocations.count, blockHeight: available,
             showsTime: InlineAllocationPlan.showsTime(blockHeight: available)
@@ -113,7 +115,7 @@ struct EventTitleLayer: View {
             if plan.showsSummaryChip, let total { SummaryChip(count: block.allocations.count, total: total) }
         }
         .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
-        .frame(width: max(0, frame.width - place.dx), height: InlineAllocationPlan.titleHeight + 3, alignment: .leading)
+        .frame(width: max(0, place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx), height: InlineAllocationPlan.titleHeight + 3, alignment: .leading)
         .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -130,7 +132,7 @@ struct EventBlockView: View {
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
         let missing = block.state == .eventMissing
-        let available = height - titleOffset
+        let available = max(0, height - titleOffset)
         let showsTime = InlineAllocationPlan.showsTime(blockHeight: available)
         let plan = InlineAllocationPlan.make(allocationCount: block.allocations.count, blockHeight: available, showsTime: showsTime)
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)

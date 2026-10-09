@@ -283,9 +283,17 @@ struct TimelineAxis: Equatable {
 extension TimelineAxis {
     /// The browse axis for a day: full size around event edges and transactions, folded elsewhere.
     static func browse(for timeline: DayTimeline, parameters: Parameters = .standard) -> TimelineAxis {
+        browse(for: [timeline], parameters: parameters)
+    }
+
+    /// The browse axis shared by days shown side by side: a stretch stays full size if any of the days has an event edge or a
+    /// transaction in it, and is folded only when it is quiet in all of them, so no day is drawn squeezed.
+    static func browse(for timelines: [DayTimeline], parameters: Parameters = .standard) -> TimelineAxis {
         var anchors: [Int] = []
-        for block in timeline.blocks { anchors += [block.startMinute, block.endMinute] }
-        anchors += timeline.markers.map(\.positionMinute)
-        return browse(totalMinutes: timeline.totalMinutes, anchors: anchors, parameters: parameters)
+        for timeline in timelines {
+            for block in timeline.blocks { anchors += [block.startMinute, block.endMinute] }
+            anchors += timeline.markers.map(\.positionMinute)
+        }
+        return browse(totalMinutes: timelines.map(\.totalMinutes).max() ?? 1440, anchors: anchors, parameters: parameters)
     }
 }

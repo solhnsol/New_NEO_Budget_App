@@ -38,6 +38,8 @@ struct EditGestureHost: UIViewRepresentable {
 
     let probe: ScrollProbe
     var panEnabled: Bool
+    /// Whether a mostly horizontal drag turns the days. Off while an event is being edited.
+    var swipeEnabled: Bool = false
     /// The scroll view moving by this much at once, when a change of shape ends. The content shift that held the anchor still
     /// until then is dropped in the same update, so what is on screen does not change.
     var scrollCommit: TimelineEditor.ScrollCommit?
@@ -47,6 +49,8 @@ struct EditGestureHost: UIViewRepresentable {
     var longPress: (Phase, CGPoint) -> Void
     var panStartsAt: (CGPoint) -> Bool
     var pan: (Phase, CGPoint) -> Void
+    /// A horizontal swipe: how far the finger has moved sideways and, at the end, how fast.
+    var swipe: (Phase, CGFloat, CGFloat) -> Void = { _, _, _ in }
 
     struct RevealRequest: Equatable {
         let id = UUID()
@@ -68,6 +72,7 @@ struct EditGestureHost: UIViewRepresentable {
         private var configuration: EditGestureHost?
         private let longPress = UILongPressGestureRecognizer()
         private let pan = UIPanGestureRecognizer()
+        private let swipePan = UIPanGestureRecognizer()
         private weak var scrollView: UIScrollView?
         private var touchDown: CGPoint = .zero
         private var lastScrollCommit: UUID?
@@ -85,6 +90,10 @@ struct EditGestureHost: UIViewRepresentable {
             pan.maximumNumberOfTouches = 1
             pan.cancelsTouchesInView = false
             pan.delegate = self
+            swipePan.addTarget(self, action: #selector(handleSwipe(_:)))
+            swipePan.maximumNumberOfTouches = 1
+            swipePan.cancelsTouchesInView = false
+            swipePan.delegate = self
         }
 
         @available(*, unavailable) required init?(coder: NSCoder) { fatalError("not used") }
@@ -94,6 +103,7 @@ struct EditGestureHost: UIViewRepresentable {
             if self.configuration == nil { lastScrollCommit = configuration.scrollCommit?.id }
             self.configuration = configuration
             pan.isEnabled = configuration.panEnabled         // a disabled recognizer never delays scrolling
+            swipePan.isEnabled = configuration.swipeEnabled
             if let commit = configuration.scrollCommit, commit.id != lastScrollCommit {
                 lastScrollCommit = commit.id
                 scrollView?.contentOffset.y += commit.delta
@@ -110,6 +120,7 @@ struct EditGestureHost: UIViewRepresentable {
             if let scrollView {
                 scrollView.removeGestureRecognizer(longPress)
                 scrollView.removeGestureRecognizer(pan)
+                scrollView.removeGestureRecognizer(swipePan)
             }
             scrollView = nil
             guard window != nil else { return }
@@ -118,6 +129,7 @@ struct EditGestureHost: UIViewRepresentable {
             if let found = ancestor as? UIScrollView {
                 found.addGestureRecognizer(longPress)
                 found.addGestureRecognizer(pan)
+                found.addGestureRecognizer(swipePan)
                 scrollView = found
                 configuration?.probe.scrollView = found
             }
@@ -150,12 +162,31 @@ struct EditGestureHost: UIViewRepresentable {
             }
         }
 
+        @objc private func handleSwipe(_ recognizer: UIPanGestureRecognizer) {
+            let translation = recognizer.translation(in: self).x
+            switch recognizer.state {
+            case .began: configuration?.swipe(.began, translation, 0)
+            case .changed: configuration?.swipe(.moved, translation, 0)
+            case .ended: configuration?.swipe(.ended, translation, recognizer.velocity(in: self).x)
+            case .cancelled, .failed: configuration?.swipe(.ended, 0, 0)
+            default: break
+            }
+        }
+
         // MARK: UIGestureRecognizerDelegate
+
+        /// The swipe begins only for a drag that is mostly sideways; anything else is the scroll view's. Deciding here, when the
+        /// drag has gone past the slop, keeps vertical scrolling immediate: this recogniser never waits for anything.
+        override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === swipePan else { return true }
+            return DaySwipe.isSwipe(velocity: swipePan.velocity(in: self))
+        }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             touchDown = touch.location(in: self)
             // The pan takes only touches that begin on a handle. Declining the rest at touch-down (rather than failing after
             // some movement) is what lets the scroll view start immediately.
+            if gestureRecognizer === swipePan { return configuration?.swipeEnabled ?? false }
             guard gestureRecognizer === pan else { return true }
             guard let configuration, configuration.panEnabled else { return false }
             return configuration.panStartsAt(touchDown)

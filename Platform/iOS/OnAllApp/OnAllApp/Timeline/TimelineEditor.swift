@@ -83,6 +83,8 @@ final class TimelineEditor {
         let blockID: BlockID?
         let slot: CardSlot
         let title: String?
+        /// Which of the days on screen it is in (0 = the first).
+        var column: Int = 0
     }
 
     /// Asks the scroll view to move by `delta` points, in step with an axis change, so what is under the finger stays put.
@@ -161,7 +163,18 @@ final class TimelineEditor {
         guard let transition, abs(transition.delta) > 0.5 else { return nil }
         return ScrollRequest(id: transition.id, delta: transition.delta)
     }
-    private(set) var timeline: DayTimeline?
+    /// The days on screen, in order. They share one time axis, so the same minute is at the same height in every one.
+    private(set) var timelines: [DayTimeline] = []
+    /// The first day on screen.
+    var timeline: DayTimeline? { timelines.first }
+    /// The longest of the days, in minutes (a daylight-saving day is shorter or longer than 24 hours).
+    private var totalMinutes: Int { timelines.map(\.totalMinutes).max() ?? 1440 }
+    /// The day the picked-up block belongs to, for the length of the gesture.
+    private var editTimeline: DayTimeline?
+    private func block(forKey key: CalendarEventKey) -> EventBlock? {
+        for day in timelines { if let found = day.blocks.first(where: { $0.eventKey == key }) { return found } }
+        return nil
+    }
     private let parameters = TimelineAxis.Parameters.standard
     private var fingerAnchorY: CGFloat = 0
     private var settlesAt: Date = .distantPast
@@ -203,7 +216,7 @@ final class TimelineEditor {
     private var zoomWindows: [ClosedRange<Int>] {
         var windows = browseAxis.handleZones(around: [createFocus].compactMap { $0 }, parameters: parameters)
         if let dwellCenter {
-            windows.append(max(0, dwellCenter - dwellRadii.before)...min(timeline?.totalMinutes ?? 1440, dwellCenter + dwellRadii.after))
+            windows.append(max(0, dwellCenter - dwellRadii.before)...min(totalMinutes, dwellCenter + dwellRadii.after))
         }
         return windows
     }
@@ -231,8 +244,8 @@ final class TimelineEditor {
 
     /// Browse axis for the current day, or the uniform fallback before a timeline is known.
     private var browseAxis: TimelineAxis {
-        guard let timeline else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
-        return TimelineAxis.browse(for: timeline, parameters: parameters)
+        guard !timelines.isEmpty else { return .linear(totalMinutes: 1440, pointsPerMinute: 1) }
+        return TimelineAxis.browse(for: timelines, parameters: parameters)
     }
 
     /// The axis for a view shape: the browse axis, with the neighbourhood of each handle enlarged and/or one event opened
@@ -249,7 +262,7 @@ final class TimelineEditor {
     /// The minutes an expanded event occupies and how large they are drawn: large enough that the block is as tall as its
     /// content needs, but never smaller than browse scale.
     private func expansion(for key: CalendarEventKey?) -> (window: ClosedRange<Int>, scale: CGFloat)? {
-        guard let key, let block = timeline?.blocks.first(where: { $0.eventKey == key }) else { return nil }
+        guard let key, let block = block(forKey: key) else { return nil }
         let lower = block.displayStartMinute
         let upper = max(block.displayEndMinute, lower + 1)
         let needed = ExpandedBlockPlan.height(for: block)
@@ -262,12 +275,23 @@ final class TimelineEditor {
 
     /// The model reports the timeline it now shows. A selected event is followed to wherever it is now; if it is gone
     /// (deleted elsewhere) edit mode ends quietly. Nothing re-centres under a gesture or a pending decision.
-    func timelineDidChange(_ new: DayTimeline) {
+    func timelineDidChange(_ new: DayTimeline) { timelinesDidChange([new]) }
+
+    /// Several days at once. When the set of days changes (a swipe moved one over) and nothing is selected, the shared axis may
+    /// change shape; that is a transition anchored at the minute at the top of the screen, so nothing visible jumps.
+    func timelinesDidChange(_ new: [DayTimeline]) {
         let before = currentAxis
-        timeline = new
-        if let key = expandedKey, !new.blocks.contains(where: { $0.eventKey == key }) { expandedKey = nil }      // it is gone
-        guard let key = selectedKey else { return }
-        guard let block = new.blocks.first(where: { $0.eventKey == key }) else {
+        let daysChanged = new.map(\.day) != timelines.map(\.day)
+        timelines = new
+        func found(_ key: CalendarEventKey) -> EventBlock? { block(forKey: key) }
+        if let key = expandedKey, found(key) == nil { expandedKey = nil }      // it is gone
+        guard let key = selectedKey else {
+            if daysChanged, mode == .idle, let visible = visibleRange?() {
+                publishAxisChange(from: before, anchorMinute: before.minute(atY: visible.lowerBound + 24))
+            }
+            return
+        }
+        guard let block = found(key) else {
             setAnchors(nil, selected: nil, anchorMinute: nil, from: before)
             return
         }
@@ -325,7 +349,7 @@ final class TimelineEditor {
     /// Returns `false` (and says why) if the event cannot be edited.
     @discardableResult
     func enterEditMode(for block: EventBlock, pressMinute: Int) -> Bool {
-        guard mode == .idle, timeline != nil else { return false }
+        guard mode == .idle, !timelines.isEmpty else { return false }
         guard block.isEditable, block.state == .normal else {
             feedback = EditFeedback.make(for: .rejected(.eventNotEditable))
             return false
@@ -341,7 +365,7 @@ final class TimelineEditor {
     /// Long press on empty time: enlarge the neighbourhood of that minute so the new event can be placed in 15 minute steps.
     @discardableResult
     func focusForCreate(atMinute minute: Int) -> Bool {
-        guard mode == .idle, timeline != nil else { return false }
+        guard mode == .idle, !timelines.isEmpty else { return false }
         feedback = nil
         let old = currentAxis
         createFocus = minute
@@ -355,7 +379,7 @@ final class TimelineEditor {
     func exitEditMode(anchorMinute: Int? = nil) {
         guard mode == .idle, editAnchors != nil else { return }
         let anchor = anchorMinute
-            ?? selectedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.startMinute }
+            ?? selectedKey.flatMap { key in block(forKey: key)?.startMinute }
             ?? editAnchors?.first
         setAnchors(nil, selected: nil, anchorMinute: anchor, from: currentAxis)
     }
@@ -363,7 +387,7 @@ final class TimelineEditor {
     /// Tap on an event: open it in place (closing any other, and leaving edit mode), or close it if it is already open.
     /// The block's top stays where it is on screen. Ignored while a gesture or a decision is in progress.
     func toggleExpanded(_ block: EventBlock) {
-        guard mode == .idle, timeline != nil else { return }
+        guard mode == .idle, !timelines.isEmpty else { return }
         feedback = nil
         let before = currentAxis
         if expandedKey == block.eventKey {
@@ -378,8 +402,8 @@ final class TimelineEditor {
     func collapseAll(anchorMinute: Int? = nil) {
         guard mode == .idle, editAnchors != nil || expandedKey != nil else { return }
         let anchor = anchorMinute
-            ?? expandedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.displayStartMinute }
-            ?? selectedKey.flatMap { key in timeline?.blocks.first { $0.eventKey == key }?.startMinute }
+            ?? expandedKey.flatMap { key in block(forKey: key)?.displayStartMinute }
+            ?? selectedKey.flatMap { key in block(forKey: key)?.startMinute }
             ?? editAnchors?.first
         setAnchors(nil, selected: nil, expanded: nil, anchorMinute: anchor, from: currentAxis)
     }
@@ -428,7 +452,7 @@ final class TimelineEditor {
     /// stays under the resting finger. The drag is re-based to the new axis so the next movement continues from there.
     func zoomAtFinger() {
         dwellTask = nil
-        guard mode == .dragging, let preview, let timeline, let block,
+        guard mode == .dragging, let preview, let timeline = editTimeline, let block,
               let minute = edgeMinute(of: preview, in: timeline) else { return }
         let before = currentAxis
         guard before.pointsPerMinute(atMinute: minute) < parameters.editScale - 0.001, dwellCenter != minute else { return }
@@ -463,7 +487,7 @@ final class TimelineEditor {
         let facingUp = other < minute
         for reach in stride(from: full, through: 0, by: -15) {
             let candidate = facingUp ? (before: reach, after: full) : (before: full, after: reach)
-            let window = max(0, minute - candidate.before)...min(timeline?.totalMinutes ?? 1440, minute + candidate.after)
+            let window = max(0, minute - candidate.before)...min(totalMinutes, minute + candidate.after)
             let axis = self.axis(windows: zoomWindowsExcludingDwell + [window], expanded: expandedKey)
             // The finger stays at `fingerY` on screen, so the other edge lands at its distance from the finger in the new shape.
             let edgeY = fingerY + (axis.y(minute: other) - axis.y(minute: minute))
@@ -504,7 +528,7 @@ final class TimelineEditor {
 
     /// Picks up a block. Returns `false` (and says why) if it cannot be edited.
     @discardableResult
-    func begin(_ kind: TimelineEditPlanner.Kind, block: EventBlock, timeline: DayTimeline, geometry: TimelineGeometry) -> Bool {
+    func begin(_ kind: TimelineEditPlanner.Kind, block: EventBlock, timeline: DayTimeline, geometry: TimelineGeometry, column: Int = 0) -> Bool {
         guard mode == .idle, kind != .create else { return false }
         guard block.isEditable, block.state == .normal else {
             feedback = EditFeedback.make(for: .rejected(.eventNotEditable))
@@ -514,6 +538,7 @@ final class TimelineEditor {
         guard let edit = planner.preview(kind, block: block, translationY: 0) else { return false }
         self.planner = planner
         self.block = block
+        editTimeline = timeline
         draggedKind = kind
         dragShift = 0
         cancelDwell()
@@ -521,7 +546,7 @@ final class TimelineEditor {
         feedback = nil
         preview = Preview(
             kind: kind, range: edit.range, wasClamped: edit.wasClamped, blockID: block.id,
-            slot: DayContentLayout(blocks: timeline.blocks).slot(of: block.id), title: block.title
+            slot: DayContentLayout(blocks: timeline.blocks).slot(of: block.id), title: block.title, column: column
         )
         armDwell(at: lastFingerY)          // a handle held still, without moving, also opens a precise zone
         return true
@@ -532,30 +557,31 @@ final class TimelineEditor {
               let edit = planner.preview(current.kind, block: block, translationY: translationY) else { return }
         let next = Preview(
             kind: current.kind, range: edit.range, wasClamped: edit.wasClamped, blockID: current.blockID,
-            slot: current.slot, title: current.title
+            slot: current.slot, title: current.title, column: current.column
         )
         if next != current { preview = next }
     }
 
     /// Starts a new event from a drag across empty space at `y`.
     @discardableResult
-    func beginCreate(atY y: CGFloat, timeline: DayTimeline, geometry: TimelineGeometry) -> Bool {
+    func beginCreate(atY y: CGFloat, timeline: DayTimeline, geometry: TimelineGeometry, column: Int = 0) -> Bool {
         guard mode == .idle else { return false }
         let planner = TimelineEditPlanner(policy: environment.policy, zone: environment.zone, geometry: geometry, timeline: timeline)
         self.planner = planner
         block = nil
+        editTimeline = timeline
         createAnchorY = y
         mode = .dragging
         feedback = nil
         let edit = planner.createPreview(fromY: y, toY: y)
-        preview = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil)
+        preview = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil, column: column)
         return true
     }
 
     func updateCreate(toY y: CGFloat) {
         guard mode == .dragging, let planner, preview?.kind == .create else { return }
         let edit = planner.createPreview(fromY: createAnchorY, toY: y)
-        let next = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil)
+        let next = Preview(kind: .create, range: edit.range, wasClamped: edit.wasClamped, blockID: nil, slot: .single, title: nil, column: preview?.column ?? 0)
         if next != preview { preview = next }
     }
 
@@ -612,9 +638,11 @@ final class TimelineEditor {
     /// goes through the same preview, policy and command as a drag, so snapping, the minimum length, the recurring scope
     /// question and rollback are all the same.
     func nudge(_ kind: TimelineEditPlanner.Kind, block: EventBlock, minutes: Int) {
-        guard mode == .idle, let timeline, kind == .resizeStart || kind == .resizeEnd else { return }
+        guard mode == .idle, kind == .resizeStart || kind == .resizeEnd,
+              let index = timelines.firstIndex(where: { $0.blocks.contains { $0.id == block.id } }) else { return }
+        let timeline = timelines[index]
         let geometry = self.geometry
-        guard begin(kind, block: block, timeline: timeline, geometry: geometry) else { return }
+        guard begin(kind, block: block, timeline: timeline, geometry: geometry, column: index) else { return }
         let edge = kind == .resizeStart ? block.startMinute : block.endMinute
         update(translationY: geometry.y(minute: edge + minutes) - geometry.y(minute: edge))
         finish()
@@ -666,7 +694,7 @@ final class TimelineEditor {
             exitEditMode()                      // a new event was placed: fold the day back up
         } else if let key = selectedKey {
             // An edited event stays selected so it can be adjusted again; the enlarged region follows it.
-            if let block = timeline?.blocks.first(where: { $0.eventKey == key }) {
+            if let block = block(forKey: key) {
                 // Keep the edge that was just moved where it was on screen.
                 let anchor = kind == .resizeEnd ? block.endMinute : block.startMinute
                 // The view goes back to where it was when the handle was grabbed; the new edge is wherever the new time puts it.
@@ -692,6 +720,7 @@ final class TimelineEditor {
         preview = nil
         planner = nil
         block = nil
+        editTimeline = nil
         scopeOptions = []
     }
 }

@@ -88,6 +88,10 @@ enum Formatting {
 
     private static let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
     static func weekdayShort(_ day: LocalDate) -> String { weekdaySymbols[day.weekday] }
+    /// "10월 9일 – 10일", or with both months when the two days are in different ones.
+    static func dayRangeTitle(_ first: LocalDate, _ second: LocalDate) -> String {
+        first.month == second.month ? "\(first.month)월 \(first.day)일 – \(second.day)일" : "\(first.month)월 \(first.day)일 – \(second.month)월 \(second.day)일"
+    }
     static func dayTitle(_ day: LocalDate) -> String { "\(day.month)월 \(day.day)일 (\(weekdayShort(day)))" }
 }
 
