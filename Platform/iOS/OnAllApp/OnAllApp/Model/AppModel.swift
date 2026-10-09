@@ -41,6 +41,8 @@ final class AppModel {
     }
     private var cache: [LocalDate: DayTimeline] = [:]
     private(set) var week: [WeekStripDay] = []
+    /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.
+    private(set) var weekCells: [LocalDate: WeekStripDay] = [:]
     private(set) var calendars: [CalendarDescriptor] = []
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
@@ -201,12 +203,18 @@ final class AppModel {
             var loaded: [LocalDate: DayTimeline] = [:]
             for offset in -1...2 { loaded[first.adding(days: offset)] = try await service.dayTimeline(for: first.adding(days: offset)) }
             let loadedWeek = try await service.weekStrip(containing: selectedDay, firstWeekday: 0)
+            var cells: [LocalDate: WeekStripDay] = [:]
+            for offset in [-7, 0, 7] {
+                let days = offset == 0 ? loadedWeek : try await service.weekStrip(containing: selectedDay.adding(days: offset), firstWeekday: 0)
+                for cell in days { cells[cell.day] = cell }
+            }
             let loadedCalendars = try await provider.calendars()
             guard mine == generation else { return }
             cache = loaded
             let shown = visibleTimelines
             if shown.count == 2 { editor?.timelinesDidChange(shown) }
             week = loadedWeek
+            weekCells = cells
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
             phase = .ready

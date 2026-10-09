@@ -68,7 +68,13 @@ struct DayTimelineScreen: View {
         pendingDays = delta
         var noAnimation = Transaction()
         noAnimation.disablesAnimations = true
-        if abs(delta) == 1, column > 0 {
+        Haptics.snap()
+        guard column > 0 else {
+            withTransaction(noAnimation) { _ = model.moveTo(day); pendingDays = 0 }
+            await model.reload()
+            return
+        }
+        if abs(delta) == 1 {
             withAnimation(.easeOut(duration: 0.22)) { swipeOffset = -CGFloat(delta) * column }
             try? await Task.sleep(for: .seconds(0.24))
             withTransaction(noAnimation) {
@@ -78,14 +84,24 @@ struct DayTimelineScreen: View {
             }
             await model.reload()
         } else {
-            withAnimation(.easeOut(duration: 0.12)) { gridOpacity = 0 }
-            try? await Task.sleep(for: .seconds(0.13))
+            // Further away: the days in view slide out the way the picked day lies and fade, and the new days slide in from the other
+            // side, instead of running through the days between.
+            let direction: CGFloat = delta > 0 ? 1 : -1
+            withAnimation(.easeIn(duration: 0.14)) {
+                swipeOffset = -direction * column
+                gridOpacity = 0
+            }
+            try? await Task.sleep(for: .seconds(0.15))
             withTransaction(noAnimation) {
                 _ = model.moveTo(day)
+                swipeOffset = direction * column
                 pendingDays = 0
             }
             await model.reload()
-            withAnimation(.easeOut(duration: 0.2)) { gridOpacity = 1 }
+            withAnimation(.easeOut(duration: 0.26)) {
+                swipeOffset = 0
+                gridOpacity = 1
+            }
         }
     }
 
@@ -93,7 +109,11 @@ struct DayTimelineScreen: View {
         let zoneIdentifier = model.dayZone.identifier
         return VStack(spacing: 0) {
             DayHeader(model: model) { day in Task { await goTo(day) } }
-            WeekStripView(week: model.week, selected: model.selectedDay, today: model.today, pendingShift: pendingDays) { day in Task { await goTo(day) } }
+            WeekStripView(
+                cells: model.weekCells, selected: model.selectedDay, today: model.today, pendingShift: pendingDays,
+                onSelect: { day in Task { await goTo(day) } },
+                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
+            )
             Divider()
             if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
