@@ -342,3 +342,13 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(crowd.items.count == 3 && crowd.segments.count == 3)                    // the colour of each, over the time it covers
     #expect(plan.events.allSatisfy { $0.isGrouped })                                // the events are the card's, not drawn again
 }
+
+@Test func aSliverWithAnotherEventStartingUnderItsTitleRowLeavesItsTitleOutAndTheNeighbourKeepsItsOwn() throws {
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))                 // the morning is squeezed on this axis
+    let incoming = try timeline([event(1, "앞", 540, 550), event(2, "뒤", 550, 630)])
+    let plan = incomingPlan(incoming, on: current)
+    let first = try #require(plan.events.first { $0.block.title == "앞" }), second = try #require(plan.events.first { $0.block.title == "뒤" })
+    #expect(first.frame.height < 11 * 1 && !first.showsTitleInCard)                          // no room for its title, and the row below is another event's
+    #expect(second.title == DayContentLayout.TitlePlacement())                                // the neighbour's title is not pushed aside by it
+    #expect(first.frame.height <= max(3, second.frame.minY - first.frame.minY) + 0.01)         // and the first never runs on over the second (3pt is its floor)
+}

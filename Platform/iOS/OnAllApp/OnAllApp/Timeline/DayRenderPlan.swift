@@ -159,7 +159,7 @@ struct DayRenderPlan {
             }
             frames[block.id] = frame
         }
-        // A card never runs on over an event that begins after it ends, and two events with a gap in time never look joined: it stops 2pt
+        // A card never runs on over an event that begins after it ends, and two events with a gap in time never look joined: it stops 4pt
         // short of the next one's start (at most that much above its own true end, never below 3pt).
         for block in blocks where expanded != block.id {
             guard var frame = frames[block.id], block.id != focused else { continue }
@@ -168,8 +168,8 @@ struct DayRenderPlan {
                 guard other.id != block.id, other.startMinute >= realEnd, let top = frames[other.id]?.minY, top > frame.minY + 0.5 else { return nil }
                 return top
             }
-            guard let nextTop = nextTops.min(), frame.maxY > nextTop - 2 else { continue }
-            frame.size.height = max(trueMinimumHeight, nextTop - frame.minY - 2)
+            guard let nextTop = nextTops.min(), frame.maxY > nextTop - 4 else { continue }
+            frame.size.height = max(trueMinimumHeight, nextTop - frame.minY - 4)
             frames[block.id] = frame
         }
         // Events that start within a title row of one another and share time cannot be stacked without one's edge crossing the other's title:
@@ -237,7 +237,18 @@ struct DayRenderPlan {
             }
         }
         let crowdIDs = Set(crowdRuns.filter { $0.count >= 2 }.flatMap { $0.map(\.id) })
-        let titleContent = (compactIDs.isEmpty && crowdIDs.isEmpty) ? content : DayContentLayout(blocks: blocks.filter { !compactIDs.contains($0.id) && !crowdIDs.contains($0.id) })
+        // A sliver on its own writes its title below itself, which only works if that row is free: where another event begins within the title
+        // row the title would land on it (or push its title aside), so the sliver is left without one until it has room.
+        var titlelessIDs = Set<BlockID>()
+        for run in crowdRuns where run.count == 1 {
+            guard let block = run.first, let frame = frames[block.id] else { continue }
+            let blocked = blocks.contains { other in
+                guard other.id != block.id, let top = frames[other.id]?.minY else { return false }
+                return top > frame.minY + 0.5 && top < frame.minY + titleRowHeight
+            }
+            if blocked { titlelessIDs.insert(block.id) }
+        }
+        let titleContent = (compactIDs.isEmpty && crowdIDs.isEmpty && titlelessIDs.isEmpty) ? content : DayContentLayout(blocks: blocks.filter { !compactIDs.contains($0.id) && !crowdIDs.contains($0.id) && !titlelessIDs.contains($0.id) })
         let places = titleContent.titlePlacements(
             top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
             bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
@@ -305,7 +316,7 @@ struct DayRenderPlan {
             eventItems.append(EventItem(
                 block: block, placement: placed, frame: frame,
                 touchFrame: frame.insetBy(dx: 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
-                header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id) && !isCompact,
+                header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id) && !isCompact && !titlelessIDs.contains(id),
                 insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden,
                 titleMaxWidth: {
                     switch placed?.titleResolution {

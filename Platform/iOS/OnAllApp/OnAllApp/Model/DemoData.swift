@@ -119,15 +119,15 @@ enum DemoData {
             draft(life, "커피 챗", day2, (10, 0), (10, 15)),
         ]
         for hour in 8..<20 { transDrafts.append(draft(life, "일정 \(hour)시", day3, (hour, 0), (hour, 50))) }
-        // The days before today (4th-7th when today is the 9th): the cases seen on a phone with real data.
-        let d7 = today.adding(days: -2), d6 = today.adding(days: -3), d5 = today.adding(days: -4), d4 = today.adding(days: -5)
+        // The days before today: the cases seen on a phone with real data (a week of dense, differently shaped days).
+        let d3 = today.adding(days: -6), d4 = today.adding(days: -5), d5 = today.adding(days: -4), d6 = today.adding(days: -3), d7 = today.adding(days: -2)
         transDrafts += [
-            draft(school, "세미나", d4, (9, 30), (9, 50)), draft(school, "랩 미팅", d4, (9, 50), (10, 10)), draft(school, "점검", d4, (10, 10), (10, 30)),
-            draft(life, "경민 커피챗", d4, (19, 0), (23, 0)),
-            draft(school, "유성복합 → 센트럴시티", d5, (16, 35), (17, 30)), draft(life, "RCK Scrim", d5, (21, 0), (22, 0)), draft(life, "Scrim", d5, (22, 0), (23, 59)),
-            draft(appointments, "Push", d6, (8, 0), (10, 0)), draft(school, "인바디 측정", d6, (8, 0), (8, 30)),
-            draft(life, "Date", d6, (16, 0), (17, 0)), draft(school, "자연어처리와RAG", d6, (19, 0), (21, 50)),
-            draft(appointments, "Upper", d7, (16, 0), (16, 30)), draft(life, "데이트", d7, (16, 20), (21, 0)),
+            draft(school, "산업용생성AI", d3, (9, 0), (10, 50)), draft(appointments, "Upper", d3, (16, 0), (17, 50)), draft(life, "데이트", d3, (18, 0), (21, 0)), draft(life, "Scrim", d3, (22, 0), (23, 59)),
+            draft(appointments, "Lower", d4, (8, 0), (9, 30)), draft(life, "LOL Match", d4, (20, 0), (23, 0)),
+            draft(appointments, "Push", d5, (8, 0), (10, 0)), draft(school, "인바디 측정", d5, (8, 0), (8, 30)),
+            draft(life, "Date", d5, (16, 0), (17, 0)), draft(school, "자연어처리와RAG", d5, (19, 0), (21, 50)),
+            draft(school, "회의 가", d6, (10, 50), (11, 5)), draft(school, "회의 나", d6, (11, 5), (11, 20)), draft(life, "Date", d6, (12, 0), (22, 0)),
+            draft(appointments, "Legs + Pull", d7, (10, 0), (11, 30)), draft(school, "산업용생성AI ", d7, (12, 0), (13, 0)), draft(school, "SENA Meeting", d7, (13, 0), (14, 0)), draft(school, "로지스틱이론", d7, (14, 0), (16, 0)),
         ]
         let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-trans") ? transDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
