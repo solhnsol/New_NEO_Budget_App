@@ -12,8 +12,8 @@ struct DayTimelineScreen: View {
     /// Where a swipe in progress would land (-1, 0, +1 days), for the week strip, which changes at that moment and not with the finger.
     @State private var pendingDays = 0
     @State private var screenWidth: CGFloat = 0
-    /// The timeline's opacity while a far jump swaps the days under a quick cross-fade.
-    @State private var gridOpacity: CGFloat = 1
+    /// Days read for a far jump, which slide past on the way to the day picked.
+    @State private var jumpDays: [StripDay] = []
     @State private var isChangingDay = false
 
     var body: some View {
@@ -84,25 +84,31 @@ struct DayTimelineScreen: View {
             }
             await model.reload()
         } else {
-            // Further away: the days in view slide out the way the picked day lies and fade, and the new days slide in from the other
-            // side, instead of running through the days between.
-            let direction: CGFloat = delta > 0 ? 1 : -1
-            withAnimation(.easeIn(duration: 0.14)) {
-                swipeOffset = -direction * column
-                gridOpacity = 0
-            }
-            try? await Task.sleep(for: .seconds(0.15))
+            // Further away: the days really are there, to the side, and the strip of them runs past quickly. The days in between are read
+            // when they are not too many (otherwise the ones near either end are, and the run between is empty time).
+            let low = min(0, delta) - 1, high = max(0, delta) + 2
+            let range = high - low <= 18 ? Array(low...high) : Array(-1...2) + Array((delta - 1)...(delta + 2))
+            let days = range.map { model.selectedDay.adding(days: $0) }
+            jumpDays = await model.readDays(days)
+            let distance = -CGFloat(delta) * column
+            let duration = min(0.5, 0.3 + 0.012 * Double(abs(delta)))
+            withAnimation(.easeInOut(duration: duration)) { swipeOffset = distance }
+            try? await Task.sleep(for: .seconds(duration + 0.02))
+            model.adopt(jumpDays)
             withTransaction(noAnimation) {
                 _ = model.moveTo(day)
-                swipeOffset = direction * column
+                swipeOffset = 0
                 pendingDays = 0
+                jumpDays = []
             }
             await model.reload()
-            withAnimation(.easeOut(duration: 0.26)) {
-                swipeOffset = 0
-                gridOpacity = 1
-            }
         }
+    }
+
+    private var stripWithJump: [StripDay] {
+        let base = model.strip
+        let known = Set(base.map(\.day))
+        return base + jumpDays.filter { !known.contains($0.day) }
     }
 
     private func ready(_ timelines: [DayTimeline]) -> some View {
@@ -117,7 +123,7 @@ struct DayTimelineScreen: View {
             Divider()
             if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
-                    strip: model.strip, today: model.today, zone: model.dayZone, editor: editor,
+                    strip: stripWithJump, today: model.today, zone: model.dayZone, editor: editor,
                     onSelect: { selection = $0 },
                     onEditInfo: { infoEvent = $0.eventKey },
                     onMoveDays: { days in
@@ -127,7 +133,6 @@ struct DayTimelineScreen: View {
                     swipeOffset: $swipeOffset,
                     pendingDays: $pendingDays
                 )
-                .opacity(gridOpacity)
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
             Divider()

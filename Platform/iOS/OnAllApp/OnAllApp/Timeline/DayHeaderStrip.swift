@@ -21,7 +21,8 @@ struct DayHeaderStrip: View {
             let columnWidth = max(0, (size.size.width - Self.gutter) / 2)
             // Cut at the gutter, like the days below, so a day sliding out never shows over the hour labels' column.
             ZStack(alignment: .topLeading) {
-                ForEach(Array(strip.enumerated()), id: \.element.day) { position, entry in
+                ForEach(strip, id: \.day) { entry in
+                let position = entry.day.daysSinceUnixEpoch - (strip.count > 1 ? strip[1].day.daysSinceUnixEpoch : entry.day.daysSinceUnixEpoch) + 1
                     DayHeaderCell(entry: entry, isToday: entry.day == today, onSelect: onSelect)
                         .frame(width: columnWidth, height: height, alignment: .topLeading)
                         .offset(x: columnWidth * CGFloat(position - 1) + swipeOffset)

@@ -194,7 +194,9 @@ struct TimelineGridView: View {
                 // so a day that moves one place over in a swipe is the same view, not a new one.
                 // The strip is cut at the gutter, so the days that slide in or out never cover the hour labels.
                 ZStack(alignment: .topLeading) {
-                    ForEach(Array(strip.enumerated()), id: \.element.day) { position, entry in
+                    ForEach(strip, id: \.day) { entry in
+                        // The first four are the days around the two shown; any more are days a far jump runs through.
+                        let position = entry.day.daysSinceUnixEpoch - (strip[safe: 1]?.day.daysSinceUnixEpoch ?? entry.day.daysSinceUnixEpoch) + 1
                         if let timeline = entry.timeline {
                             dayContent(timeline, geometry: geometry, layoutWidth: columns.dayLayoutWidth)
                                 .frame(width: columns.dayLayoutWidth, height: geometry.contentHeight, alignment: .topLeading)

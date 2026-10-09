@@ -36,6 +36,14 @@ struct WeekStripView: View {
     /// Where the circle is (a day number). Changed with its own animation, apart from the paging and the capsule.
     @State private var ball: Int = 0
     @State private var seeded = false
+    /// The circle that has just left a day: it keeps following that day as it slides away, fading, so it never leaves an afterimage.
+    @State private var ghosts: [Ghost] = []
+    @State private var ballID = UUID()
+    /// While a finger is dragging the strip, the strip follows it directly (no animation); on release it eases to the page it settles on.
+    @State private var dragging = false
+    @State private var stripWidth: CGFloat = 0
+
+    private struct Ghost: Identifiable { let id = UUID(); let day: Int; let isToday: Bool }
 
     private var weekStart: LocalDate { selected.adding(days: -selected.weekday) }
     private var position: Int { selected.daysSinceUnixEpoch + pendingShift }
@@ -51,6 +59,7 @@ struct WeekStripView: View {
             }
             GeometryReader { geometry in
                 let cell = geometry.size.width / 7
+                let _ = updateWidth(geometry.size.width)
                 // A fixed run of days around the week being shown: the one it is leaving and the one it is going to are always both in it, so
                 // paging moves cells that are already there (no day appears or disappears in the middle of the move).
                 // The run of days is anchored to the selected week, which only changes when a swipe lands; the page being shown moves inside
@@ -63,23 +72,41 @@ struct WeekStripView: View {
                     // One interpolated value places every day, so no two days can be caught at different points of the move.
                     InterpolatedView(value: viewOffset) { offset in
                         ZStack(alignment: .topLeading) {
+                            circles(cell: cell, offset: offset)
                             ForEach(low..<high, id: \.self) { number in
                                 dayCell(LocalDate(daysSinceUnixEpoch: number), cell: cell)
                                     .offset(x: (CGFloat(number) - CGFloat(offset)) * cell)
                             }
                         }
                     }
-                    .animation(.snappy(duration: 0.34), value: viewOffset)
+                    .animation(dragging ? nil : .snappy(duration: 0.34), value: viewOffset)
                 }
                 .frame(width: geometry.size.width, height: Self.numberRow + 9, alignment: .topLeading)
             }
             .frame(height: Self.numberRow + 9)
             .clipped()
             .simultaneousGesture(
-                DragGesture(minimumDistance: 24).onEnded { value in
-                    guard abs(value.translation.width) > 40, abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                    onPage(value.translation.width < 0 ? 1 : -1)
-                }
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        dragging = true
+                        // The strip is held and dragged: the neighbouring weeks come into view with the finger.
+                        let cell = max(1, stripWidth / 7)
+                        viewOffset = Double(pageStart) - Double(max(-stripWidth, min(stripWidth, value.translation.width)) / cell)
+                    }
+                    .onEnded { value in
+                        guard dragging else { return }
+                        dragging = false
+                        let width = max(1, stripWidth)
+                        let flick = abs(value.velocity.width) > 500 && (value.velocity.width < 0) == (value.translation.width < 0)
+                        let far = abs(value.translation.width) > width * 0.3
+                        if far || flick, abs(value.translation.width) > 8 {
+                            // The page changes with the day the strip's selection moves to (see `move`).
+                            onPage(value.translation.width < 0 ? 1 : -1)
+                        } else {
+                            viewOffset = Double(pageStart)
+                        }
+                    }
             )
         }
         .padding(.horizontal, 8)
@@ -112,7 +139,16 @@ struct WeekStripView: View {
         guard seeded else { return seed() }
         let target = position
         viewOffset = Double(pageStart)
-        withAnimation(.easeOut(duration: 0.16)) { ball = target }
+        if ball != target {
+            let ghost = Ghost(day: ball, isToday: ball == today.daysSinceUnixEpoch)
+            ghosts.append(ghost)
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                ghosts.removeAll { $0.id == ghost.id }
+            }
+        }
+        ballID = UUID()
+        ball = target
         leading = Double(target)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(45))
@@ -135,11 +171,29 @@ struct WeekStripView: View {
                             .offset(x: start, y: (Self.numberRow - Self.ball) / 2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     }
-                    .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: viewOffset)
+                    .animation(dragging ? nil : .interpolatingSpring(stiffness: 190, damping: 19), value: viewOffset)
                 }
                 .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: trailing)
             }
             .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: leading)
+        }
+    }
+
+    private func updateWidth(_ width: CGFloat) {
+        if abs(stripWidth - width) > 0.5 { DispatchQueue.main.async { stripWidth = width } }
+    }
+
+    /// The circle on the first day and the ones that have just left. They are placed like the days, by day number against the same
+    /// interpolated offset, so a circle that is fading out keeps sliding with its day.
+    private func circles(cell: CGFloat, offset: Double) -> some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(ghosts) { ghost in
+                FadingBall(color: ghost.isToday ? .accentColor : .primary, size: Self.ball)
+                    .offset(x: (CGFloat(ghost.day) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
+            }
+            GrowingBall(color: ball == today.daysSinceUnixEpoch ? .accentColor : .primary, size: Self.ball)
+                .id(ballID)
+                .offset(x: (CGFloat(ball) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
         }
     }
 
@@ -148,12 +202,6 @@ struct WeekStripView: View {
         let role = role(of: day)
         return VStack(spacing: 0) {
             ZStack {
-                // The circle lives in its own day's cell: it fades out where it was and grows in on the new day from that day's centre.
-                if role == .first {
-                    Circle().fill(day == today ? Color.accentColor : Color.primary)
-                        .frame(width: Self.ball, height: Self.ball)
-                        .transition(.asymmetric(insertion: .scale(scale: 0.3).combined(with: .opacity), removal: .opacity))
-                }
                 Button { onSelect(day) } label: {
                     Text("\(day.day)")
                         .font(.callout.monospacedDigit().weight(role == .none ? .regular : .bold))
@@ -225,4 +273,31 @@ private struct InterpolatedView<Content: View>: View, Animatable {
     }
 
     var body: some View { content(value) }
+}
+
+/// A circle that grows from its own centre when it appears.
+private struct GrowingBall: View {
+    let color: Color
+    let size: CGFloat
+    @State private var shown = false
+
+    var body: some View {
+        Circle().fill(color).frame(width: size, height: size)
+            .scaleEffect(shown ? 1 : 0.3)
+            .opacity(shown ? 1 : 0)
+            .onAppear { withAnimation(.easeOut(duration: 0.16)) { shown = true } }
+    }
+}
+
+/// A circle that fades out where it is (its owner keeps moving it with its day).
+private struct FadingBall: View {
+    let color: Color
+    let size: CGFloat
+    @State private var faded = false
+
+    var body: some View {
+        Circle().fill(color).frame(width: size, height: size)
+            .opacity(faded ? 0 : 1)
+            .onAppear { withAnimation(.easeOut(duration: 0.2)) { faded = true } }
+    }
 }

@@ -183,6 +183,22 @@ final class AppModel {
         return true
     }
 
+    /// Reads days that are about to slide past, for a jump to a day that is not next door. Nothing is kept: `adopt` keeps the ones needed.
+    func readDays(_ days: [LocalDate]) async -> [StripDay] {
+        guard let service else { return days.map { StripDay(day: $0, timeline: cache[$0]) } }
+        var result: [StripDay] = []
+        for day in days {
+            let timeline = if let known = cache[day] { known } else { try? await service.dayTimeline(for: day) }
+            result.append(StripDay(day: day, timeline: timeline))
+        }
+        return result
+    }
+
+    /// Keeps days read ahead of a jump, so the move to the day lands on days that are already there.
+    func adopt(_ days: [StripDay]) {
+        for entry in days { if let timeline = entry.timeline { cache[entry.day] = timeline } }
+    }
+
     func shift(days: Int) async { await select(selectedDay.adding(days: days)) }
 
     func goToday() async { await select(dayZone.localDate(of: Self.nowMilliseconds())) }
