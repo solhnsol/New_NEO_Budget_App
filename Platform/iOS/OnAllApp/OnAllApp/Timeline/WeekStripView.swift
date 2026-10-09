@@ -4,6 +4,8 @@ import SwiftUI
 struct WeekStripView: View {
     let week: [WeekStripDay]
     let selected: LocalDate
+    /// The days on screen are two: `selected` and the one after it, so the strip shows both, as the system calendar does.
+    var showsNextDay = true
     let onSelect: (LocalDate) -> Void
 
     var body: some View {
@@ -12,11 +14,13 @@ struct WeekStripView: View {
                 Button { onSelect(cell.day) } label: {
                     VStack(spacing: 4) {
                         Text(Formatting.weekdayShort(cell.day)).font(.caption2).foregroundStyle(.secondary)
+                        let isFirst = cell.day == selected
+                        let isSecond = showsNextDay && cell.day == selected.adding(days: 1)
                         Text("\(cell.day.day)")
-                            .font(.callout.monospacedDigit().weight(cell.day == selected ? .bold : .regular))
+                            .font(.callout.monospacedDigit().weight(isFirst || isSecond ? .bold : .regular))
                             .frame(width: 32, height: 32)
-                            .background(cell.day == selected ? Color.accentColor : .clear, in: Circle())
-                            .foregroundStyle(cell.day == selected ? Color.white : Color.primary)
+                            .background(isFirst ? Color.accentColor : isSecond ? Color.accentColor.opacity(0.18) : .clear, in: Circle())
+                            .foregroundStyle(isFirst ? Color.white : isSecond ? Color.accentColor : Color.primary)
                         HStack(spacing: 3) {
                             Circle().fill(cell.eventCount > 0 ? Color.accentColor : .clear).frame(width: 5, height: 5)
                             Circle().fill(cell.unlinkedTransactionCount > 0 ? Color.orange : .clear).frame(width: 5, height: 5)
@@ -26,7 +30,7 @@ struct WeekStripView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(cell.day.month)월 \(cell.day.day)일, 일정 \(cell.eventCount)건")
-                .accessibilityAddTraits(cell.day == selected ? .isSelected : [])
+                .accessibilityAddTraits(cell.day == selected || (showsNextDay && cell.day == selected.adding(days: 1)) ? .isSelected : [])
             }
         }
         .padding(.horizontal, 8)
