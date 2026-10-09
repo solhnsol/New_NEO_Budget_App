@@ -59,7 +59,10 @@ enum SampleLedger {
             try candidate("sample-bill", .cardBillPayment, .outflow, 15_000, instant(18, 0)),
             try candidate("sample-refund", .refund, .inflow, 5_000, instant(20, 10), original: "sample-restaurant-approval"),
             try candidate("sample-delivery", .purchase, .outflow, 6_200, instant(21, 30), merchant: "배달", card: true, exact: false),
-        ]
+        ] + (ProcessInfo.processInfo.arguments.contains("-demo-dense")
+            // A burst of purchases a few minutes apart, to see transaction lines that cannot all keep apart.
+            ? try (0..<5).map { try candidate("sample-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(16, 30 + $0 * 2), merchant: "상점 \($0)") }
+            : [])
         return try AppLedger(configuration: configuration, promoting: candidates)
     }
 

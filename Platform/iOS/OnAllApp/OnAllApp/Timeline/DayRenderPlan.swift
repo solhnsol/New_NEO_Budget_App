@@ -132,8 +132,15 @@ struct DayRenderPlan {
             if let shape = overlap(block), shape.summarisesTitles { groupMembers[shape.groupIndex, default: []].append(block) }
         }
         for index in groupMembers.keys.sorted() {
-            let members = (groupMembers[index] ?? []).sorted { content.order.firstIndex(of: $0.id) ?? 0 < content.order.firstIndex(of: $1.id) ?? 0 }
-            guard let first = members.first, let frame = frames[first.id] else { continue }
+            let all = (groupMembers[index] ?? []).sorted { content.order.firstIndex(of: $0.id) ?? 0 < content.order.firstIndex(of: $1.id) ?? 0 }
+            // Only events whose titles could not be kept apart by moving them (and the ones they would have landed on) are summarised;
+            // a long event that merely holds the others, or events spread over the day, keep their own titles.
+            let near = parameters.titleRow * 2 * scale
+            let moved = all.filter { (places[$0.id] ?? .init()) != DayContentLayout.TitlePlacement() }
+            let members = all.filter { member in
+                moved.contains { $0.id == member.id } || moved.contains { abs((frames[$0.id]?.minY ?? 0) - (frames[member.id]?.minY ?? 0)) < near }
+            }
+            guard members.count >= 3, let first = members.first, let frame = frames[first.id] else { continue }
             let union = members.compactMap { frames[$0.id] }.reduce(frame) { $0.union($1) }
             summaries.append(Summary(
                 frame: CGRect(x: union.minX, y: frame.minY, width: union.width, height: parameters.titleRow * scale),

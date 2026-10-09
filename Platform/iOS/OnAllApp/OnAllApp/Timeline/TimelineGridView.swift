@@ -754,6 +754,7 @@ private struct HourRow: View {
         ZStack(alignment: .topLeading) {
             Text(Formatting.hourLabel(mark.wallHour))
                 .font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                .lineLimit(1).minimumScaleFactor(0.5)
                 .frame(width: geometry.gutterWidth - 6, alignment: .trailing)
                 .offset(y: -7)
             Rectangle().fill(Color.secondary.opacity(0.25)).frame(height: 0.5)

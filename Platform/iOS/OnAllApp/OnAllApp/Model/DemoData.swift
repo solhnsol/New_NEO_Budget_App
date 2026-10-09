@@ -69,7 +69,22 @@ enum DemoData {
             draft(life, "저녁 운동", today, (19, 0), (20, 30)),
             draft(school, "팀 회의", tomorrow, (15, 0), (16, 0)),
         ]
-        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-overlap") ? overlapDrafts
+        // `-demo-dense`: short events one after another, a long title over a transaction, a burst of transactions, and a busy tomorrow
+        // (the secondary day), to check headers, overflow, touch conflicts and the space shared between the two days.
+        let denseDrafts: [CalendarEventDraft] = [
+            draft(life, "짧은 가", today, (10, 0), (10, 15)),
+            draft(life, "짧은 나", today, (10, 15), (10, 30)),
+            draft(life, "짧은 다", today, (10, 30), (10, 45)),
+            draft(appointments, "아주 긴 일정 제목입니다 정말로", today, (12, 0), (13, 0)),
+            draft(life, "저녁 운동", today, (19, 0), (20, 30)),
+            draft(school, "회의 1", tomorrow, (8, 0), (9, 0)),
+            draft(school, "회의 2", tomorrow, (9, 30), (10, 30)),
+            draft(life, "점심 모임", tomorrow, (12, 0), (13, 30)),
+            draft(life, "운동", tomorrow, (13, 0), (14, 0)),
+            draft(appointments, "저녁 약속", tomorrow, (18, 30), (21, 0)),
+        ]
+        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-dense") ? denseDrafts
+            : ProcessInfo.processInfo.arguments.contains("-demo-overlap") ? overlapDrafts
             : !ProcessInfo.processInfo.arguments.contains("-demo-long") ? usualDrafts : [
             draft(life, "30분 일정", today, (8, 0), (8, 30)),
             draft(life, "2시간 일정", today, (10, 0), (12, 0)),

@@ -147,6 +147,9 @@ private struct SummaryBar: View {
         }
         .font(.footnote)
         .foregroundStyle(.secondary)
+        .lineLimit(1).minimumScaleFactor(0.7)
+        // The summary is chrome: at the largest text sizes it stays readable without taking the room the timeline needs.
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
     }

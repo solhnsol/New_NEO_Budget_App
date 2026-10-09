@@ -76,7 +76,12 @@ struct OverflowCardView: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: "ellipsis.rectangle").font(.system(size: 10 * scale)).foregroundStyle(.secondary)
-            Text(Self.summary(item)).font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1).minimumScaleFactor(0.8)
+            // The count is what matters: when the whole summary does not fit, the count alone is shown, never a cut-off number.
+            ViewThatFits(in: .horizontal) {
+                Text(Self.summary(item)).fixedSize()
+                Text(Self.countOnly(item)).minimumScaleFactor(0.5)
+            }
+            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
             Image(systemName: "chevron.right").font(.system(size: 8 * scale, weight: .semibold)).foregroundStyle(.secondary)
         }
@@ -84,6 +89,7 @@ struct OverflowCardView: View {
         .frame(width: item.frame.width, height: item.frame.height)
         .background(Color(.tertiarySystemFill), in: Capsule())
         .overlay(Capsule().stroke(Color.secondary.opacity(0.45), lineWidth: 0.75))
+        .clipShape(Capsule())
         .offset(x: item.frame.minX, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
@@ -101,6 +107,8 @@ struct OverflowCardView: View {
         }
         return "거래 \(count)건"
     }
+
+    static func countOnly(_ item: DayRenderPlan.OverflowItem) -> String { "거래 \(item.members.count)건" }
 
     static func accessibilityText(_ item: DayRenderPlan.OverflowItem) -> String {
         "거래 \(item.members.count)건, " + item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)건" }.joined(separator: ", ")
