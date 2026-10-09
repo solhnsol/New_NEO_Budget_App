@@ -168,8 +168,8 @@ struct AllocationParameters: Equatable, Sendable {
     /// A transaction's own line, and the clear space kept between two lines for them to stay readable.
     var transactionRow: CGFloat = 24
     var lineGap: CGFloat = 2
-    /// The card an overflow is drawn as.
-    var overflowCard: CGFloat = 28
+    /// The row an overflow is written on (it is text, not a card).
+    var overflowCard: CGFloat = 20
     /// The height of the header an event may have above its start.
     var headerRow: CGFloat = 22
     var detailRow: CGFloat = 20

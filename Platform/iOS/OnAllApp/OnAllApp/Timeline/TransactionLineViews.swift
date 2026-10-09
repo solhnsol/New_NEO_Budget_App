@@ -44,31 +44,40 @@ struct TransactionLineView: View {
     let scale: CGFloat
     /// Where the day's own column begins (after the hour gutter): the line leads out from there.
     var edge: CGFloat = 60
+    /// The row sits over an event: its text gets a thin halo in the page colour so it stays readable, and no background.
+    var overEvent = false
 
     var body: some View {
         let display = item.display
         let refund = display?.flow == .refund
         HStack(spacing: 4) {
             Leader(dashed: item.link != nil || (display?.isApproximate ?? false), length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
-            VStack(alignment: .leading, spacing: 0) {
+            // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
+            let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
+            let nameRoom = item.frame.width - 8 * scale - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
+            if nameRoom >= 30 * scale {
+                if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary) }
                 Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
-                if let label = item.linkedEventTitle {
-                    Text("연결: \(label)").font(.system(size: 8 * scale)).foregroundStyle(.secondary).lineLimit(1)
-                }
             }
             Spacer(minLength: 2)
-            if let display {
-                Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
-                    .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
-                    .foregroundStyle(refund ? Color.green : Color.primary)
-                    .lineLimit(1).fixedSize()
-            }
+            amountText(display, refund: refund)
         }
         .padding(.trailing, 6)
+        .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
+    }
+
+    @ViewBuilder
+    private func amountText(_ display: DayRenderPlan.TransactionDisplay?, refund: Bool) -> some View {
+        if let display {
+            Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
+                .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
+                .foregroundStyle(refund ? Color.green : Color.primary)
+                .lineLimit(1).fixedSize()
+        }
     }
 
     static func accessibilityText(_ item: DayRenderPlan.LineItem) -> String {
@@ -86,30 +95,21 @@ struct OverflowCardView: View {
     let item: DayRenderPlan.OverflowItem
     let scale: CGFloat
     var edge: CGFloat = 60
+    var overEvent = false
 
     var body: some View {
-        let twoLines = item.frame.height >= 28 * scale
         HStack(spacing: 4) {
             Leader(hollow: true, length: max(0, item.frame.minX - edge - 3 + 8 * scale), scale: scale)
-            if twoLines {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(Self.countOnly(item)).font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary)
-                    if let second = Self.secondLine(item) {
-                        Text(second).font(.system(size: 10 * scale).monospacedDigit()).foregroundStyle(.secondary).minimumScaleFactor(0.7)
-                    }
-                }
-                .lineLimit(1)
-            } else {
-                // The count is what matters: when the whole summary does not fit, the count alone is shown, never a cut-off number.
-                ViewThatFits(in: .horizontal) {
-                    Text(Self.summary(item)).fixedSize()
-                    Text(Self.countOnly(item)).minimumScaleFactor(0.5)
-                }
-                .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+            // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
+            ViewThatFits(in: .horizontal) {
+                Text(Self.summary(item)).fixedSize()
+                Text(Self.countOnly(item)).minimumScaleFactor(0.5)
             }
+            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
             Spacer(minLength: 2)
         }
         .padding(.trailing, 6)
+        .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
@@ -128,7 +128,7 @@ struct OverflowCardView: View {
     static func summary(_ item: DayRenderPlan.OverflowItem) -> String {
         let count = item.members.count
         if item.showsAmountTotal, let total = item.amountTotals.first {
-            return "\(AmountKindNames.name(total.kind)) \(count)건 · " + Formatting.money(total.minorUnits, currency: total.currency)
+            return "거래 \(count)건 · " + Formatting.money(total.minorUnits, currency: total.currency)
         }
         if item.countsByKind.count > 1 {
             return "거래 \(count)건 · " + item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)" }.joined(separator: " ")
@@ -197,5 +197,17 @@ struct OverlapSummaryView: View {
         .offset(x: summary.frame.minX, y: summary.frame.minY)
         .accessibilityLabel("겹치는 일정 \(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
         .accessibilityHint("일정을 고릅니다")
+    }
+}
+
+extension View {
+    /// A thin outline of the page colour around text that sits over something coloured, so it stays readable without a background.
+    @ViewBuilder
+    fileprivate func halo(_ on: Bool) -> some View {
+        if on {
+            self.shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8).shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8)
+        } else {
+            self
+        }
     }
 }

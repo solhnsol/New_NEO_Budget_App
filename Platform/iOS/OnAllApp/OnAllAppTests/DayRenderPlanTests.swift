@@ -234,3 +234,18 @@ private let longTitle = "아주 긴 일정 제목입니다"
     let narrow = render(tl, titleWidth: { _ in 30 })                                       // measured narrow: no conflict, no header
     #expect(try item(narrow, longTitle).header == nil && (try item(narrow, longTitle)).showsTitleInCard)
 }
+
+// MARK: Transactions are text
+
+@Test func aTitleIsOnlyKeptShortForALineThatIsReallyOnItsRow() throws {
+    // A long event with a spend far below its start: nothing is on the title's row, so the title keeps the whole card.
+    let apart = render(try timeline([event(0, "아주 긴 일정 제목입니다 정말로", 600, 720)], [spend("t", minute: 700)]), viewport: 900)
+    #expect(try item(apart, "아주 긴 일정 제목입니다 정말로").titleMaxWidth == nil)
+}
+
+@Test func transactionRowsAreTextHeightNotCardHeight() throws {
+    let r = render(try timeline([event(0, "회의", 600, 660)], [spend("t", minute: 900)]), viewport: 900)
+    let line = try #require(r.plan.lines.first)
+    #expect(line.frame.height == AllocationParameters().transactionRow)
+    #expect(AllocationParameters().overflowCard <= AllocationParameters().transactionRow)
+}

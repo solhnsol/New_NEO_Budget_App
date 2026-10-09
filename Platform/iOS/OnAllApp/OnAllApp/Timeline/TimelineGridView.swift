@@ -296,7 +296,9 @@ struct TimelineGridView: View {
                 } else if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
-                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, zoneIdentifier: timeline.timeZoneIdentifier
+                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, zoneIdentifier: timeline.timeZoneIdentifier,
+                        maxTitleWidth: item.titleMaxWidth,
+                        startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY, width: 48, height: 18)) }
                     )
                 }
             }
@@ -305,8 +307,8 @@ struct TimelineGridView: View {
                     if let block = timeline.blocks.first(where: { $0.id == id }) { editor.toggleExpanded(block) }
                 }
             }
-            ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale, edge: geometry.gutterWidth) }
-            ForEach(plan.overflows, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale, edge: geometry.gutterWidth) }
+            ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale, edge: geometry.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(line.frame) }) }
+            ForEach(plan.overflows, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale, edge: geometry.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(overflow.frame) }) }
             if timeline.day == today { NowLine(timeline: timeline, geometry: geometry, width: width) }
         }
     }

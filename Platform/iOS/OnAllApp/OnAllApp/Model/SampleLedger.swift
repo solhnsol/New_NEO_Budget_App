@@ -63,7 +63,23 @@ enum SampleLedger {
             // A burst of purchases a few minutes apart, to see transaction lines that cannot all keep apart.
             ? try (0..<5).map { try candidate("sample-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(16, 30 + $0 * 2), merchant: "상점 \($0)") }
             : [])
-        return try AppLedger(configuration: configuration, promoting: candidates)
+        // `-demo-txn`: synthetic spending for checking how transactions are written (see DemoData's `-demo-txn` events and DemoLinks).
+        let txnCandidates: [TransactionCandidate] = [
+            try candidate("txn-a1", .purchase, .outflow, 4_500, instant(8, 40), merchant: "커피 가"),
+            try candidate("txn-over", .purchase, .outflow, 9_800, instant(9, 15), merchant: "택시"),
+            try candidate("txn-b1", .purchase, .outflow, 12_000, instant(11, 20), merchant: "식당 하나"),
+            try candidate("txn-b2", .purchase, .outflow, 3_000, instant(11, 50), merchant: "디저트 둘"),
+            try candidate("txn-b3", .purchase, .outflow, 2_000, instant(12, 20), merchant: "주차 셋"),
+            try candidate("txn-b4", .purchase, .outflow, 3_200, instant(12, 50), merchant: "분식 넷"),
+            try candidate("txn-b5", .purchase, .outflow, 5_500, instant(13, 20), merchant: "카페 다섯"),
+            try candidate("txn-c1", .purchase, .outflow, 1_000, instant(15, 5), merchant: "껌"),
+            try candidate("txn-c2", .purchase, .outflow, 1_500, instant(15, 10), merchant: "물"),
+            try candidate("txn-c3", .purchase, .outflow, 2_500, instant(15, 15), merchant: "과자"),
+            try candidate("txn-ext", .purchase, .outflow, 3_500, instant(16, 30), merchant: "편의점 비"),
+            try candidate("txn-late", .purchase, .outflow, 7_700, instant(20, 5), merchant: "야식"),
+        ] + (try (0..<5).map { try candidate("txn-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(18, $0 * 2), merchant: "상점 \($0)") })
+        return try AppLedger(configuration: configuration, promoting: ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnCandidates.prefix(11))
+            : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnCandidates : candidates)
     }
 
     /// Mirrors the assembler's id scheme (`prefix/<utf8 length>:<raw id>/<event index>`) so the refund can name its

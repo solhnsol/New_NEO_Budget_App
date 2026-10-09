@@ -32,6 +32,8 @@ struct DayRenderPlan {
         let insideRows: [AllocationItem]
         let shownRows: Int
         let hiddenRows: Int
+        /// How wide the title may run, when the engine shortened it to stay clear of a transaction line's text; `nil` for the full card.
+        var titleMaxWidth: CGFloat?
     }
 
     /// Three or more overlapping events: one line naming them all, with a way to pick each.
@@ -165,7 +167,14 @@ struct DayRenderPlan {
                 block: block, placement: placed, frame: frame,
                 touchFrame: frame.insetBy(dx: 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
                 header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id),
-                insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden
+                insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden,
+                titleMaxWidth: {
+                    switch placed?.titleResolution {
+                    case let .abbreviated(maxWidth)?: return maxWidth
+                    case let .cramped(width)?: return width
+                    default: return nil
+                    }
+                }()
             ))
         }
 
@@ -247,6 +256,15 @@ struct DayRenderPlan {
             }
         }
 
+        // The engine shortens a title that could meet a line's text; here it is only kept short if a drawn line or overflow really is on the
+        // title's row, so a title is never cut for a line that is below it.
+        let drawnLines = (lineItems.map(\.frame) + overflowItems.map(\.frame)).map { $0.insetBy(dx: 0, dy: 4 * scale) }      // the text, not the row's air
+        eventItems = eventItems.map { item in
+            guard item.titleMaxWidth != nil else { return item }
+            let row = CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (InlineAllocationPlan.titleHeight + 2) * scale)
+            guard drawnLines.contains(where: { $0.intersects(row) }) else { var copy = item; copy.titleMaxWidth = nil; return copy }
+            return item
+        }
         events = eventItems
         self.summaries = summaries
         lines = lineItems

@@ -83,7 +83,22 @@ enum DemoData {
             draft(life, "운동", tomorrow, (13, 0), (14, 0)),
             draft(appointments, "저녁 약속", tomorrow, (18, 30), (21, 0)),
         ]
-        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-dense") ? denseDrafts
+        // `-demo-txn`: events that hold one, five and three linked transactions, a short one, a header case, and unlinked spending over
+        // and outside events (see SampleLedger and DemoLinks).
+        let txnDrafts: [CalendarEventDraft] = [
+            draft(life, "일정 가", today, (8, 0), (10, 30)),
+            draft(appointments, "일정 나", today, (11, 0), (14, 0)),
+            draft(school, "일정 다", today, (15, 0), (15, 20)),
+            draft(life, "짧은 라", today, (17, 0), (17, 10)),
+            draft(life, "짧은 마", today, (19, 0), (19, 15)),
+            draft(life, "짧은 바", today, (19, 15), (19, 30)),
+            draft(life, "짧은 사", today, (19, 30), (19, 45)),
+            draft(appointments, "아주 긴 일정 제목입니다 정말로", today, (20, 0), (20, 30)),
+            draft(school, "팀 회의", tomorrow, (15, 0), (16, 0)),
+        ]
+        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
+            : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnDrafts
+            : ProcessInfo.processInfo.arguments.contains("-demo-dense") ? denseDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-overlap") ? overlapDrafts
             : !ProcessInfo.processInfo.arguments.contains("-demo-long") ? usualDrafts : [
             draft(life, "30분 일정", today, (8, 0), (8, 30)),
@@ -155,7 +170,11 @@ enum DemoLife {
 
 /// Links sample transactions to the demo events through the real command, so event blocks show linked spending inline.
 enum DemoLinks {
-    private static let links: [(event: String, transactions: [String])] = [
+    private static let links: [(event: String, transactions: [String])] = (ProcessInfo.processInfo.arguments.contains("-demo-txn") || ProcessInfo.processInfo.arguments.contains("-demo-txn-lite")) ? [
+        ("일정 가", ["txn-a1"]),
+        ("일정 나", ["txn-b1", "txn-b2", "txn-b3", "txn-b4", "txn-b5"]),
+        ("일정 다", ["txn-c1", "txn-c2", "txn-c3"]),
+    ] : [
         ("점심 약속", ["sample-restaurant", "sample-dessert", "sample-parking", "sample-snack"]),   // four: shows the "+N" fold
         ("스터디", ["sample-cafe", "sample-convenience"]),
         ("저녁 운동", ["sample-refund"]),

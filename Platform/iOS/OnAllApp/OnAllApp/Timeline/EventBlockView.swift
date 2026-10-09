@@ -104,6 +104,10 @@ struct EventTitleLayer: View {
     var hiddenRows = 0
     var scale: CGFloat = 1
     var zoneIdentifier = ""
+    /// The title is kept shorter than the card, clear of a transaction line's text; the start time then has no place beside it.
+    var maxTitleWidth: CGFloat?
+    /// A transaction line is written where the start time would be.
+    var startIsCovered = false
 
     var body: some View {
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
@@ -112,14 +116,24 @@ struct EventTitleLayer: View {
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
             if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
             Spacer(minLength: 2)
-            if shownRows == 0, hiddenRows > 0, let total { SummaryChip(count: hiddenRows, total: total) }
+            // A card with no room for rows says how many transactions it holds in plain text on the title's line, and then has no start
+            // time beside it: the title and the transactions come first.
+            let summarises = shownRows == 0 && hiddenRows > 0 && total != nil
+            if summarises, let total {
+                ViewThatFits(in: .horizontal) {
+                    Text("거래 \(hiddenRows)건 · \(total)").fixedSize()
+                    Text("거래 \(hiddenRows)건").fixedSize()
+                    Color.clear.frame(width: 0)
+                }
+                .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
+            }
             // The start, in the top right corner; a title that has been moved aside leaves it out rather than crowd the line.
-            if !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
+            if !summarises, !startIsCovered, maxTitleWidth == nil, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
                 CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier))
             }
         }
         .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
-        .frame(width: max(0, place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
+        .frame(width: max(0, min(place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx, maxTitleWidth.map { $0 + 2 * Self.horizontalPadding } ?? .infinity)), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
         .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -153,7 +167,7 @@ struct EventBlockView: View {
                 AllocationRow(item: item, scale: scale)
             }
             if hiddenRows > 0 && shownRows > 0 {
-                MoreRow(label: "+\(hiddenRows)건", total: nil, color: .secondary, scale: scale)
+                MoreRow(label: "그 외 \(hiddenRows)건", total: nil, color: .secondary, scale: scale)
             }
             Spacer(minLength: 0)
         }
@@ -193,8 +207,7 @@ private struct AllocationRow: View {
     var scale: CGFloat = 1
 
     var body: some View {
-        HStack(spacing: 3) {
-            Image(systemName: item.flow == .refund ? "arrow.uturn.backward" : "creditcard").font(.system(size: 8 * scale))
+        HStack(spacing: 6) {
             Text(item.title ?? "거래").lineLimit(1)
             Spacer(minLength: 2)
             Text((item.flow == .refund ? "−" : "") + Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency))
@@ -223,20 +236,6 @@ private struct MoreRow: View {
         }
         .foregroundStyle(color)
         .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
-    }
-}
-
-fileprivate struct SummaryChip: View {
-    let count: Int
-    let total: String
-
-    var body: some View {
-        HStack(spacing: 2) {
-            Image(systemName: "creditcard.fill").font(.system(size: 8))
-            Text("\(count)건 \(total)").lineLimit(1).minimumScaleFactor(0.6)
-        }
-        .font(.system(size: 9).weight(.semibold))
-        .foregroundStyle(Color.orange)
     }
 }
 
