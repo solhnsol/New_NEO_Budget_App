@@ -1,22 +1,35 @@
 import NEOBudgetCalendar
 import SwiftUI
 
-/// The week above the timeline. The two days on screen are held in one pill, as in the system calendar: the first day in a filled
-/// circle, the second beside it inside the same capsule. The pill follows a swipe on the timeline continuously (`swipeDays` is how far
-/// the days have moved, in days, positive towards the next day) and glides when a day is picked by tapping.
+/// The week above the timeline, behaving like the system calendar's. The two days on screen sit in one capsule with a filled circle on the
+/// first; the circle is black (white in dark mode), or the accent colour when that day is today.
+///
+/// It does not follow the finger. While the timeline is swiped, `pendingShift` (-1, 0 or +1) says which day the swipe would land on, and
+/// the strip changes only when that changes (the screen gives a tap of haptic feedback then): the circle fades out where it was and
+/// fades in on the new day, and the capsule moves after it as a liquid, its left end (hidden under the circle) quickly and its right end
+/// a little later, with a spring. A day picked by tapping does the same.
 struct WeekStripView: View {
     let week: [WeekStripDay]
     let selected: LocalDate
-    /// The days on screen are two: `selected` and the one after it.
+    let today: LocalDate
+    /// The days on screen are two: the first, and the one after it.
     var showsNextDay = true
-    /// How far a swipe has carried the days, in days. 0 at rest.
-    var swipeDays: CGFloat = 0
+    /// Where a swipe in progress would land, relative to `selected`.
+    var pendingShift = 0
     let onSelect: (LocalDate) -> Void
 
     private static let numberRow: CGFloat = 36
+    private static let ball: CGFloat = 32
+
+    /// The capsule's two ends, in days from the start of the week. They are driven separately so the right end can lag the left.
+    @State private var leading: CGFloat = 0
+    @State private var trailing: CGFloat = 0
+    @State private var seeded = false
+
+    private var position: Int? { week.firstIndex { $0.day == selected }.map { $0 + pendingShift } }
 
     var body: some View {
-        let selectedIndex = week.firstIndex { $0.day == selected }
+        let position = position
         VStack(spacing: 2) {
             HStack(spacing: 0) {
                 ForEach(week, id: \.day) { cell in
@@ -24,13 +37,14 @@ struct WeekStripView: View {
                 }
             }
             ZStack {
-                if let selectedIndex { pill(selectedIndex: selectedIndex) }
+                highlight(position: position)
                 HStack(spacing: 0) {
                     ForEach(Array(week.enumerated()), id: \.element.day) { index, cell in
                         Button { onSelect(cell.day) } label: {
                             Text("\(cell.day.day)")
-                                .font(.callout.monospacedDigit().weight(emphasis(of: index, selectedIndex: selectedIndex) > 0 ? .bold : .regular))
-                                .foregroundStyle(numberColor(index, selectedIndex: selectedIndex))
+                                .font(.callout.monospacedDigit().weight(role(of: index, position: position) == .none ? .regular : .bold))
+                                .foregroundStyle(numberColor(index, cell.day, position: position))
+                                .animation(.easeOut(duration: 0.15), value: position)
                                 .frame(maxWidth: .infinity, minHeight: Self.numberRow)
                                 .contentShape(Rectangle())
                         }
@@ -54,45 +68,77 @@ struct WeekStripView: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
+        .onAppear { seed(position) }
+        .onChange(of: position) { _, new in move(to: new) }
+        .onChange(of: week.map(\.day)) { _, _ in seed(self.position) }
+    }
+
+    private enum Role { case none, first, second }
+
+    private func role(of index: Int, position: Int?) -> Role {
+        guard let position else { return .none }
+        if index == position { return .first }
+        if showsNextDay, index == position + 1 { return .second }
+        return .none
     }
 
     private func isShown(_ day: LocalDate) -> Bool { day == selected || (showsNextDay && day == selected.adding(days: 1)) }
 
-    /// The capsule over the two days and the filled circle on the first, positioned by the selected day plus however far a swipe has
-    /// carried them. The capsule's own move is animated only when the selection changes; a swipe moves it with the finger.
-    private func pill(selectedIndex: Int) -> some View {
+    private func seed(_ position: Int?) {
+        guard let position else { return }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { leading = CGFloat(position); trailing = CGFloat(position) }
+        seeded = true
+    }
+
+    /// The circle changes day at once (it fades, below); the capsule's left end follows it quickly and its right end a moment later.
+    private func move(to position: Int?) {
+        guard let position else { return }
+        guard seeded else { return seed(position) }
+        withAnimation(.easeOut(duration: 0.12)) { leading = CGFloat(position) }
+        withAnimation(.interpolatingSpring(stiffness: 190, damping: 15)) { trailing = CGFloat(position) }
+    }
+
+    /// The capsule and the circle. The capsule starts at the circle's centre, so its rounded left end is under the circle and only
+    /// the right end shows.
+    private func highlight(position: Int?) -> some View {
         GeometryReader { geometry in
             let cell = geometry.size.width / CGFloat(max(1, week.count))
-            let x = (CGFloat(selectedIndex) + swipeDays) * cell
-            ZStack(alignment: .leading) {
-                if showsNextDay {
-                    Capsule().fill(Color(.systemFill)).frame(width: cell * 2 - 4, height: Self.numberRow - 2)
+            let ball = Self.ball
+            ZStack(alignment: .topLeading) {
+                if showsNextDay, position != nil {
+                    let start = (leading + 0.5) * cell
+                    // At the end of the week the capsule stops at the strip's edge, rounded, instead of being cut off flat.
+                    let end = min((trailing + 2) * cell - 4, geometry.size.width - 2)
+                    Capsule().fill(Color(.systemFill))
+                        .frame(width: max(ball, end - start), height: ball)
+                        .offset(x: start, y: (Self.numberRow - ball) / 2)
                 }
-                Circle().fill(Color.accentColor).frame(width: Self.numberRow - 4, height: Self.numberRow - 4)
-                    .offset(x: (cell - (Self.numberRow - 4)) / 2 - 1)
+                if let position {
+                    Circle().fill(circleColor(for: position))
+                        .frame(width: ball, height: ball)
+                        .offset(x: (CGFloat(position) + 0.5) * cell - ball / 2, y: (Self.numberRow - ball) / 2)
+                        .id(position)
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.7)), removal: .opacity))
+                }
             }
-            .frame(width: cell * 2, alignment: .leading)
-            .offset(x: x + 2, y: 1)
-            .animation(.snappy(duration: 0.3), value: selected)
+            .animation(.easeOut(duration: 0.16), value: position)
         }
         .allowsHitTesting(false)
     }
 
-    /// 1 for the number sitting on the filled circle, 0.5 for the second day inside the capsule, 0 otherwise. Judged on how near the
-    /// circle is, so a number turns white only once the circle is really under it and stays readable while the pill is moving.
-    private func emphasis(of index: Int, selectedIndex: Int?) -> CGFloat {
-        guard let selectedIndex else { return 0 }
-        let position = CGFloat(selectedIndex) + swipeDays
-        if abs(CGFloat(index) - position) < 0.3 { return 1 }
-        if showsNextDay, abs(CGFloat(index) - (position + 1)) < 0.7 { return 0.5 }
-        return 0
+    private func dayAt(_ position: Int) -> LocalDate? { week.indices.contains(position) ? week[position].day : nil }
+
+    private func circleColor(for position: Int) -> Color {
+        dayAt(position) == today ? Color.accentColor : Color.primary
     }
 
-    private func numberColor(_ index: Int, selectedIndex: Int?) -> Color {
-        switch emphasis(of: index, selectedIndex: selectedIndex) {
-        case 1: return .white
-        case 0.5: return .secondary
-        default: return .primary
+    private func numberColor(_ index: Int, _ day: LocalDate, position: Int?) -> Color {
+        switch role(of: index, position: position) {
+        case .first: return day == today ? .white : Color(.systemBackground)
+        case .second: return .secondary
+        case .none: return day == today ? Color.accentColor : .primary
         }
     }
 }

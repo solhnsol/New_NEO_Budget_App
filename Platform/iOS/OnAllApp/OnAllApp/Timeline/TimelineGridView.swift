@@ -93,6 +93,8 @@ struct TimelineGridView: View {
     @State private var reveal: EditGestureHost.RevealRequest?
     /// How far the strip of days is dragged sideways of its resting place, during a swipe and while it settles.
     @Binding var swipeOffset: CGFloat
+    /// The day a swipe in progress would land on, as -1, 0 or +1 from the first day. Changes the moment the swipe passes the point of no return.
+    @Binding var pendingDays: Int
     @State private var settling = false
     @State private var choice: TouchChoice?
     @Environment(\.dynamicTypeSize) private var dynamicType
@@ -362,23 +364,35 @@ struct TimelineGridView: View {
             break
         case .moved:
             swipeOffset = DaySwipe.liveOffset(translation: translation, columnWidth: columnWidth)
+            // The week strip follows the decision, not the finger: it changes (with a tap of feedback) when the drag passes the point
+            // where letting go would turn the day, and changes back if the finger returns.
+            let pending = DaySwipe.daysToMove(translation: translation, velocity: 0, columnWidth: columnWidth)
+            if pending != pendingDays {
+                pendingDays = pending
+                Haptics.snap()
+            }
         case .ended:
             let days = DaySwipe.daysToMove(translation: translation, velocity: velocity, columnWidth: columnWidth)
+            if days != pendingDays {
+                pendingDays = days                                                 // a flick can decide before the distance does
+                Haptics.snap()
+            }
             settling = true
             withAnimation(.easeOut(duration: Self.settleDuration)) {
                 swipeOffset = DaySwipe.settledOffset(days: days, columnWidth: columnWidth)
             }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(Self.settleDuration + 0.02))
-                // The new first day and the offset go back to rest in one update, so the days do not move on screen.
+                // The new first day and the offset go back to rest in one update, so the days do not move on screen, and the strip,
+                // whose selection moves by the same one day, stays exactly where it already was.
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     if days != 0 { onMoveDays(days) }
                     swipeOffset = 0
+                    pendingDays = 0
                     settling = false
                 }
-                if days != 0 { Haptics.snap() }
             }
         }
     }
