@@ -24,4 +24,18 @@ enum TextMeasurer {
         let font = titleFont(contentSize: contentSize)
         return ceil((title as NSString).size(withAttributes: [.font: font]).width) + 12 * textScale(contentSize: contentSize)
     }
+
+    /// The line heights the event presentation's thresholds come from, at the user's text size.
+    static func presentationMetrics(contentSize: UIContentSizeCategory? = nil) -> EventPresentation.Metrics {
+        let scale = textScale(contentSize: contentSize)
+        let metrics = UIFontMetrics(forTextStyle: .caption1)
+        func lineHeight(_ base: UIFont) -> CGFloat {
+            let font = contentSize.map { metrics.scaledFont(for: base, compatibleWith: UITraitCollection(preferredContentSizeCategory: $0)) } ?? metrics.scaledFont(for: base)
+            return ceil(font.lineHeight)
+        }
+        return .measured(
+            titleLine: lineHeight(.systemFont(ofSize: 12, weight: .semibold)),
+            timeLine: lineHeight(.systemFont(ofSize: 9)), rowLine: lineHeight(.systemFont(ofSize: 10)), scale: scale
+        )
+    }
 }

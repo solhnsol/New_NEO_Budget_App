@@ -267,13 +267,14 @@ struct TimelineGridView: View {
     }
 
     private var textScale: CGFloat { TextMeasurer.textScale() }
+    private var presentationMetrics: EventPresentation.Metrics { TextMeasurer.presentationMetrics() }
 
     /// Where everything of a day goes, from the engine's layout and the axis. Drawing and hit-testing both use it.
     private func plan(_ timeline: DayTimeline, geometry: TimelineGeometry, width: CGFloat) -> DayRenderPlan {
         DayRenderPlan(
             timeline: timeline, role: role(of: timeline), layout: editor.adaptive, geometry: geometry, layoutWidth: width, textScale: textScale,
             expanded: timeline.blocks.first { editor.isExpanded($0) }?.id, focused: focusedID(in: timeline),
-            settled: editor.transition == nil, titleWidth: { editor.titleWidth(for: $0) }
+            metrics: presentationMetrics, titleWidth: { editor.titleWidth(for: $0) }
         )
     }
 
@@ -287,7 +288,7 @@ struct TimelineGridView: View {
         return ZStack(alignment: .topLeading) {
             ForEach(plan.events, id: \.block.id) { item in
                 if editor.isExpanded(item.block) { QuarterMarks(block: item.block, geometry: geometry, timeline: timeline, zone: zone) }
-                if !item.isGrouped { BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.map(\.frame) + plan.overflows.map(\.frame)) }
+                BlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, editor: editor, scale: scale, onEditInfo: onEditInfo, overlays: plan.lines.filter { $0.reveal > 0 }.map(\.frame) + plan.overflows.map(\.frame))
             }
             // Titles are drawn over every card, so a card stacked on another never hides the title under it.
             ForEach(plan.events.filter { !editor.isExpanded($0.block) }, id: \.block.id) { item in
@@ -296,15 +297,10 @@ struct TimelineGridView: View {
                 } else if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
-                        shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, zoneIdentifier: timeline.timeZoneIdentifier,
-                        maxTitleWidth: item.titleMaxWidth,
+                        scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
+                        maxTitleWidth: item.titleMaxWidth, startFits: item.startTimeFits,
                         startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
                     )
-                }
-            }
-            ForEach(Array(plan.summaries.enumerated()), id: \.offset) { _, summary in
-                OverlapSummaryView(summary: summary, scale: scale) { id in
-                    if let block = timeline.blocks.first(where: { $0.id == id }) { editor.toggleExpanded(block) }
                 }
             }
             ForEach(plan.lines, id: \.id) { line in TransactionLineView(item: line, scale: scale, edge: geometry.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(line.frame) }) }
@@ -606,7 +602,7 @@ private struct BlockCell: View {
 
     var body: some View {
         let block = item.block
-        let frame = item.frame
+        let frame = item.drawnFrame
         let selected = editor.isSelected(block)
         let expanded = editor.isExpanded(block)
         Group {
@@ -615,11 +611,10 @@ private struct BlockCell: View {
                     .onTapGesture { editor.toggleExpanded(block) }
             } else {
                 EventBlockView(
-                    block: block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
-                    shownRows: item.shownRows, hiddenRows: item.hiddenRows, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
+                    block: block, height: item.drawnFrame.height, titleOffset: item.title.dy, rows: item.insideRows,
+                    presentation: item.presentation, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
                     endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
                     startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
-                    compactTitle: item.isCompact,
                     anchors: item.insideAnchors.map { $0 - frame.minY }
                 )
                 .opacity(editor.activeBlockID == block.id ? 0.3 : 1)

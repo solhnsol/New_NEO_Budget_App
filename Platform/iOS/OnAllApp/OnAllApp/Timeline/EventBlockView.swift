@@ -26,9 +26,14 @@ struct InlineAllocationPlan: Equatable {
     static let verticalPadding: CGFloat = 6
 
     static func make(allocationCount: Int, blockHeight: CGFloat, showsTime: Bool) -> InlineAllocationPlan {
-        guard allocationCount > 0 else { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
         let free = blockHeight - verticalPadding - titleHeight - (showsTime ? timeHeight : 0)
-        let rows = max(0, min(maximumRows, Int((free / rowHeight).rounded(.down))))
+        return make(allocationCount: allocationCount, rowCapacity: Int((free / rowHeight).rounded(.down)))
+    }
+
+    /// The same decision from the number of rows there is room for, however that was measured.
+    static func make(allocationCount: Int, rowCapacity: Int) -> InlineAllocationPlan {
+        guard allocationCount > 0 else { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
+        let rows = max(0, min(maximumRows, rowCapacity))
         if rows == 0 { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: true) }
         if rows == 1 {
             if allocationCount == 1 { return InlineAllocationPlan(shown: 1, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
@@ -89,8 +94,9 @@ enum LinkedTotal {
     }
 }
 
-/// The first line of an event card: its title and the small marks next to it. Drawn in a layer above all cards (see
-/// `TimelineGridView`), so the card it belongs to can sit under another card without losing its title.
+/// The first line of an event card: its title and the start time beside it. Drawn in a layer above all cards (see `TimelineGridView`),
+/// so the card it belongs to can sit under another card without losing its title. How much of each there is comes from the card's
+/// `EventPresentation`; the text never changes size or place for it, it only fades in.
 struct EventTitleLayer: View {
     let block: EventBlock
     let frame: CGRect
@@ -100,124 +106,122 @@ struct EventTitleLayer: View {
     static let horizontalPadding: CGFloat = 6
     static let rowHeight: CGFloat = InlineAllocationPlan.titleHeight + 3
 
-    /// Linked transactions of the card that are shown / summed up, so a card too short for rows still says how many there are.
-    var shownRows = 0
-    var hiddenRows = 0
     var scale: CGFloat = 1
     var zoneIdentifier = ""
+    var presentation = EventPresentation.make(height: 1000)
     /// The title is kept shorter than the card, clear of a transaction line's text; the start time then has no place beside it.
     var maxTitleWidth: CGFloat?
+    /// The title and the time together fit the card's width.
+    var startFits = true
     /// A transaction line is written where the start time would be.
     var startIsCovered = false
 
     var body: some View {
-        let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         HStack(spacing: 3) {
             if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
             if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
             Spacer(minLength: 2)
-            // A card with no room for rows says how many transactions it holds in plain text on the title's line, and then has no start
-            // time beside it: the title and the transactions come first.
-            let summarises = shownRows == 0 && hiddenRows > 0 && total != nil
-            if summarises, let total {
-                ViewThatFits(in: .horizontal) {
-                    Text("거래 \(hiddenRows)건 · \(total)").fixedSize()
-                    Text("거래 \(hiddenRows)건").fixedSize()
-                    Color.clear.frame(width: 0)
-                }
-                .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
-            }
             // The start, in the top right corner; a title that has been moved aside leaves it out rather than crowd the line.
-            if !summarises, !startIsCovered, maxTitleWidth == nil, frame.width >= 150 * scale, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
-                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier))
+            if startFits, !startIsCovered, maxTitleWidth == nil, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty, place.dx == 0, place.dy == 0, !place.overflows {
+                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
+                    .opacity(presentation.startTime)
             }
         }
         .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
         .frame(width: max(0, min(place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx, maxTitleWidth.map { $0 + 2 * Self.horizontalPadding } ?? .infinity)), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
+        .opacity(presentation.title)
         .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 }
 
-/// An event's card: its colour, its linked transactions that happened within its time, and nothing else. The title is drawn in a layer
-/// above all cards (`EventTitleLayer`), and the start and end times are not repeated here: the hour axis beside the card already
-/// says them. Which rows show, and how many are summed up, is the layout engine's decision.
+/// An event's card: its colour, its linked transactions that happened within its time, the end time, and nothing else. The title and
+/// start are drawn in a layer above all cards (`EventTitleLayer`). It is one view at every height: as the card gets lower its fill and
+/// outline give way to the colour of the line it ends up as, and the text inside fades by `presentation`; nothing is swapped.
 struct EventBlockView: View {
     let block: EventBlock
     let height: CGFloat
     /// How far down the title is drawn (see `DayContentLayout.titlePlacements`); the rows below follow it.
     var titleOffset: CGFloat = 0
     var rows: [AllocationItem] = []
-    var shownRows = 0
-    var hiddenRows = 0
+    var presentation = EventPresentation.make(height: 1000)
     var scale: CGFloat = 1
     /// The title is in a header above the card: the card's own top edge is then drawn firmly, as the real start.
     var hasHeader = false
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
-    /// Too short for a title row of its own: the title is written inside the card, in one smaller line, and nothing else is.
-    var compactTitle = false
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
         let missing = block.state == .eventMissing
+        let card = presentation.card
+        let shownRows = presentation.shownRows
+        let hiddenRows = presentation.hiddenRows
+        let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         // With a header above it, the card's top corners are square: the header's own corners are the pair's, and its sides continue
         // straight down into the card's, so the two read as one event.
+        let radius = min(6, height / 2)
         let shape = UnevenRoundedRectangle(
-            topLeadingRadius: hasHeader ? 0 : 6, bottomLeadingRadius: 6, bottomTrailingRadius: 6, topTrailingRadius: hasHeader ? 0 : 6
+            topLeadingRadius: hasHeader ? 0 : radius, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: hasHeader ? 0 : radius
         )
+        let titleRow = hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset
         VStack(alignment: .leading, spacing: 1) {
             // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
-            Color.clear.frame(height: hasHeader ? 2 : (InlineAllocationPlan.titleHeight * scale + titleOffset))
+            Color.clear.frame(height: titleRow)
             ForEach(Array(rows.prefix(shownRows).enumerated()), id: \.element.allocationID) { index, item in
                 // The row's own middle, from the card's top, as the stack below lays it out.
                 let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
-                let middle = 3 + (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + CGFloat(index) * (rowHeight + 1) + rowHeight / 2
+                let middle = 3 + titleRow + CGFloat(index) * (rowHeight + 1) + rowHeight / 2
                 AllocationRow(item: item, scale: scale, anchorDy: anchors.indices.contains(index) ? anchors[index] - middle : nil)
             }
-            if hiddenRows > 0 && shownRows > 0 {
+            if presentation.showsSummaryRow, let total {
+                MoreRow(label: "거래 \(rows.count)건", total: total, color: .primary, scale: scale)
+            } else if hiddenRows > 0 && shownRows > 0 {
                 MoreRow(label: "그 외 \(hiddenRows)건", total: nil, color: .secondary, scale: scale)
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 6).padding(.vertical, 3)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(color.opacity(missing ? 0.08 : 0.22), in: shape)
-        .background(Color(.systemBackground), in: shape)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
-        .overlay(alignment: .bottomTrailing) {
-            // The end, in the bottom right corner, when the rows above leave the room.
-            let rowsUsed = CGFloat(shownRows + (hiddenRows > 0 && shownRows > 0 ? 1 : 0)) * InlineAllocationPlan.rowHeight * scale
-            let used = (hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset) + rowsUsed + 6
-            if !compactTitle, !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty, height - used >= 12 * scale {
-                CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
-                    .padding(.horizontal, 6).padding(.bottom, 5 * scale)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        // However little height there is, the card is exactly that tall: what is inside is cut off, never what gives the card its size.
+        .frame(height: max(0, height), alignment: .top)
+        .clipped()
+        .opacity(presentation.transactions)
+        .background(color.opacity((missing ? 0.08 : 0.22) * card), in: shape)
+        .background(Color(.systemBackground).opacity(card), in: shape)
+        // The colour of the line it thins into: solid when the card is only a line, gone when it is a card (the stripe stays).
+        .background(color.opacity(1 - card), in: shape)
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: min(3, max(1, height))) }
+        .overlay(alignment: .bottom) {
+            // The last line: how many transactions the event holds (where there is no room for rows) on the left, the end time on the
+            // right. The count gives way to the time, never the other way round.
+            HStack(spacing: 6) {
+                if presentation.transactionSummary > 0 {
+                    SummaryCount(count: rows.count, total: total, scale: scale).opacity(presentation.transactionSummary)
+                }
+                Spacer(minLength: 0)
+                if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty {
+                    CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
+                        .opacity(presentation.endTime)
+                }
             }
+            .padding(.horizontal, 6).padding(.bottom, 4 * scale)
         }
         .overlay(alignment: .topTrailing) {
             // The header has no time of its own: the start is in this card's top right corner.
             if hasHeader, !startIsCovered, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty {
                 CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
                     .padding(.horizontal, 6).padding(.top, 5 * scale)
-            }
-        }
-        .overlay(alignment: .leading) {
-            if compactTitle {
-                HStack(spacing: 3) {
-                    if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 7)) }
-                    Text(block.title).font(.system(size: 10 * scale, weight: .semibold)).lineLimit(1)
-                    if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 7)) }
-                }
-                .padding(.leading, 9).padding(.trailing, 6)
+                    .opacity(presentation.startTime)
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
-        .overlay(shape.stroke(color.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
+        .overlay(shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
         .opacity(missing ? 0.7 : 1)
         .clipShape(shape)
         .accessibilityElement(children: .combine)
@@ -229,6 +233,22 @@ struct EventBlockView: View {
         var text = block.title
         if !block.allocations.isEmpty { text += ", 연결된 거래 \(block.allocations.count)건" }
         return text
+    }
+}
+
+/// "거래 3건 · 12,300원" in the room of one small line; the count alone where the total does not fit.
+private struct SummaryCount: View {
+    let count: Int
+    let total: String?
+    var scale: CGFloat = 1
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            if let total { Text("거래 \(count)건 · \(total)").fixedSize() }
+            Text("거래 \(count)건").fixedSize()
+            Color.clear.frame(width: 0)
+        }
+        .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
     }
 }
 

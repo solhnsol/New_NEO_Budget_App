@@ -6,9 +6,11 @@ import NEOBudgetCore
 /// Where everything of one day goes on screen, decided from the layout engine's output and the shared axis. Pure geometry: no
 /// SwiftUI, so it is unit-tested, and the grid draws and hit-tests from the very same plan (what is drawn is what is touched).
 ///
-/// It decides nothing about policy. Which events show their inside transactions, which titles move to a header, which transaction
-/// lines overflow, and how overlapping events are indented, all come from `AdaptiveLayout`; this only turns them into rectangles. A
-/// day that the engine did not lay out (one sliding in during a swipe) is drawn in its plainest form by the same rules.
+/// Every coordinate comes from the axis as it is: an event's top and bottom are the axis' y of its start and end, a transaction's
+/// anchor is the axis' y of its time. What is *written* is decided by height alone, in `EventPresentation` (events) and by the room a
+/// row really has (transactions); nothing here depends on whether the day is moving, on how many events there are, or on a second
+/// kind of "compact" drawing. Which events show their inside transactions' kinds, how overlapping events are indented, which
+/// transactions the engine folded into an overflow, all still come from `AdaptiveLayout`.
 struct DayRenderPlan {
     /// What a transaction line says. Looked up from the day's timeline by transaction id.
     struct TransactionDisplay: Equatable {
@@ -23,13 +25,18 @@ struct DayRenderPlan {
     struct EventItem {
         let block: EventBlock
         let placement: EventPlacement?
+        /// Exactly from the axis: its start and end, never moved for text.
         let frame: CGRect
+        /// What is drawn: the frame, but never thinner than a line can be seen (centred on the same time span).
+        let drawnFrame: CGRect
         /// The frame a finger may hit: never shorter than a finger needs.
         let touchFrame: CGRect
         var title: DayContentLayout.TitlePlacement
-        /// The header above the start boundary, when the engine moved the title there. Same event, not part of its time.
+        /// What the height allows to be written (see `EventPresentation`).
+        let presentation: EventPresentation
+        /// The header above the start boundary: an auxiliary place for the title of the same event, only where it covers nothing.
         var header: CGRect?
-        /// False when the title is drawn in a header or in an overlap summary instead.
+        /// False when the title is not written inside the card (no room, or it is in the header).
         var showsTitleInCard: Bool
         /// Linked transactions inside the event's time, in the order the card shows them, and how many it shows / sums up.
         let insideRows: [AllocationItem]
@@ -39,23 +46,8 @@ struct DayRenderPlan {
         var titleMaxWidth: CGFloat?
         /// Where on the axis each shown inside transaction happened (absolute y), in the order of the rows.
         var insideAnchors: [CGFloat] = []
-        /// Too short for a title row but tall enough to hold its title in a line of its own: the card writes it inside, centred, smaller.
-        var isCompact = false
-        /// Drawn by a crowd's one card (see `Summary.segments`), not on its own.
-        var isGrouped = false
-    }
-
-    /// Three or more overlapping events: one line naming them all, with a way to pick each.
-    struct Summary {
-        let frame: CGRect
-        let items: [(id: BlockID, title: String)]
-        /// A crowd of events that cannot each be named at the room the axis gives them (a day sliding in): only how many, and the events
-        /// themselves stay in view as thin cards at their true times.
-        var countOnly = false
-        /// The calendar colour of each of its events, so a crowd of different colours is still readable at a glance.
-        var colors: [String?] = []
-        /// For a crowd: each event's colour over the part of the card (offset from its top, height) its time covers.
-        var segments: [(offset: CGFloat, height: CGFloat, colorHex: String?)] = []
+        /// Whether the start time has its place beside the title (the title and the time together fit the card's width).
+        var startTimeFits = true
     }
 
     struct LineItem {
@@ -66,9 +58,10 @@ struct DayRenderPlan {
         let linkedEventTitle: String?
         var frame: CGRect
         var touchFrame: CGRect
-        /// Where on the axis the transaction really happened. The row's text may sit elsewhere (stacked clear of another row, or lined up
-        /// with a title that is not drawn); its leader then bends from this point to the text.
+        /// Where on the axis the transaction really happened: the middle of its row, always.
         var anchorY: CGFloat? = nil
+        /// 0 … 1: how much of the row's text there is room for (it is written from the left as this grows). The dot at the time stays.
+        var reveal: CGFloat = 1
     }
 
     struct OverflowItem {
@@ -80,6 +73,7 @@ struct DayRenderPlan {
         let countsByKind: [KindCount]
         let amountTotals: [AmountSum]
         let showsAmountTotal: Bool
+        var reveal: CGFloat = 1
         /// The stable id to hand to a focus target.
         var focusTarget: FocusTarget { .overflow(overflowID: id, transactionIDs: members.map(\.transactionID)) }
     }
@@ -101,20 +95,22 @@ struct DayRenderPlan {
 
     /// Back to front.
     private(set) var events: [EventItem] = []
-    private(set) var summaries: [Summary] = []
     private(set) var lines: [LineItem] = []
     private(set) var overflows: [OverflowItem] = []
     private let conflicts: [[Candidate]]
     private let hitOrder: [BlockID]
 
     static let coveredEventSample = 24
+    /// The thinnest an event is ever drawn, however short its time is.
+    static let thinnestDrawn: CGFloat = 2
 
     init(
         timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: TimelineGeometry, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        settled: Bool = true, titleWidth: (String) -> CGFloat
+        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
     ) {
         let scale = max(0.5, textScale)
+        let metrics = metrics ?? .standard(scale: scale)
         let contentWidth = geometry.contentWidth(totalWidth: layoutWidth)
         let contentLeft = geometry.gutterWidth
         let blocks = timeline.blocks
@@ -128,196 +124,73 @@ struct DayRenderPlan {
             return layout.events.first { $0.key.role == role && $0.id == block.id.rawValue }
         }
         func overlap(_ block: EventBlock) -> EventOverlap? { placement(block)?.overlap ?? analysed[block.id.rawValue] }
-        // Which events lie on one another is judged by their real times. The engine counts an event as at least a quarter hour long (what is
-        // drawn), so a short event just before another would be called overlapping it and push it aside; on screen it is only the card's
-        // minimum that reaches over, which is cut back below instead.
+        // Which events lie on one another is judged by their real times (the engine counts an event as at least a quarter hour long).
         let realOverlap: [String: EventOverlap] = EventOverlapAnalysis.analyse(
             allocationDay.events.map {
                 AllocationEvent(id: $0.id, title: $0.title, startMinute: $0.startMinute, endMinute: byRealEnd[$0.id] ?? $0.endMinute, linked: $0.linked)
             }.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) }
         )
 
-        // How an event looks depends only on the room it has, never on whether anything is moving. A card is as tall as the axis makes it
-        // (its start and end are never moved to suit a minimum), and what does not fit in that height is cut back in steps:
-        //   a title row (≥ 19pt): the card as it is;
-        //   less (≥ 11pt): the same card, thin, with its title in one smaller line inside it and nothing else;
-        //   less than that: a sliver of the same card, its title taken out; where slivers follow one another they are named by one count.
-        // The selected or opened event keeps the size its handles are drawn for.
-        let incoming = role == nil || layout == nil || !settled
-        let trueMinimumHeight: CGFloat = 3
-        let titleRowHeight = (InlineAllocationPlan.titleHeight + 3) * scale
-        let compactHeight = 11 * scale
-
-        // Frames. An overlapping event keeps the full width, indented by at most one step; an inner one is also pulled in on the right.
+        // Frames. An event is exactly as tall as its time on the axis: nothing stretches it, nothing shortens it for the next event.
+        // Events that truly overlap overlap on screen, in the same column, each indented by at most one step (an inner one is also pulled
+        // in on the right). The selected or opened event keeps the size its handles are drawn for.
         var frames: [BlockID: CGRect] = [:]
         for block in blocks {
             let shape = realOverlap[block.id.rawValue] ?? overlap(block)
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
             var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
             if expanded != block.id, block.id != focused {
-                frame.size.height = max(trueMinimumHeight, geometry.y(minute: block.displayEndMinute) - geometry.y(minute: block.displayStartMinute) - 1)
+                // The real span (the display span is padded to a quarter hour for short events, which would stretch them).
+                frame.origin.y = geometry.y(minute: block.startMinute)
+                frame.size.height = max(0, geometry.y(minute: block.endMinute) - frame.origin.y)
             }
             frames[block.id] = frame
-        }
-        // A card never runs on over an event that begins after it ends, and two events with a gap in time never look joined: it stops 4pt
-        // short of the next one's start (at most that much above its own true end, never below 3pt).
-        for block in blocks where expanded != block.id {
-            guard var frame = frames[block.id], block.id != focused else { continue }
-            let realEnd = max(block.endMinute, block.startMinute + 1)
-            let nextTops = blocks.compactMap { other -> CGFloat? in
-                guard other.id != block.id, other.startMinute >= realEnd, let top = frames[other.id]?.minY, top > frame.minY + 0.5 else { return nil }
-                return top
-            }
-            guard let nextTop = nextTops.min(), frame.maxY > nextTop - 4 else { continue }
-            frame.size.height = max(trueMinimumHeight, nextTop - frame.minY - 4)
-            frames[block.id] = frame
-        }
-        // Events that start within a title row of one another and share time cannot be stacked without one's edge crossing the other's title:
-        // they go side by side, each in its own lane of the column (every other overlap keeps its indent).
-        do {
-            let movable = blocks.filter { $0.id != expanded && $0.id != focused && frames[$0.id] != nil }
-                .sorted { (frames[$0.id]?.minY ?? 0, -(frames[$0.id]?.maxY ?? 0), $0.id) < (frames[$1.id]?.minY ?? 0, -(frames[$1.id]?.maxY ?? 0), $1.id) }
-            var components: [[EventBlock]] = []
-            var bottom: CGFloat = -.infinity
-            for block in movable {
-                guard let frame = frames[block.id] else { continue }
-                if components.isEmpty || frame.minY >= bottom { components.append([block]); bottom = frame.maxY } else { components[components.count - 1].append(block); bottom = max(bottom, frame.maxY) }
-            }
-            let titleRow = (InlineAllocationPlan.titleHeight + 3) * scale
-            for component in components where component.count >= 2 {
-                let crowdedStarts = component.enumerated().contains { index, block in
-                    guard let top = frames[block.id]?.minY else { return false }
-                    return component.dropFirst(index + 1).contains { other in
-                        guard let otherTop = frames[other.id]?.minY, let frame = frames[block.id] else { return false }
-                        return otherTop - top < titleRow && otherTop < frame.maxY - 0.5
-                    }
-                }
-                guard crowdedStarts else { continue }
-                var laneEnds: [CGFloat] = []
-                var lanes: [BlockID: Int] = [:]
-                for block in component {
-                    guard let frame = frames[block.id] else { continue }
-                    if let lane = laneEnds.firstIndex(where: { $0 <= frame.minY }) { lanes[block.id] = lane; laneEnds[lane] = frame.maxY } else { lanes[block.id] = laneEnds.count; laneEnds.append(frame.maxY) }
-                }
-                // Two lanes are still wide enough for a title each; three or more at one moment keep the stacked indent and the one summary.
-                guard laneEnds.count == 2 else { continue }
-                let count = 2
-                let base = geometry.blockFrame(component[0], totalWidth: layoutWidth)
-                let gap: CGFloat = 3
-                let width = (base.width - gap * CGFloat(count - 1)) / CGFloat(count)
-                for block in component {
-                    guard var frame = frames[block.id] else { continue }
-                    let lane = min(lanes[block.id] ?? 0, count - 1)
-                    frame.origin.x = base.minX + CGFloat(lane) * (width + gap)
-                    frame.size.width = width
-                    frames[block.id] = frame
-                }
-            }
         }
         let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // Which events are compact (title inside, smaller) and which are slivers; runs of slivers are one count.
-        var compactIDs = Set<BlockID>()
-        var slivers: [EventBlock] = []
-        for block in blocks where block.id != focused && block.id != expanded {
-            guard let frame = frames[block.id], placement(block)?.header == nil else { continue }
-            if frame.height < compactHeight { slivers.append(block) } else if frame.height < titleRowHeight { compactIDs.insert(block.id) }
+        // How each event looks, from its height alone.
+        var presentations: [BlockID: EventPresentation] = [:]
+        var insideAll: [BlockID: [AllocationItem]] = [:]
+        for block in blocks {
+            let inside = Self.insideTransactions(of: block)
+            insideAll[block.id] = inside
+            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: inside.count, metrics: metrics)
         }
-        slivers.sort { (frames[$0.id]?.minY ?? 0, $0.id) < (frames[$1.id]?.minY ?? 0, $1.id) }
-        var crowdRuns: [[EventBlock]] = []
-        var runBottom: CGFloat = -.infinity
-        for block in slivers {
-            guard let frame = frames[block.id] else { continue }
-            if crowdRuns.isEmpty || frame.minY > runBottom + titleRowHeight {
-                crowdRuns.append([block])
-                runBottom = frame.maxY
-            } else {
-                crowdRuns[crowdRuns.count - 1].append(block)
-                runBottom = max(runBottom, frame.maxY)
-            }
-        }
-        let crowdIDs = Set(crowdRuns.filter { $0.count >= 2 }.flatMap { $0.map(\.id) })
-        // A sliver on its own writes its title below itself, which only works if that row is free: where another event begins within the title
-        // row the title would land on it (or push its title aside), so the sliver is left without one until it has room.
-        var titlelessIDs = Set<BlockID>()
-        for run in crowdRuns where run.count == 1 {
-            guard let block = run.first, let frame = frames[block.id] else { continue }
-            let blocked = blocks.contains { other in
-                guard other.id != block.id, let top = frames[other.id]?.minY else { return false }
-                return top > frame.minY + 0.5 && top < frame.minY + titleRowHeight
-            }
-            if blocked { titlelessIDs.insert(block.id) }
-        }
-        let titleContent = (compactIDs.isEmpty && crowdIDs.isEmpty && titlelessIDs.isEmpty) ? content : DayContentLayout(blocks: blocks.filter { !compactIDs.contains($0.id) && !crowdIDs.contains($0.id) && !titlelessIDs.contains($0.id) })
+
+        // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.
+        let titled = blocks.filter { ($0.id == focused || $0.id == expanded) || (presentations[$0.id]?.showsTitle ?? false) }
+        let titleContent = titled.count == blocks.count ? content : DayContentLayout(blocks: titled)
         let places = titleContent.titlePlacements(
-            top: { geometry.y(minute: byID[$0]?.displayStartMinute ?? 0) },
-            bottom: { geometry.y(minute: byID[$0]?.displayEndMinute ?? 0) },
+            top: { frames[$0]?.minY ?? 0 },
+            bottom: { frames[$0]?.maxY ?? 0 },
             left: { (frames[$0]?.minX ?? 0) + EventTitleLayer.horizontalPadding },
             right: { (frames[$0]?.maxX ?? 0) - EventTitleLayer.horizontalPadding },
             width: { titleWidth(byID[$0]?.title ?? "") },
             columnRight: contentLeft + contentWidth - EventTitleLayer.horizontalPadding,
-            minimumHeight: trueMinimumHeight, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
+            minimumHeight: 1, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
             titlesOnly: true
         )
-
-        // Overlap groups of three or more: their titles become one summary at the group's first card.
-        var hiddenByGroup = Set<BlockID>()
-        var summaries: [Summary] = []
-        var groupMembers: [Int: [EventBlock]] = [:]
-        for block in blocks where !compactIDs.contains(block.id) && !crowdIDs.contains(block.id) {
-            if let shape = overlap(block), shape.summarisesTitles { groupMembers[shape.groupIndex, default: []].append(block) }
-        }
-        for index in groupMembers.keys.sorted() {
-            let all = (groupMembers[index] ?? []).sorted { content.order.firstIndex(of: $0.id) ?? 0 < content.order.firstIndex(of: $1.id) ?? 0 }
-            // Only events whose titles could not be kept apart by moving them (and the ones they would have landed on) are summarised;
-            // a long event that merely holds the others, or events spread over the day, keep their own titles.
-            let near = parameters.titleRow * 2 * scale
-            let moved = all.filter { (places[$0.id] ?? .init()) != DayContentLayout.TitlePlacement() }
-            let members = all.filter { member in
-                moved.contains { $0.id == member.id } || moved.contains { abs((frames[$0.id]?.minY ?? 0) - (frames[member.id]?.minY ?? 0)) < near }
-            }
-            guard members.count >= 3, let first = members.first, let frame = frames[first.id] else { continue }
-            let union = members.compactMap { frames[$0.id] }.reduce(frame) { $0.union($1) }
-            summaries.append(Summary(
-                frame: CGRect(x: union.minX, y: frame.minY, width: union.width, height: parameters.titleRow * scale),
-                items: members.map { ($0.id, $0.title) }
-            ))
-            for member in members where member.id != focused && member.id != expanded { hiddenByGroup.insert(member.id) }
-        }
-
-        // Slivers that follow one another are named by one count, written over them in the card's own text place, with a dot per calendar
-        // colour; the cards themselves stay, thin, at their true times.
-        for run in crowdRuns where run.count >= 2 {
-            let union = run.compactMap { frames[$0.id] }.reduce(CGRect.null) { $0.union($1) }
-            let height = 14 * scale
-            // One card stands for the run: its left edge is a stripe of each event's colour over the time that event covers, and its text is
-            // the count. The events inside are not drawn on top of it.
-            let card = CGRect(x: union.minX, y: union.minY, width: union.width, height: max(union.height, 16 * scale))
-            summaries.append(Summary(
-                frame: card, items: run.map { ($0.id, $0.title) }, countOnly: true, colors: run.map(\.calendarColorHex),
-                segments: run.compactMap { block in frames[block.id].map { ($0.minY - card.minY, $0.height, block.calendarColorHex) } }
-            ))
-            for member in run { hiddenByGroup.insert(member.id) }
-        }
 
         // Events, back to front.
         let ordered = content.hitOrder(focused: focused ?? expanded).reversed()
         var eventItems: [EventItem] = []
         for id in ordered {
-            guard let block = byID[id], let frame = frames[id] else { continue }
-            let isCompact = compactIDs.contains(id)
+            guard let block = byID[id], let frame = frames[id], let presentation = presentations[id] else { continue }
             let placed = placement(block)
-            var header: CGRect?
-            if let spec = placed?.header, expanded != block.id {
-                header = CGRect(x: frame.minX, y: frame.minY - spec.height, width: frame.width, height: spec.height)
+            let inside = AllocationOrdering.byAmountDescending(insideAll[id] ?? [])
+            let shown = presentation.shownRows
+            let place = places[id] ?? .init()
+            var drawn = frame
+            if drawn.height < Self.thinnestDrawn {
+                drawn = CGRect(x: frame.minX, y: frame.midY - Self.thinnestDrawn / 2, width: frame.width, height: Self.thinnestDrawn)
             }
-            let inside = (isCompact || crowdIDs.contains(id)) ? (rows: [AllocationItem](), shown: 0, hidden: 0) : Self.insideAllocations(of: block, placement: placed, blockHeight: frame.height)
-            let touchMissing = max(0, parameters.minimumTouchHeight - frame.height)
+            let touchMissing = max(0, parameters.minimumTouchHeight - drawn.height)
+            let titleRoom = titleWidth(block.title) + 36 * scale
             eventItems.append(EventItem(
-                block: block, placement: placed, frame: frame,
-                touchFrame: frame.insetBy(dx: 0, dy: -touchMissing / 2), title: places[id] ?? .init(),
-                header: header, showsTitleInCard: header == nil && !hiddenByGroup.contains(id) && !isCompact && !titlelessIDs.contains(id),
-                insideRows: inside.rows, shownRows: inside.shown, hiddenRows: inside.hidden,
+                block: block, placement: placed, frame: frame, drawnFrame: drawn,
+                touchFrame: drawn.insetBy(dx: 0, dy: -touchMissing / 2), title: place, presentation: presentation,
+                header: nil, showsTitleInCard: presentation.showsTitle || id == focused,
+                insideRows: inside, shownRows: shown, hiddenRows: presentation.hiddenRows,
                 titleMaxWidth: {
                     switch placed?.titleResolution {
                     case let .abbreviated(maxWidth)?: return maxWidth
@@ -325,17 +198,21 @@ struct DayRenderPlan {
                     default: return nil
                     }
                 }(),
-                insideAnchors: inside.rows.prefix(inside.shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
-                isCompact: isCompact, isGrouped: crowdIDs.contains(id)
+                insideAnchors: inside.prefix(shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
+                startTimeFits: place.dx == 0 && place.dy == 0 && !place.overflows && frame.width >= titleRoom
             ))
         }
 
-        // Transaction lines and overflows, stacked so that none sits on another.
+        // Transactions. Every one is written at the time it happened (its row's middle is the axis' y of that minute), and only where a row
+        // really has room: a row is written once there is a row's height between it and the one before it in time, whether or not that one
+        // is written (so what is written only ever grows with the room, and never flickers); until then its dot stays, and so does its touch
+        // area, and its text comes in from the left as the room appears. The engine's overflow cards are the one summary there is; none is made here.
         struct Unit {
             let anchor: Int
-            let height: CGFloat
-            let make: (CGFloat, CGFloat, CGFloat) -> Void        // center y, x, width
             let id: String
+            let height: CGFloat
+            let isOverflow: Bool
+            let index: Int
         }
         let displays = Self.displays(of: timeline)
         var lineItems: [LineItem] = []
@@ -343,16 +220,16 @@ struct DayRenderPlan {
         let lineWidth = min(contentWidth, max(parameters.minimumLineWidth, contentWidth * parameters.lineWidthShare))
         let lineX = contentLeft + contentWidth - lineWidth - geometry.columnSpacing
         let gap = parameters.lineGap * scale
+        let airInset = 4 * scale
+        let ramp = metrics.ramp
 
-        struct Placed { let anchor: Int; let id: String; let height: CGFloat; let kind: Int; let index: Int }
-        var placedUnits: [Placed] = []
         var sourceLines: [TransactionLine] = []
         var sourceOverflows: [TransactionOverflow] = []
         if let role, let layout {
             sourceLines = layout.lines.filter { $0.role == role }
             sourceOverflows = layout.overflows.filter { $0.role == role }
         } else {
-            // A day the engine did not lay out: every transaction is a line to begin with.
+            // A day the engine did not lay out: every transaction is a line, at its time.
             for marker in timeline.markers {
                 sourceLines.append(TransactionLine(
                     key: ItemKey(role: .secondary, kind: .transactionLink, id: marker.transactionID.rawValue), role: .secondary,
@@ -362,75 +239,51 @@ struct DayRenderPlan {
                 ))
             }
         }
-        // The same rule as for events: what is written depends on the room the axis gives it right now. Where the engine's decision was made
-        // for another axis (a day it did not lay out, or an axis still changing), transactions that would be closer together than a row
-        // are one summary, not rows pushed apart down the day.
-        if incoming {
-            let pitch = (parameters.transactionRow + parameters.lineGap) * scale
-            let flat: [TransactionLine] = sourceLines + sourceOverflows.flatMap { overflow in
-                overflow.members.map {
-                    TransactionLine(
-                        key: ItemKey(role: overflow.role, kind: .transactionLink, id: $0.transactionID), role: overflow.role, transactionID: $0.transactionID,
-                        minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits, link: $0.link, isPartlyLinked: false
-                    )
-                }
-            }
-            var clusters: [[TransactionLine]] = []
-            var lastY: CGFloat = -.infinity
-            for line in flat.sorted(by: { ($0.minute, $0.transactionID) < ($1.minute, $1.transactionID) }) {
-                let y = geometry.y(minute: line.minute)
-                if clusters.isEmpty || y - lastY >= pitch { clusters.append([line]) } else { clusters[clusters.count - 1].append(line) }
-                lastY = y
-            }
-            sourceLines = clusters.filter { $0.count == 1 }.map { $0[0] }
-            sourceOverflows = clusters.filter { $0.count > 1 }.map { cluster in
-                let members = cluster.map { OverflowMember(transactionID: $0.transactionID, minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits, link: $0.link) }
-                let totals = AmountSum.totals(of: cluster.map { AllocationTransaction(id: $0.transactionID, minute: $0.minute, kind: $0.kind, currency: $0.currency, minorUnits: $0.minorUnits) })
-                let kinds = Dictionary(grouping: cluster, by: \.kind).map { KindCount(kind: $0.key, count: $0.value.count) }.sorted { $0.kind < $1.kind }
-                return TransactionOverflow(
-                    id: "overflow-\(cluster[0].minute)-\(cluster[0].transactionID)", role: cluster[0].role, members: members,
-                    startMinute: cluster.first?.minute ?? 0, endMinute: cluster.last?.minute ?? 0, countsByKind: kinds, amountTotals: totals,
-                    showsAmountTotal: totals.count == 1, requiredHeight: parameters.overflowCard * scale
-                )
-            }
-        }
-        for (i, line) in sourceLines.enumerated() { placedUnits.append(Placed(anchor: line.minute, id: line.transactionID, height: parameters.transactionRow * scale, kind: 0, index: i)) }
+        var units: [Unit] = []
+        for (i, line) in sourceLines.enumerated() { units.append(Unit(anchor: line.minute, id: line.transactionID, height: parameters.transactionRow * scale, isOverflow: false, index: i)) }
         for (i, overflow) in sourceOverflows.enumerated() {
-            placedUnits.append(Placed(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, height: overflow.requiredHeight, kind: 1, index: i))
+            units.append(Unit(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, height: overflow.requiredHeight, isOverflow: true, index: i))
         }
-        placedUnits.sort { ($0.anchor, $0.id) < ($1.anchor, $1.id) }
-        var previousCenter: CGFloat?
-        var previousHeight: CGFloat = 0
-        for unit in placedUnits {
-            var center = geometry.y(minute: unit.anchor)
-            if let previousCenter { center = max(center, previousCenter + (previousHeight + unit.height) / 2 + gap) }
-            // A row never lands on the name of a crowd of events: it moves below it (its leader bends back to the time it happened).
-            for _ in 0..<4 {
-                guard let label = summaries.first(where: { abs(center - $0.frame.midY) < (unit.height + $0.frame.height) / 2 }) else { break }
-                center = label.frame.maxY + unit.height / 2 + gap
+        units.sort { ($0.anchor, $0.id) < ($1.anchor, $1.id) }
+
+        // Where an event's title is written, a row keeps to the right part the engine left it; if even that meets the title, its text waits.
+        func titleRects(wide: Bool) -> [CGRect] {
+            eventItems.filter { $0.header == nil && $0.showsTitleInCard && $0.presentation.showsTitle }.map { item in
+                let width = wide ? item.frame.width : min(titleWidth(item.block.title), item.titleMaxWidth ?? .infinity)
+                return CGRect(x: item.frame.minX + item.title.dx, y: item.frame.minY + item.title.dy, width: wide ? width : width + EventTitleLayer.horizontalPadding, height: (EventTitleLayer.rowHeight + 2) * scale)
             }
-            previousCenter = center
-            previousHeight = unit.height
-            // A row writes from the day's left edge, like the text of an event, unless the title of an event is on its row: then it keeps to
-            // the right part the engine left it, so the two never print over one another.
+        }
+        let wideTitleRows = titleRects(wide: true)
+        let realTitleRows = titleRects(wide: false)
+        var lastCenter: CGFloat?
+        var lastText: CGFloat = 0
+        for unit in units {
+            let center = geometry.y(minute: unit.anchor)
+            let text = unit.height - 2 * airInset
+            var reveal: CGFloat = 1
+            if let lastCenter, !unit.isOverflow {
+                let need = (lastText + text) / 2 + gap
+                reveal = min(1, max(0, (center - lastCenter - need) / max(0.001, ramp)))
+            }
             var frame = CGRect(x: lineX, y: center - unit.height / 2, width: lineWidth, height: unit.height)
-            let rowText = frame.insetBy(dx: 0, dy: 4 * scale)
-            let titleRows = eventItems.filter { $0.header == nil && $0.showsTitleInCard }.map { CGRect(x: $0.frame.minX, y: $0.frame.minY, width: $0.frame.width, height: (EventTitleLayer.rowHeight + 2) * scale) }
-                + eventItems.compactMap(\.header) + summaries.map(\.frame)
-            if !titleRows.contains(where: { $0.intersects(rowText) }) {
+            if !wideTitleRows.contains(where: { $0.intersects(frame.insetBy(dx: 0, dy: airInset)) }) {
                 frame = CGRect(x: contentLeft, y: frame.minY, width: frame.maxX - contentLeft, height: frame.height)
+            } else if realTitleRows.contains(where: { $0.intersects(frame.insetBy(dx: 0, dy: airInset)) }) {
+                reveal = 0
             }
+            lastCenter = center
+            lastText = text
             let missing = max(0, parameters.minimumTouchHeight - unit.height)
             let touch = frame.insetBy(dx: 0, dy: -missing / 2)
-            if unit.kind == 0 {
+            if !unit.isOverflow {
                 let line = sourceLines[unit.index]
                 let linkTitle = line.link.flatMap { link in blocks.first { $0.id.rawValue == link.eventID }?.title }
-                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: linkTitle, frame: frame, touchFrame: touch, anchorY: geometry.y(minute: unit.anchor)))
+                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: linkTitle, frame: frame, touchFrame: touch, anchorY: center, reveal: reveal))
             } else {
                 let overflow = sourceOverflows[unit.index]
                 overflowItems.append(OverflowItem(
-                    id: overflow.id, frame: frame, touchFrame: touch, anchorY: geometry.y(minute: unit.anchor), members: overflow.members, countsByKind: overflow.countsByKind,
-                    amountTotals: overflow.amountTotals, showsAmountTotal: overflow.showsAmountTotal
+                    id: overflow.id, frame: frame, touchFrame: touch, anchorY: center, members: overflow.members, countsByKind: overflow.countsByKind,
+                    amountTotals: overflow.amountTotals, showsAmountTotal: overflow.showsAmountTotal, reveal: reveal
                 ))
             }
         }
@@ -451,52 +304,48 @@ struct DayRenderPlan {
             }
         }
 
-        // The engine shortens a title that could meet a line's text; here it is only kept short if a drawn line or overflow really is on the
-        // title's row, so a title is never cut for a line that is below it.
-        let drawnLines = (lineItems.map(\.frame) + overflowItems.map(\.frame)).map { $0.insetBy(dx: 0, dy: 4 * scale) }      // the text, not the row's air
-        var hiddenTitleRows: [CGRect] = []
+        // The engine shortens a title that could meet a line's text; it stays short only where a written line really is on the title's row.
+        let drawnLines = (lineItems.filter { $0.reveal > 0 }.map(\.frame) + overflowItems.map(\.frame)).map { $0.insetBy(dx: 0, dy: airInset) }
         eventItems = eventItems.map { item in
             guard item.titleMaxWidth != nil else { return item }
             let row = CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (InlineAllocationPlan.titleHeight + 2) * scale)
             guard drawnLines.contains(where: { $0.intersects(row) }) else { var copy = item; copy.titleMaxWidth = nil; return copy }
-            // A transaction is on the title and there is no header to move it to: the transaction is what is shown, and the title is left out.
-            var copy = item
-            copy.showsTitleInCard = false
-            hiddenTitleRows.append(CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: (EventTitleLayer.rowHeight + 2) * scale))
-            return copy
+            return item
         }
-        // Where a title is left out, the transaction takes the title's row and is written there, neatly under the card's top edge; its leader
-        // bends from the moment it happened to that row.
-        func lineUp(_ frame: CGRect, _ touch: CGRect) -> (CGRect, CGRect) {
-            guard let row = hiddenTitleRows.first(where: { $0.intersects(frame.insetBy(dx: 0, dy: 4 * scale)) }) else { return (frame, touch) }
-            let dy = (row.minY + 11 * scale) - frame.midY
-            return (frame.offsetBy(dx: 0, dy: dy), touch.offsetBy(dx: 0, dy: dy))
-        }
-        for index in lineItems.indices { (lineItems[index].frame, lineItems[index].touchFrame) = lineUp(lineItems[index].frame, lineItems[index].touchFrame) }
-        for index in overflowItems.indices { (overflowItems[index].frame, overflowItems[index].touchFrame) = lineUp(overflowItems[index].frame, overflowItems[index].touchFrame) }
-        // A title with no room in its card goes in a small header tab above the card when that place is certainly free: nothing else (another
-        // event or its header, a crowd's card, a transaction row) is there, and it is inside the day. Otherwise the title stays out, as before.
-        var occupied: [CGRect] = eventItems.map(\.frame) + eventItems.compactMap(\.header) + summaries.map(\.frame)
-            + lineItems.map(\.frame) + overflowItems.map(\.frame)
+
+        // A header is an auxiliary place for an event's title, attached to the same event: the engine's, or a small tab for a card too
+        // thin to write in. Only where it covers nothing; a line (E0) never gets one.
+        var occupied: [CGRect] = eventItems.map(\.drawnFrame) + lineItems.filter { $0.reveal > 0 }.map(\.frame) + overflowItems.map(\.frame)
         let headerHeight = parameters.headerRow * scale
         for index in eventItems.indices.sorted(by: { eventItems[$0].frame.minY < eventItems[$1].frame.minY }) {
             let item = eventItems[index]
-            guard titlelessIDs.contains(item.block.id), item.header == nil, item.block.id != focused, item.block.id != expanded else { continue }
-            let width = min(item.frame.width, titleWidth(item.block.title) + 24)
-            let rect = CGRect(x: item.frame.minX, y: item.frame.minY - headerHeight, width: width, height: headerHeight)
-            guard rect.minY >= 0, !occupied.contains(where: { $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) && $0 != item.frame }) else { continue }
-            // Its own card is directly below the tab, so only the card's own frame may touch it.
-            guard !occupied.contains(where: { $0 != item.frame && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
+            guard item.presentation.level > .line, item.block.id != expanded else { continue }
+            let own = item.drawnFrame
+            var rect: CGRect?
+            if let spec = item.placement?.header { rect = CGRect(x: own.minX, y: own.minY - spec.height, width: own.width, height: spec.height) }
+            else if !item.presentation.showsTitle, item.block.id != focused {
+                rect = CGRect(x: own.minX, y: own.minY - headerHeight, width: min(own.width, titleWidth(item.block.title) + 24), height: headerHeight)
+            }
+            guard let rect, rect.minY >= 0 else { continue }
+            guard !occupied.contains(where: { $0 != own && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
             eventItems[index].header = rect
             eventItems[index].showsTitleInCard = false
             occupied.append(rect)
         }
         events = eventItems
-        self.summaries = summaries
         lines = lineItems
         overflows = overflowItems
         conflicts = conflictSets
         hitOrder = content.hitOrder(focused: focused ?? expanded)
+    }
+
+    /// The linked transactions that happened within the event's own time, whatever the card has room to show.
+    static func insideTransactions(of block: EventBlock) -> [AllocationItem] {
+        block.allocations.filter { item in
+            guard item.occursOnSelectedDay else { return false }
+            let minute = Int((item.occurredAtUnixMilliseconds - (block.startUnixMilliseconds - Int64(block.startMinute) * 60_000)) / 60_000)
+            return minute >= block.startMinute && minute < max(block.endMinute, block.startMinute + 1)
+        }
     }
 
     // MARK: Hit testing
@@ -511,7 +360,7 @@ struct DayRenderPlan {
         if let line = lines.first(where: { $0.frame.contains(point) }) { return covered(by: .line(line.id), at: point) }
         for id in hitOrder {
             guard let item = events.first(where: { $0.block.id == id }) else { continue }
-            if item.frame.contains(point) || (item.header?.contains(point) ?? false) { return .event(id) }
+            if item.drawnFrame.contains(point) || (item.header?.contains(point) ?? false) { return .event(id) }
         }
         // Nothing drawn here: the touch areas decide.
         var near: [Candidate] = []
@@ -527,7 +376,7 @@ struct DayRenderPlan {
 
     private func covered(by top: Candidate, at point: CGPoint) -> Hit {
         // An event the lines leave no way to touch is offered together with the line, so it can still be chosen.
-        let hidden = events.filter { $0.frame.contains(point) && !isReachable($0) }.map { Candidate.event($0.block.id) }
+        let hidden = events.filter { $0.drawnFrame.contains(point) && !isReachable($0) }.map { Candidate.event($0.block.id) }
         let met = conflicts.first { $0.contains(top) }.map { $0.filter { $0 != top } } ?? []
         let others = hidden + met
         return others.isEmpty ? Self.hit(of: top) : .choose([top] + others)
@@ -535,7 +384,7 @@ struct DayRenderPlan {
 
     /// Whether some part of the event can be touched without touching a line or overflow.
     private func isReachable(_ item: EventItem) -> Bool {
-        let frame = item.frame
+        let frame = item.drawnFrame
         let steps = Self.coveredEventSample
         for row in 0...3 {
             for column in 0...steps {
@@ -555,21 +404,6 @@ struct DayRenderPlan {
     }
 
     // MARK: From the timeline
-
-    /// The linked transactions that happened within the event's time, in the order its card shows them, and how many it shows.
-    static func insideAllocations(of block: EventBlock, placement: EventPlacement?, blockHeight: CGFloat) -> (rows: [AllocationItem], shown: Int, hidden: Int) {
-        let inside = block.allocations.filter { item in
-            guard item.occursOnSelectedDay else { return false }
-            let minute = Int((item.occurredAtUnixMilliseconds - (block.startUnixMilliseconds - Int64(block.startMinute) * 60_000)) / 60_000)
-            return minute >= block.startMinute && minute < max(block.endMinute, block.startMinute + 1)
-        }
-        let ordered = AllocationOrdering.byAmountDescending(inside)
-        guard let placement else {
-            let plan = InlineAllocationPlan.make(allocationCount: ordered.count, blockHeight: blockHeight, showsTime: false)
-            return (ordered, plan.shown, ordered.count - plan.shown)
-        }
-        return (ordered, min(placement.shownInsideRows, ordered.count), placement.hiddenInsideCount)
-    }
 
     /// What each transaction of the day says: its name and amount, from the timeline's own records.
     static func displays(of timeline: DayTimeline) -> [String: TransactionDisplay] {

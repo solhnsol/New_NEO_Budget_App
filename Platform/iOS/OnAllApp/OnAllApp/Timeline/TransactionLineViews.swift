@@ -34,6 +34,8 @@ struct LeaderMark: View {
     let height: CGFloat
     var dashed = false
     let scale: CGFloat
+    /// 0 … 1: how much of the line out to the text there is (the dot at the time is always there).
+    var lineOpacity: CGFloat = 1
 
     var body: some View {
         let s = scale
@@ -47,7 +49,7 @@ struct LeaderMark: View {
                 path.addLine(to: CGPoint(x: bendX, y: end.y))
                 path.addLine(to: end)
             }
-            .stroke(Color.secondary.opacity(0.6), style: StrokeStyle(lineWidth: 0.75, lineJoin: .round, dash: dashed ? [2, 2] : []))
+            .stroke(Color.secondary.opacity(0.6 * lineOpacity), style: StrokeStyle(lineWidth: 0.75, lineJoin: .round, dash: dashed ? [2, 2] : []))
             Circle().fill(Color.secondary.opacity(0.8))
                 .frame(width: LeaderLayout.dotSize * s, height: LeaderLayout.dotSize * s)
                 .position(start)
@@ -101,9 +103,10 @@ struct TransactionLineView: View {
         }
         .padding(.trailing, 6)
         .halo(overEvent)
+        .revealed(item.reveal)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .overlay(alignment: .topLeading) {
-            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale)
+            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale, lineOpacity: item.reveal)
         }
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
@@ -218,59 +221,25 @@ struct EventHeaderView: View {
     }
 }
 
-/// Three or more events on top of one another: one line naming them all, each reachable from it.
-struct OverlapSummaryView: View {
-    let summary: DayRenderPlan.Summary
-    let scale: CGFloat
-    let onSelect: (BlockID) -> Void
+/// A row of text coming in from the left: the part of it up to `progress` of its width is shown, fading in with it. The text keeps its
+/// size and spacing throughout; only how much of it is uncovered changes.
+private struct RevealMask: ViewModifier {
+    let progress: CGFloat
 
-    var body: some View {
-        Menu {
-            ForEach(Array(summary.items.enumerated()), id: \.offset) { _, item in
-                Button(item.title) { onSelect(item.id) }
-            }
-        } label: {
-            if summary.countOnly {
-                crowdCard
-            } else {
-                HStack(spacing: 3) {
-                    Image(systemName: "square.on.square").font(.system(size: 9 * scale))
-                    Text("일정 \(summary.items.count)개 · " + summary.items.map(\.title).joined(separator: ", "))
-                        .font(.system(size: 11 * scale, weight: .semibold)).lineLimit(1)
-                    Spacer(minLength: 0)
-                }
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 6)
-                .frame(width: summary.frame.width, height: summary.frame.height, alignment: .leading)
+    func body(content: Content) -> some View {
+        if progress >= 1 {
+            content
+        } else {
+            content.opacity(progress).mask(alignment: .leading) {
+                GeometryReader { proxy in Rectangle().frame(width: proxy.size.width * progress) }
             }
         }
-        .tint(Color.primary)
-        .offset(x: summary.frame.minX, y: summary.frame.minY)
-        .accessibilityLabel((summary.countOnly ? "일정 " : "겹치는 일정 ") + "\(summary.items.count)개: " + summary.items.map(\.title).joined(separator: ", "))
-        .accessibilityHint("일정을 고릅니다")
-    }
-
-    /// One card for a run of events with no room each: a neutral card whose left edge shows each event's colour over its own time, and the count.
-    private var crowdCard: some View {
-        let shape = RoundedRectangle(cornerRadius: 6)
-        return ZStack(alignment: .topLeading) {
-            shape.fill(Color(.systemBackground))
-            shape.fill(Color.secondary.opacity(0.16))
-            ForEach(Array(summary.segments.enumerated()), id: \.offset) { _, segment in
-                Rectangle().fill(Color(hex: segment.colorHex) ?? .accentColor)
-                    .frame(width: 3, height: max(1.5, segment.height))
-                    .offset(y: segment.offset)
-            }
-            Text("일정 \(summary.items.count)개").font(.system(size: 10 * scale, weight: .semibold)).lineLimit(1)
-                .padding(.leading, 9).frame(maxHeight: .infinity, alignment: .center)
-        }
-        .frame(width: summary.frame.width, height: summary.frame.height, alignment: .topLeading)
-        .clipShape(shape)
-        .overlay(shape.stroke(Color.secondary.opacity(0.4), lineWidth: 1))
     }
 }
 
 extension View {
+    func revealed(_ progress: CGFloat) -> some View { modifier(RevealMask(progress: min(1, max(0, progress)))) }
+
     /// A thin outline of the page colour around text that sits over something coloured, so it stays readable without a background.
     @ViewBuilder
     func halo(_ on: Bool) -> some View {

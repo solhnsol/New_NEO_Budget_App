@@ -7,11 +7,21 @@ struct OnAllApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("-render-gallery") {
+                    RenderGallery()
+                } else if let model {
+                    DayTimelineScreen(model: model)
+                } else {
+                    ProgressView()
+                }
+                #else
                 if let model {
                     DayTimelineScreen(model: model)
                 } else {
                     ProgressView()
                 }
+                #endif
             }
             .task {
                 guard model == nil else { return }

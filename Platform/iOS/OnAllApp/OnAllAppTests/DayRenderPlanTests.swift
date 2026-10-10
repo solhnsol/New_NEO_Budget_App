@@ -74,19 +74,29 @@ private func item(_ r: Rendered, _ title: String) throws -> DayRenderPlan.EventI
 // MARK: The plan puts things where the engine's axis says
 
 @Test func eventCardsAreExactlyWhereTheSharedAxisPutsTheirTimes() throws {
-    let r = render(try timeline([event(0, "회의", 600, 720), event(1, "점심", 780, 840)]))
+    // Policy change: no 1pt seam is taken off the end, and no minimum height or "stop short of the next event" is applied. The card spans
+    // the axis' y of its real start to the axis' y of its real end.
+    let r = render(try timeline([event(0, "회의", 600, 720), event(1, "점심", 780, 840), event(2, "짧음", 900, 905)]))
     for placed in r.plan.events {
-        #expect(placed.frame.minY == r.geometry.y(minute: placed.block.displayStartMinute))
-        #expect(abs(placed.frame.maxY - r.geometry.y(minute: placed.block.displayEndMinute)) <= 1 || placed.frame.height == r.geometry.minimumBlockHeight)
+        #expect(placed.frame.minY == r.geometry.y(minute: placed.block.startMinute))
+        #expect(abs(placed.frame.maxY - r.geometry.y(minute: placed.block.endMinute)) < 0.001)
     }
 }
 
-@Test func aTransactionLineSitsAtItsTimeAndNeverOnAnotherLine() throws {
+@Test func aTransactionLineSitsAtItsTimeAndItsTextIsNeverWrittenOnAnotherLine() throws {
+    // Policy change: rows are no longer pushed down the day to make room. Each stays at its time; where the text of the next would land on
+    // the previous one it is not written (its dot and touch area stay) and comes in as the room appears.
     let many = try (0..<8).map { try spend("t\($0)", minute: 700 + ($0 / 2)) }        // pairs at the same minute
     let r = render(try timeline([event(0, "회의", 600, 660)], many), viewport: 5_000)
-    let lines = r.plan.lines.sorted { $0.frame.minY < $1.frame.minY }
-    #expect(lines.count == 8)
-    for (above, below) in zip(lines, lines.dropFirst()) { #expect(above.frame.maxY <= below.frame.minY + 0.01) }          // no two lines on one another
+    let lines = r.plan.lines.sorted { ($0.frame.minY, $0.id) < ($1.frame.minY, $1.id) }
+    #expect(lines.count == 8)                                                          // none is dropped
+    for line in lines {
+        let minute = try #require(r.layout.lines.first { $0.transactionID == line.id }?.minute)
+        #expect(abs(line.frame.midY - r.geometry.y(minute: minute)) < 0.01)            // at its real time
+    }
+    let written = lines.filter { $0.reveal >= 1 }
+    for (above, below) in zip(written, written.dropFirst()) { #expect(above.frame.maxY - 8 <= below.frame.minY + 8 + 0.01) }
+    #expect(lines.contains { $0.reveal < 1 })                                           // the same-minute twin waits
     #expect(lines.allSatisfy { $0.frame.height == AllocationParameters().transactionRow })
 }
 
@@ -162,16 +172,19 @@ private let longTitle = "아주 긴 일정 제목입니다"
     let r = render(try timeline([event(0, "가", 540, 660), event(1, "나", 600, 720)]))
     let a = try item(r, "가"), b = try item(r, "나")
     #expect(b.frame.minX - a.frame.minX == AllocationParameters().indentStep && b.frame.maxX == a.frame.maxX)
-    #expect(r.plan.summaries.isEmpty)
+    #expect(a.frame.intersects(b.frame))                                               // truly overlapping events overlap in the same column
 }
 
-@Test func eventsThatStartTogetherAreSummarisedAndEveryOneRemainsReachable() throws {
+@Test func eventsThatStartTogetherAreNeverReplacedByACountAndEveryOneKeepsItsOwnCard() throws {
+    // Policy change: no "일정 N개" card. Each keeps its Event ID, its own frame from the axis, and can be touched.
     let events = try [event(0, "가", 600, 700), event(1, "나", 600, 690), event(2, "다", 600, 680), event(3, "라", 605, 650)]
     let r = render(try timeline(events))
+    #expect(r.plan.events.count == 4 && Set(r.plan.events.map(\.block.title)) == ["가", "나", "다", "라"])
     #expect(r.plan.events.allSatisfy { $0.placement?.overlap.indent ?? 0 <= 1 })
-    let summary = try #require(r.plan.summaries.first)
-    #expect(summary.items.count == 4)                                                       // every title is in the summary
-    #expect(Set(r.plan.events.map(\.block.title)) == ["가", "나", "다", "라"])                // and every card still exists to touch
+    for placed in r.plan.events {
+        #expect(placed.frame.minY == r.geometry.y(minute: placed.block.startMinute))
+        #expect(r.plan.hit(at: CGPoint(x: placed.frame.maxX - 2, y: placed.frame.maxY - 2)) != .nothing)
+    }
 }
 
 @Test func twoShortEventsWhoseTouchAreasMeetAskWhichWasMeant() throws {
@@ -264,20 +277,21 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let plan = incomingPlan(incoming, on: current)
     #expect(plan.events.count == 3)
     for placed in plan.events {
-        #expect(placed.frame.minY == current.geometry.y(minute: placed.block.displayStartMinute))              // the start is never moved
-        let trueHeight = current.geometry.y(minute: placed.block.displayEndMinute) - placed.frame.minY - 1
-        #expect(abs(placed.frame.height - max(3, trueHeight)) < 0.01)                                           // nor is the end stretched
+        #expect(placed.frame.minY == current.geometry.y(minute: placed.block.startMinute))                      // the start is never moved
+        #expect(abs(placed.frame.height - (current.geometry.y(minute: placed.block.endMinute) - placed.frame.minY)) < 0.001)  // nor is the end stretched
     }
 }
 
-@Test func shortEventsCrowdedByTheAxisBecomeOneCountInsteadOfAPileOfTitles() throws {
+@Test func shortEventsCrowdedByTheAxisStayThreeEventsAndWriteNothingOverEachOther() throws {
+    // Policy change: they are no longer one "일정 3개" card. Each is its own thin card at its time, with no text where there is no room.
     let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
     let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
     let plan = incomingPlan(incoming, on: current)
-    let crowd = try #require(plan.summaries.first { $0.countOnly })
-    #expect(crowd.items.count == 3)
-    #expect(plan.events.allSatisfy { !$0.showsTitleInCard })                                                   // no title is printed over another
-    #expect(plan.events.count == 3)                                                                             // the events themselves are all still there
+    #expect(plan.events.count == 3 && Set(plan.events.map(\.block.id)).count == 3)
+    #expect(plan.events.allSatisfy { !$0.showsTitleInCard || $0.header != nil || $0.presentation.showsTitle })
+    #expect(plan.events.allSatisfy { !$0.presentation.showsTitle })                                           // no title is printed over another
+    let frames = plan.events.map(\.frame).sorted { $0.minY < $1.minY }
+    for (above, below) in zip(frames, frames.dropFirst()) { #expect(above.maxY <= below.minY + 0.001) }       // and they do not overlap: their times do not
 }
 
 @Test func anIncomingEventThatHasRoomKeepsItsCardAndTitle() throws {
@@ -285,32 +299,32 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let incoming = try timeline([event(1, "회의", 13 * 60, 14 * 60)])                                          // in the part of the axis that has room
     let plan = incomingPlan(incoming, on: current)
     let placed = try #require(plan.events.first)
-    #expect(plan.summaries.isEmpty && placed.showsTitleInCard && placed.frame.height >= 24)
+    #expect(placed.showsTitleInCard && placed.frame.height >= 24 && placed.presentation.level >= .low)
 }
 
-@Test func whileTheAxisIsStillChangingTheDayThatIsNowMainIsDrawnOnTheAxisItHasAtThatMoment() throws {
-    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))                 // the axis the move starts from
+@Test func theSameHeightLooksTheSameWhetherOrNotAnythingIsMoving() throws {
+    // Policy change: there is no separate "moving" drawing. A day drawn on an axis other than the one the engine laid it out for is
+    // drawn by the same rules: every event's look is a function of its height only.
+    let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
     let target = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
-    let targetRender = render(target)                                                          // what the engine decided for the day itself
+    let targetRender = render(target)
     let plan = DayRenderPlan(
-        timeline: target, role: .main, layout: targetRender.layout, geometry: current.geometry, layoutWidth: layoutWidth,
-        settled: false, titleWidth: { _ in 30 }
+        timeline: target, role: .main, layout: targetRender.layout, geometry: current.geometry, layoutWidth: layoutWidth, titleWidth: { _ in 30 }
     )
-    #expect(plan.events.allSatisfy { $0.frame.minY == current.geometry.y(minute: $0.block.displayStartMinute) })
-    #expect(plan.events.allSatisfy { abs($0.frame.height - max(3, current.geometry.y(minute: $0.block.displayEndMinute) - $0.frame.minY - 1)) < 0.01 })
-    let crowd = plan.summaries.first { $0.countOnly }
-    #expect(plan.events.allSatisfy { $0.frame.height < 19 })                                         // the morning is squeezed on this axis
-    #expect(crowd?.items.count == 3)                                                               // so the three that follow one another are a count
-    #expect(plan.events.allSatisfy { !$0.showsTitleInCard })                                       // and no title is printed over another
+    #expect(plan.events.allSatisfy { $0.frame.minY == current.geometry.y(minute: $0.block.startMinute) })
+    #expect(plan.events.allSatisfy { abs($0.frame.height - (current.geometry.y(minute: $0.block.endMinute) - $0.frame.minY)) < 0.001 })
+    #expect(plan.events.allSatisfy { $0.presentation == EventPresentation.make(height: $0.frame.height, insideCount: 0) })
+    #expect(plan.events.allSatisfy { $0.frame.height < 19 })                                       // the morning is squeezed on this axis
+    #expect(plan.events.allSatisfy { !$0.presentation.showsTitle && $0.presentation.level < .low })
 }
 
 @Test func aShortEventRightBeforeAnotherDoesNotPushItAsideOrRunOverIt() throws {
-    // 20:00-20:10 is drawn at least a quarter hour tall, which reaches over the event that starts at 20:10; their real times do not overlap.
+    // 20:00-20:10 and 20:10-23:00 touch in time and do not overlap; each is exactly its own span.
     let r = render(try timeline([event(0, "짧은 준비", 20 * 60, 20 * 60 + 10), event(1, "밤 작업", 20 * 60 + 10, 23 * 60)]))
     let short = try item(r, "짧은 준비"), long = try item(r, "밤 작업")
-    #expect(long.frame.minX == short.frame.minX)                                  // side by side in one column: no indent for a touch that is not there
-    #expect(short.frame.maxY <= long.frame.minY)                                  // the short card stops where the next one starts
-    #expect(short.frame.minY == r.geometry.y(minute: short.block.displayStartMinute))
+    #expect(long.frame.minX == short.frame.minX)                                  // one column: no indent for an overlap that is not there
+    #expect(abs(short.frame.maxY - long.frame.minY) < 0.001)                      // they meet exactly where the times meet
+    #expect(short.frame.minY == r.geometry.y(minute: short.block.startMinute))
 }
 
 @Test func eventsThatReallyOverlapStillIndent() throws {
@@ -319,56 +333,61 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(second.frame.minX > first.frame.minX)
 }
 
-@Test func twoEventsThatStartTogetherGoSideBySideSoNoTitleCrossesAnEdge() throws {
+@Test func twoEventsThatStartTogetherOverlapInOneColumnAndKeepTheirIDs() throws {
+    // Policy change: no lanes. The two overlap on screen, the later one indented a step; titles are kept apart by the title placement.
     let r = render(try timeline([event(0, "Push", 8 * 60, 10 * 60), event(1, "인바디 측정", 8 * 60, 8 * 60 + 30)]))
     let a = try item(r, "Push"), b = try item(r, "인바디 측정")
-    #expect(!a.frame.intersects(b.frame))                                         // two lanes: neither card lies on the other
-    #expect(a.showsTitleInCard && b.showsTitleInCard)                             // each title is in its own lane
-    #expect(a.frame.width < r.geometry.contentWidth(totalWidth: layoutWidth))
+    #expect(a.frame.intersects(b.frame))
+    #expect(a.block.id != b.block.id && a.frame.minY == b.frame.minY)
+    #expect(a.frame.width > r.geometry.contentWidth(totalWidth: layoutWidth) / 2 && b.frame.width > r.geometry.contentWidth(totalWidth: layoutWidth) / 2)   // no narrow lanes
+    let titleRows = [a, b].filter(\.showsTitleInCard).map { CGRect(x: $0.frame.minX + $0.title.dx, y: $0.frame.minY + $0.title.dy, width: 40, height: 16) }
+    if titleRows.count == 2 { #expect(!titleRows[0].intersects(titleRows[1])) }
 }
 
-@Test func eventsWithAGapInTimeNeverTouchOnScreen() throws {
-    // 16:35-17:30 and 21:00-22:00: the stretch between is squeezed on the axis, but the two cards are still two cards.
+@Test func eventsWithAGapInTimeKeepTheGapOnTheAxis() throws {
+    // Policy change: the card is not shortened to "look" separate. Whatever gap the axis gives the gap in time is the gap on screen.
     let r = render(try timeline([event(0, "이동", 16 * 60 + 35, 17 * 60 + 30), event(1, "스크림", 21 * 60, 22 * 60)]))
     let first = try item(r, "이동"), second = try item(r, "스크림")
-    #expect(second.frame.minY - first.frame.maxY >= 2 - 0.01 || second.frame.minY >= first.frame.maxY + 2)
+    #expect(abs((second.frame.minY - first.frame.maxY) - (r.geometry.y(minute: 21 * 60) - r.geometry.y(minute: 17 * 60 + 30))) < 0.001)
 }
 
-@Test func slivers_thatFollowOneAnotherAreOneCardWithACountAndNoneIsDrawnOnTop() throws {
+@Test func sliversThatFollowOneAnotherEachKeepTheirColourOverTheirOwnTime() throws {
     let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))
     let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
     let plan = incomingPlan(incoming, on: current)
-    let crowd = try #require(plan.summaries.first { $0.countOnly })
-    #expect(crowd.items.count == 3 && crowd.segments.count == 3)                    // the colour of each, over the time it covers
-    #expect(plan.events.allSatisfy { $0.isGrouped })                                // the events are the card's, not drawn again
+    #expect(plan.events.count == 3)
+    #expect(plan.events.allSatisfy { $0.presentation.level <= .sliver && $0.drawnFrame.height >= DayRenderPlan.thinnestDrawn })
+    #expect(plan.events.allSatisfy { $0.drawnFrame.midY == $0.frame.midY || $0.drawnFrame == $0.frame })       // the drawn line is centred on the true span
 }
 
-@Test func aSliverWithAnotherEventStartingUnderItsTitleRowLeavesItsTitleOutAndTheNeighbourKeepsItsOwn() throws {
+@Test func aSliverNeverPushesItsNeighboursTitleAside() throws {
     let current = render(try timeline([event(0, "오후", 13 * 60, 14 * 60)]))                 // the morning is squeezed on this axis
     let incoming = try timeline([event(1, "앞", 540, 550), event(2, "뒤", 550, 630)])
     let plan = incomingPlan(incoming, on: current)
     let first = try #require(plan.events.first { $0.block.title == "앞" }), second = try #require(plan.events.first { $0.block.title == "뒤" })
-    #expect(first.frame.height < 11 * 1 && !first.showsTitleInCard)                          // no room for its title, and the row below is another event's
+    #expect(!first.presentation.showsTitle)                                                   // no room for its title
     #expect(second.title == DayContentLayout.TitlePlacement())                                // the neighbour's title is not pushed aside by it
-    #expect(first.frame.height <= max(3, second.frame.minY - first.frame.minY) + 0.01)         // and the first never runs on over the second (3pt is its floor)
+    #expect(abs(first.frame.maxY - second.frame.minY) < 0.001)                                 // the two meet where their times meet
 }
 
-@Test func aTitlelessSliverGetsAHeaderTabOnlyWhereTheSpaceAboveIsFree() throws {
-    let geometry = TimelineGeometry(totalMinutes: 1440)                                    // the plain axis: a 5 minute event is a sliver
+@Test func aCardTooThinForATitleGetsAHeaderTabOnlyWhereTheSpaceAboveIsFreeAndALineNever() throws {
+    let geometry = TimelineGeometry(totalMinutes: 1440)                                    // the plain axis: a 5 minute event is a thin card
     func plan(_ events: [CalendarEvent]) throws -> DayRenderPlan {
         DayRenderPlan(timeline: try timeline(events), role: nil, layout: nil, geometry: geometry, layoutWidth: layoutWidth, titleWidth: { _ in 30 })
     }
-    // Free above: the sliver is the first thing of its stretch, so its title goes in a tab on top of the card.
-    let alone = try plan([event(1, "앞", 17 * 60, 17 * 60 + 5), event(2, "뒤", 17 * 60 + 5, 18 * 60 + 30)])
-    let sliver = try #require(alone.events.first { $0.block.title == "앞" })
-    #expect(!sliver.showsTitleInCard)
-    let tab = try #require(sliver.header)
-    #expect(tab.maxY <= sliver.frame.minY + 0.01 && tab.minX == sliver.frame.minX)                  // sits on the card, in its column
+    let alone = try plan([event(1, "앞", 17 * 60, 17 * 60 + 12), event(2, "뒤", 17 * 60 + 12, 18 * 60 + 30)])
+    let thin = try #require(alone.events.first { $0.block.title == "앞" })
+    #expect(thin.presentation.level == .sliver && !thin.showsTitleInCard)
+    let tab = try #require(thin.header)
+    #expect(tab.maxY <= thin.drawnFrame.minY + 0.01 && tab.minX == thin.frame.minX)                 // sits on the card, in its column
     #expect(alone.events.filter { $0.block.title != "앞" }.allSatisfy { !$0.frame.intersects(tab) })  // and covers no other event
-    // Not free: another event is right above it, so a tab would land on that event and is not made.
-    let busy = try plan([event(3, "위", 16 * 60 + 40, 16 * 60 + 58), event(1, "앞", 17 * 60, 17 * 60 + 5), event(2, "뒤", 17 * 60 + 5, 18 * 60 + 30)])
+    let busy = try plan([event(3, "위", 16 * 60 + 40, 16 * 60 + 58), event(1, "앞", 17 * 60, 17 * 60 + 12), event(2, "뒤", 17 * 60 + 12, 18 * 60 + 30)])
     let covered = try #require(busy.events.first { $0.block.title == "앞" })
     #expect(covered.header.map { rect in !busy.events.contains { $0.block.title != "앞" && $0.frame.intersects(rect) } } ?? true)
+    // A line (a few minutes on this axis) has no header at all: it is not forced to name itself.
+    let line = try plan([event(1, "선", 12 * 60, 12 * 60 + 2)])
+    let only = try #require(line.events.first)
+    #expect(only.presentation.level == .line && only.header == nil)
 }
 
 // MARK: On an axis planned for stability, what is drawn is what the axis has room for
