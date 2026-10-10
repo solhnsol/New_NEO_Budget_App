@@ -13,8 +13,6 @@ struct RenderGridScreen: View {
     final class StateMemo {
         var key = ""
         var state: GridState?
-        var tickKey = ""
-        var ticks: HourTickPlan?
     }
 
     @State private var fixtureIndex = RenderGridScreen.argument("-grid-fixture").flatMap { Int($0) } ?? 2
@@ -86,18 +84,21 @@ struct RenderGridScreen: View {
         }
     }
 
-    /// `-grid-script zoom`: zoom 1 → 3 → 1; `-grid-script swipe`: p 0 → 1. For a short screen recording.
+    /// `-grid-script zoom`: zoom 1 → 8 → 1; `-grid-script swipe`: p 0 → 1, back to 0.5, on to 1. For a short screen recording.
     private func runScript() async {
         guard let script = Self.argument("-grid-script") else { return }
         try? await Task.sleep(for: .seconds(1))
-        let steps = 90
+        let steps = 120
         switch script {
         case "zoom":
-            for step in 0...steps { pinch.setZoom?(1 + 2 * CGFloat(step) / CGFloat(steps), pinch.viewportHeight / 2); try? await Task.sleep(for: .milliseconds(50)) }
-            try? await Task.sleep(for: .seconds(1))
-            for step in 0...steps { pinch.setZoom?(3 - 2 * CGFloat(step) / CGFloat(steps), pinch.viewportHeight / 2); try? await Task.sleep(for: .milliseconds(50)) }
+            // 1 → 8 → 1, anchored at the middle of the screen.
+            for step in 0...steps { pinch.setZoom?(1 + 7 * CGFloat(step) / CGFloat(steps), pinch.viewportHeight / 2); try? await Task.sleep(for: .milliseconds(40)) }
+            try? await Task.sleep(for: .milliseconds(600))
+            for step in 0...steps { pinch.setZoom?(8 - 7 * CGFloat(step) / CGFloat(steps), pinch.viewportHeight / 2); try? await Task.sleep(for: .milliseconds(40)) }
         case "swipe":
-            for step in 0...steps { progress = Double(step) / Double(steps); try? await Task.sleep(for: .milliseconds(50)) }
+            // The day move 0 → 1, a reversal half way back, then on to 1 again.
+            let path: [Double] = (0...60).map { Double($0) / 60 } + (1...30).map { 1 - Double($0) / 60 } + (1...60).map { 0.5 + Double($0) / 120 }
+            for value in path { progress = value; try? await Task.sleep(for: .milliseconds(40)) }
         default: break
         }
     }
@@ -199,9 +200,8 @@ struct RenderGridScreen: View {
         let state = computeState(viewport: viewport)
         let blend = TemporalGridPartition.interpolated(from: state.a, to: state.b, progress: progress) ?? state.a
         let shown = blend.zoomed(viewportHeight: viewport, zoomScale: zoom)
-        let a = state.a.zoomed(viewportHeight: viewport, zoomScale: zoom), b = state.b.zoomed(viewportHeight: viewport, zoomScale: zoom)
         return AnyView(ZStack(alignment: .topLeading) {
-            cells(shown: shown, a: a, b: b, blend: blend, zoom: Double(zoom), width: width)
+            cells(shown: shown, width: width)
             columns(partition: shown, width: width, window: window)
         }
         .frame(width: width, height: shown.totalHeight, alignment: .topLeading))
@@ -241,73 +241,39 @@ struct RenderGridScreen: View {
         }
     }
 
-    /// The tick plan of a partition at zoom 1, remembered for the same partition (a pinch frame asks for the same one again and again).
-    private func tickPlan(_ partition: TemporalGridPartition) -> HourTickPlan {
-        let key = "\(memo.key)|\(partition.boundaries.hashValue)"
-        if memo.tickKey == key, let plan = memo.ticks { return plan }
-        let plan = HourTickPlan.make(partition: partition)
-        memo.tickKey = key
-        memo.ticks = plan
-        return plan
-    }
-
-    /// The fixed horizontal lines (one style for every cell, at the same y at every p), the compression rail and the hour ticks of the shared axis.
-    private func cells(shown: TemporalGridPartition, a: TemporalGridPartition, b: TemporalGridPartition, blend: TemporalGridPartition, zoom: Double, width: CGFloat) -> some View {
-        let ticks = tickPlan(blend)
-        let boundaryHours = Set(blend.boundaries.filter { $0.truncatingRemainder(dividingBy: 60) == 0 }.map { Int($0 / 60) })
-        let labelHeight = HourTickPlan.labelLineHeight()
+    /// The fixed horizontal lines (one style for every cell, at the same y at every p) and the time axis: one thin solid line, with a tick at the
+    /// real y of every whole hour and the label of the hours that have room. Whether an hour is drawn depends only on the space there is at this
+    /// instant (`HourAxis`); where it is drawn is always `timeToY`.
+    private func cells(shown: TemporalGridPartition, width: CGFloat) -> some View {
+        let metrics = HourAxis.Metrics(textScale: CGFloat(textScale))
+        let states = HourAxis.layout(partition: shown, metrics: metrics)
         return ZStack(alignment: .topLeading) {
             ForEach(0..<shown.slotCount, id: \.self) { slot in
                 let top = shown.top(ofSlot: slot)
                 Path { path in path.move(to: CGPoint(x: Self.gutter, y: top)); path.addLine(to: CGPoint(x: width, y: top)) }
                     .stroke(Color.secondary.opacity(0.4), lineWidth: 0.6)
-                // The rail takes the look of the first day's cell and then of the second's; between them it is both, faded.
-                rail(a, slot, shown.slotHeight).opacity(1 - progress).offset(x: Self.railX, y: top)
-                rail(b, slot, shown.slotHeight).opacity(progress).offset(x: Self.railX, y: top)
             }
-            Path { path in path.move(to: CGPoint(x: Self.gutter, y: 0)); path.addLine(to: CGPoint(x: Self.gutter, y: shown.totalHeight)) }
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-            // A tick at the real y of every whole hour, on the axis only; the label of the hours that fit.
-            ForEach(0...24, id: \.self) { hour in
-                let y = shown.timeToY(Double(hour * 60))
-                let alpha = ticks.opacity(hour: hour, zoom: zoom)
-                Path { path in path.move(to: CGPoint(x: Self.railX + 5, y: y)); path.addLine(to: CGPoint(x: Self.gutter, y: y)) }
-                    .stroke(Color.secondary.opacity(0.35 + 0.35 * alpha), lineWidth: alpha > 0 ? 1 : 0.6)
-                if alpha > 0 {
-                    Text(Self.fmt(Double(hour * 60)))
-                        .font(.system(size: 10, weight: boundaryHours.contains(hour) ? .semibold : .regular)).monospacedDigit()
-                        .foregroundStyle(boundaryHours.contains(hour) ? Color.primary : Color.secondary)
-                        .frame(width: Self.railX - 5, height: labelHeight, alignment: .trailing)
-                        .opacity(alpha)
-                        .offset(x: 2, y: min(max(y - labelHeight / 2, 0), shown.totalHeight - labelHeight))
+            // The axis: always the same thin solid line.
+            Path { path in path.move(to: CGPoint(x: Self.railX, y: 0)); path.addLine(to: CGPoint(x: Self.railX, y: shown.totalHeight)) }
+                .stroke(Color.secondary.opacity(0.5), lineWidth: 0.8)
+            ForEach(states, id: \.hour) { state in
+                if state.tickOpacity > 0.003 {
+                    Path { path in
+                        path.move(to: CGPoint(x: Self.railX, y: state.y))
+                        path.addLine(to: CGPoint(x: Self.railX + 3 + 3 * CGFloat(state.labelOpacity), y: state.y))
+                    }
+                    .stroke(Color.secondary.opacity(0.7 * state.tickOpacity), lineWidth: 0.8)
+                }
+                if state.labelOpacity > 0.003 {
+                    Text(Self.fmt(Double(state.hour * 60)))
+                        .font(.system(size: metrics.labelFontSize, weight: .medium)).monospacedDigit()
+                        .foregroundStyle(Color.primary)
+                        .frame(width: Self.railX - 5, height: metrics.labelHeight, alignment: .trailing)
+                        .opacity(state.labelOpacity)
+                        .offset(x: 2, y: state.labelCentre - metrics.labelHeight / 2)
                 }
             }
         }
-    }
-
-    /// One cell of the compression rail: a line for up to an hour, a faint dotted line up to three, a fold (zigzag) beyond.
-    private func rail(_ partition: TemporalGridPartition, _ slot: Int, _ height: CGFloat) -> some View {
-        let style = SlotCompression(minutes: partition.minutes(inSlot: slot))
-        return Path { path in
-            let inset: CGFloat = 2
-            switch style {
-            case .continuous, .dotted:
-                path.move(to: CGPoint(x: 2, y: inset)); path.addLine(to: CGPoint(x: 2, y: height - inset))
-            case .folded:
-                path.move(to: CGPoint(x: 2, y: inset))
-                var y = inset, flip = true
-                while y < height - inset {
-                    y = min(height - inset, y + 5)
-                    path.addLine(to: CGPoint(x: flip ? 5 : -1, y: y))
-                    flip.toggle()
-                }
-            }
-        }
-        .stroke(
-            Color.secondary.opacity(style == .continuous ? 0.7 : (style == .dotted ? 0.5 : 0.8)),
-            style: StrokeStyle(lineWidth: style == .continuous ? 2 : (style == .dotted ? 1.6 : 1), lineCap: .round, lineJoin: .round, dash: style == .dotted ? [0.1, 4] : [])
-        )
-        .frame(width: 6, height: height)
     }
 
     // MARK: Columns

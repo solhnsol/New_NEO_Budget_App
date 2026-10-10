@@ -57,16 +57,3 @@ private let policies = [
     }
     print("HG|악화 수|\(worse)")
 }
-
-@Test func printLabelledHoursAtEachZoom() {
-    print("HG|라벨|시나리오|N|1x|2x|3x|필요 줌 최대")
-    for (name, scenario) in [("dense", F.gridRuns[3]), ("events32", F.gridRuns[7]), ("text3x", F.gridRuns[8]), ("busy", F.stabilizationRuns[2])] {
-        for n in [10, 12, 16] {
-            var p = TemporalGridParameters.hourly(slotCount: n)
-            p.viewportHeight = scenario.viewportHeight; p.textScale = scenario.textScale; p.allocation = scenario.parameters
-            let partition = TemporalGridPlanner.plan(window: TemporalWindow(days: Array(scenario.days[2...5]), mainIndex: 1), parameters: p).partition
-            let ticks = HourTickPlan.make(partition: partition)
-            print("HG|라벨|\(name)|\(n)|\(ticks.labelled(zoom: 1).count)/25|\(ticks.labelled(zoom: 2).count)/25|\(ticks.labelled(zoom: 3).count)/25|\(f2(ticks.requiredZoom.max() ?? 1))")
-        }
-    }
-}

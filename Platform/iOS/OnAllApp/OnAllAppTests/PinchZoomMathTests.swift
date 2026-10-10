@@ -128,7 +128,6 @@ private struct Sequence {
 @Test func noWrittenThingTouchesAnotherAtAnyZoomUpToEight() {
     for scenario in [F.gridRuns[3], F.gridRuns[7], F.gridRuns[8], F.gridRuns[6]] {
         let base = hourly(scenario, main: scenario.name.hasPrefix("17") ? 4 : 3)
-        let ticks = HourTickPlan.make(partition: base)
         for scale in [1.0, 3.0] as [CGFloat] {
             for step in 0...35 {
                 let zoom = CGFloat(1 + Double(step) * 0.2)
@@ -139,8 +138,9 @@ private struct Sequence {
                 let plan = GridTextLayout.resolve(entities: entities, placement: placed, columnWidth: 160, scale: scale)
                 for (i, a) in plan.writtenRects.enumerated() { for b in plan.writtenRects[(i + 1)...] { #expect(!a.intersects(b), "\(scenario.name) zoom \(zoom) ×\(scale)") } }
                 #expect(plan.clusters.flatMap(\.ids).sorted() == placed.independent.map(\.id).sorted())
-                let centres = ticks.labelled(zoom: Double(zoom)).map { ticks.centre(hour: $0, y: base.timeToY(Double($0 * 60)), totalHeight: base.totalHeight, zoom: Double(zoom)) }.sorted()
-                for (a, b) in zip(centres, centres.dropFirst()) { #expect(b - a >= ticks.minimumGap - 1e-6) }
+                let metrics = HourAxis.Metrics(textScale: scale)
+                let visible = HourAxis.layout(partition: shown, metrics: metrics).filter { $0.labelOpacity > 0 }.map(\.labelCentre).sorted()
+                for (a, b) in zip(visible, visible.dropFirst()) { #expect(b - a > metrics.labelGap - 1e-6, "\(scenario.name) zoom \(zoom) ×\(scale)") }
             }
         }
     }
@@ -153,7 +153,6 @@ private struct Sequence {
     p.viewportHeight = scenario.viewportHeight; p.allocation = scenario.parameters
     let base = store.plan(window: TemporalWindow(days: Array(scenario.days[2...5]), mainIndex: 1), parameters: p).partition
     let entities = [3, 4, 5].map { GridDayEntities.make(scenario.days[$0]) }
-    let ticks = HourTickPlan.make(partition: base)
     store.resetCounters()
     let clock = ContinuousClock()
     var worst = 0.0, total = 0.0
@@ -166,7 +165,7 @@ private struct Sequence {
                 let placed = GridPlacement.place(entity, partition: shown, metrics: .standard(), transactionPitch: 26)
                 _ = GridTextLayout.resolve(entities: entity, placement: placed, columnWidth: 160, scale: 1)
             }
-            for hour in 0...24 { _ = ticks.opacity(hour: hour, zoom: Double(zoom)) }
+            _ = HourAxis.layout(partition: shown, metrics: HourAxis.Metrics())
         }
         let ms = Double(elapsed.components.seconds) * 1000 + Double(elapsed.components.attoseconds) / 1e15
         worst = max(worst, ms); total += ms

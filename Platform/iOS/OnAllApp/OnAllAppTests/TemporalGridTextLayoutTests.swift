@@ -16,26 +16,6 @@ private func resolved(_ day: AllocationDay, _ partition: TemporalGridPartition, 
     return (entities, placed, GridTextLayout.resolve(entities: entities, placement: placed, columnWidth: 160, scale: scale))
 }
 
-@Test func theRailIsContinuousUpToAnHourDottedUpToThreeAndFoldedBeyond() {
-    #expect(SlotCompression(minutes: 10) == .continuous)
-    #expect(SlotCompression(minutes: 60) == .continuous)
-    #expect(SlotCompression(minutes: 61) == .dotted)
-    #expect(SlotCompression(minutes: 180) == .dotted)
-    #expect(SlotCompression(minutes: 181) == .folded)
-    #expect(SlotCompression(minutes: 480) == .folded && SlotCompression.folded.showsRange && !SlotCompression.continuous.showsRange)
-}
-
-@Test func theTwoDaysLabelsAreNeverOnScreenTogetherAndTheMiddleShowsNone() {
-    for step in 0...100 {
-        let o = SlotCompression.labelOpacities(progress: Double(step) / 100)
-        #expect(o.from == 0 || o.to == 0)
-        #expect(o.from >= 0 && o.to >= 0 && o.from <= 1 && o.to <= 1)
-    }
-    #expect(SlotCompression.labelOpacities(progress: 0) == (1, 0))
-    #expect(SlotCompression.labelOpacities(progress: 1) == (0, 1))
-    #expect(SlotCompression.labelOpacities(progress: 0.5) == (0, 0))
-}
-
 @Test func noWrittenThingTouchesAnotherOnAnyFixtureAnyCellCountAnyTextSize() {
     for scenario in F.all {
         for n in [10, 12, 16] {
