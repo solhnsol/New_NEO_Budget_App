@@ -10,6 +10,8 @@ struct OnAllApp: App {
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("-render-gallery") {
                     RenderGallery()
+                } else if ProcessInfo.processInfo.arguments.contains("-render-grid") {
+                    RenderGridScreen()
                 } else if let model {
                     DayTimelineScreen(model: model)
                 } else {
