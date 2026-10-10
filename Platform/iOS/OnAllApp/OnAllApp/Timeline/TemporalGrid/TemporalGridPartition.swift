@@ -160,28 +160,33 @@ struct TemporalGridPartition: Equatable, Sendable {
 
 // MARK: How a compressed cell is drawn
 
-/// How much time one cell stands for, as the DEBUG screen draws it (a candidate look, not a final design).
+/// How much time one cell stands for, as the compression rail beside the hour labels draws it (a candidate look, not a final design). The
+/// grid lines themselves are the same for every cell; only the rail says that a cell is compressed.
 enum SlotCompression: Int, Comparable, CaseIterable, Sendable {
-    /// One hour or less: a plain solid line.
-    case normal
-    /// More than one hour, up to two: a lighter solid line.
-    case light
-    /// More than two hours, up to four: a faint dashed line and the time range.
-    case dashed
-    /// More than four hours: a fold mark and the start and end times.
+    /// One hour or less: a continuous line.
+    case continuous
+    /// More than one hour, up to three: a faint dotted line.
+    case dotted
+    /// More than three hours: a fold pattern.
     case folded
 
     static func < (lhs: SlotCompression, rhs: SlotCompression) -> Bool { lhs.rawValue < rhs.rawValue }
 
     init(minutes: Double) {
         switch minutes {
-        case ...60.0001: self = .normal
-        case ...120.0001: self = .light
-        case ...240.0001: self = .dashed
+        case ...60.0001: self = .continuous
+        case ...180.0001: self = .dotted
         default: self = .folded
         }
     }
 
-    /// Whether the cell says what time it covers (a range label) instead of leaving it to the line's own hour label.
-    var showsRange: Bool { self >= .dashed }
+    /// Whether the cell writes the time range it covers (its end, and for how long) beside its start.
+    var showsRange: Bool { self >= .dotted }
+
+    /// How visible the start and the end labels of the two ends of a change are, at `progress` 0 ... 1: the first day's fade out
+    /// over the first half and the second's fade in over the second half, so they are never both on screen and the middle of a change shows
+    /// no time label. Only the two planned (whole minute) partitions are ever labelled; a time in between is never written.
+    static func labelOpacities(progress: Double) -> (from: Double, to: Double) {
+        (min(1, max(0, 1 - 2 * progress)), min(1, max(0, 2 * progress - 1)))
+    }
 }

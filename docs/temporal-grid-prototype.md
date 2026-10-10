@@ -257,3 +257,11 @@
 - `TemporalGridPlacement.swift` 정적 엔티티와 동적 배치, `TemporalGridComparison.swift` 세 방식 비교
 - `TemporalGridFixtures.swift`, `RenderGridScreen.swift` (DEBUG)
 - 테스트: `TemporalGridPartitionTests`, `TemporalGridPlannerTests`, `TemporalGridReadabilityTests`, `TemporalGridComparisonTests`(측정 출력). `tools/dev/check.sh full` 통과(패키지 + 앱 295 테스트).
+
+## 렌더링 개선 (DEBUG 화면)
+
+- **시간축**: 칸 배경 강조·점선 가로줄을 없애고 모든 가로줄을 같은 가는 실선으로 통일(y 고정). 시간 라벨 옆에 세로 압축 레일: ≤1시간 연속선 / 1~3시간 약한 점선 / >3시간 접힘(지그재그), 압축 칸은 `~끝시각 · 길이`를 함께 표시. 전환 중 레일은 A 스타일 → B 스타일로 페이드, 시간 라벨은 A가 앞 절반에 사라지고 B가 뒤 절반에 나타나(겹치지 않음, p=0.5는 라벨 없음) 보간된 임의 시각은 쓰지 않는다.
+- **일정**: `EventPresentation` 그대로. 기존 `EventOverlapAnalysis`의 들여쓰기(최대 1단계, 레인·합치기 없음)를 하루당 한 번 계산(`GridDayEntities`). 제목·시간은 모든 카드 위 레이어에 그리고, `GridTextLayout`이 시간 순서대로 제목 → 거래 글자 → 시간 범위를 사각형 충돌 검사해 겹치면 글자만 숨긴다(카드·선 유지).
+- **거래**: 점이 겹치는 묶음(간격 < 9pt, 묶음 높이 < 28pt)은 건수 배지로 표시하고, 탭하면 모든 거래의 ID·시각·금액을 보여 준다(금액은 실제 값, 이전의 가짜 금액 텍스트 제거). 확대로 공간이 생기면 묶음이 나뉘고 글자는 기존 reveal 규칙으로 복원. Dynamic Type ×3에서도 글자 사각형 충돌 없음(테스트).
+- **테스트** `TemporalGridTextLayoutTests`: 모든 fixture × N=10/12/16 × 글자 ×1/2.2/3에서 쓰인 글자끼리 겹침 0, 모든 일정 카드와 거래 id 유지(묶음 합 = 독립 거래 수), 라벨 비중첩, 레일 경계값. 프레임당 비용(32일정): 0.04ms(Debug).
+- **남은 문제**: 겹치는 일정이 많은 묶음에서는 제목이 일부 숨겨진다(카드는 유지). ×3 글자에서 거래 글자가 카드 위에 크게 놓인다. 거래 묶음이 거래 목록 UI로 연결되지는 않는다(탭 시 상태줄 표시만).

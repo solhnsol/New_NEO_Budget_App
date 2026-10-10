@@ -24,6 +24,12 @@ struct RenderGridScreen: View {
         var entityBuilds = 0
     }
 
+    /// The days' static entities, found by day, built once.
+    final class EntityCache {
+        var value: [String: GridDayEntities] = [:]
+    }
+    @State private var entityCache = EntityCache()
+
     private static func argument(_ name: String) -> String? {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: name), arguments.indices.contains(index + 1) else { return nil }
@@ -126,6 +132,7 @@ struct RenderGridScreen: View {
     // MARK: Grid
 
     private static let gutter: CGFloat = 58
+    private static let railX: CGFloat = 50
 
     private func grid(width: CGFloat) -> some View {
         GeometryReader { area in
@@ -144,44 +151,62 @@ struct RenderGridScreen: View {
         }
     }
 
+    /// The fixed horizontal lines (one style for every cell, at the same y at every p), the compression rail and the time labels.
     private func cells(shown: TemporalGridPartition, a: TemporalGridPartition, b: TemporalGridPartition, width: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
+        let opacity = SlotCompression.labelOpacities(progress: progress)
+        return ZStack(alignment: .topLeading) {
             ForEach(0..<shown.slotCount, id: \.self) { slot in
-                let compression = SlotCompression(minutes: shown.minutes(inSlot: slot))
                 let top = shown.top(ofSlot: slot)
-                Rectangle().fill(Self.tint(compression)).frame(width: width, height: shown.slotHeight).offset(y: top)
-                // The line at the top of the cell: the same y at every p.
-                Path { path in path.move(to: CGPoint(x: 0, y: top)); path.addLine(to: CGPoint(x: width, y: top)) }
-                    .stroke(Color.secondary.opacity(Self.lineOpacity(compression)), style: StrokeStyle(lineWidth: compression == .normal ? 0.8 : 1, dash: compression >= .dashed ? [4, 3] : []))
-                label(slot: slot, a: a, b: b, compression: compression)
-                    .frame(width: Self.gutter - 4, height: shown.slotHeight, alignment: .topLeading)
-                    .offset(x: 3, y: top)
-                if compression == .folded {
-                    Text("⌇ 접힘").font(.system(size: 8)).foregroundStyle(.orange).offset(x: 6, y: top + shown.slotHeight - 12)
+                Path { path in path.move(to: CGPoint(x: Self.gutter, y: top)); path.addLine(to: CGPoint(x: width, y: top)) }
+                    .stroke(Color.secondary.opacity(0.4), lineWidth: 0.6)
+                // The rail takes the look of the first day's cell and then of the second's; between them it is both, faded.
+                rail(a, slot, shown.slotHeight).opacity(1 - progress).offset(x: Self.railX, y: top)
+                rail(b, slot, shown.slotHeight).opacity(progress).offset(x: Self.railX, y: top)
+                // Only the two planned partitions are labelled, one after the other: never both, and never a time in between.
+                label(a, slot).opacity(opacity.from).frame(width: Self.railX - 5, height: shown.slotHeight, alignment: .topLeading).clipped().offset(x: 3, y: top)
+                label(b, slot).opacity(opacity.to).frame(width: Self.railX - 5, height: shown.slotHeight, alignment: .topLeading).clipped().offset(x: 3, y: top)
+            }
+            Path { path in path.move(to: CGPoint(x: Self.gutter, y: 0)); path.addLine(to: CGPoint(x: Self.gutter, y: shown.totalHeight)) }
+                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
+        }
+    }
+
+    private func label(_ partition: TemporalGridPartition, _ slot: Int) -> some View {
+        let compression = SlotCompression(minutes: partition.minutes(inSlot: slot))
+        return VStack(alignment: .leading, spacing: 0) {
+            Text(Self.fmt(partition.start(ofSlot: slot))).font(.system(size: 10, weight: .semibold)).monospacedDigit()
+            if compression.showsRange || partition.slotHeight >= 44 {
+                Text("~\(Self.fmt(partition.end(ofSlot: slot)))").font(.system(size: 8)).foregroundStyle(.secondary).monospacedDigit()
+            }
+            if compression.showsRange && partition.slotHeight >= 36 {
+                Text(Self.duration(partition.minutes(inSlot: slot))).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// One cell of the compression rail: a line for up to an hour, a faint dotted line up to three, a fold (zigzag) beyond.
+    private func rail(_ partition: TemporalGridPartition, _ slot: Int, _ height: CGFloat) -> some View {
+        let style = SlotCompression(minutes: partition.minutes(inSlot: slot))
+        return Path { path in
+            let inset: CGFloat = 2
+            switch style {
+            case .continuous, .dotted:
+                path.move(to: CGPoint(x: 2, y: inset)); path.addLine(to: CGPoint(x: 2, y: height - inset))
+            case .folded:
+                path.move(to: CGPoint(x: 2, y: inset))
+                var y = inset, flip = true
+                while y < height - inset {
+                    y = min(height - inset, y + 5)
+                    path.addLine(to: CGPoint(x: flip ? 5 : -1, y: y))
+                    flip.toggle()
                 }
             }
         }
-    }
-
-    /// The cell's start and end, crossfading from the day before's to the day after's while p changes.
-    private func label(slot: Int, a: TemporalGridPartition, b: TemporalGridPartition, compression: SlotCompression) -> some View {
-        ZStack(alignment: .topLeading) {
-            cellText(a, slot, compression).opacity(1 - progress)
-            cellText(b, slot, compression).opacity(progress)
-        }
-    }
-
-    private func cellText(_ partition: TemporalGridPartition, _ slot: Int, _ compression: SlotCompression) -> some View {
-        let own = SlotCompression(minutes: partition.minutes(inSlot: slot))
-        return VStack(alignment: .leading, spacing: 0) {
-            Text(Self.fmt(partition.start(ofSlot: slot))).font(.system(size: 10, weight: .semibold)).monospacedDigit()
-            if own >= .light || partition.slotHeight >= 44 {
-                Text("~\(Self.fmt(partition.end(ofSlot: slot)))").font(.system(size: 8)).foregroundStyle(.secondary).monospacedDigit()
-            }
-            if own >= .dashed {
-                Text(Self.duration(partition.minutes(inSlot: slot))).font(.system(size: 8, weight: .medium)).foregroundStyle(.orange)
-            }
-        }
+        .stroke(
+            Color.secondary.opacity(style == .continuous ? 0.7 : (style == .dotted ? 0.5 : 0.8)),
+            style: StrokeStyle(lineWidth: style == .continuous ? 2 : (style == .dotted ? 1.6 : 1), lineCap: .round, lineJoin: .round, dash: style == .dotted ? [0.1, 4] : [])
+        )
+        .frame(width: 6, height: height)
     }
 
     // MARK: Columns
@@ -204,63 +229,107 @@ struct RenderGridScreen: View {
     }
 
     private func column(day: AllocationDay, partition: TemporalGridPartition, metrics: EventPresentation.Metrics, pitch: CGFloat, width: CGFloat, role: String) -> some View {
-        counters.placements += 1
-        let entities = GridDayEntities.make(day)
+        let entities = entitiesCache(day)
         let placed = GridPlacement.place(entities, partition: partition, metrics: metrics, transactionPitch: pitch)
         let scale = CGFloat(textScale)
+        let text = GridTextLayout.resolve(entities: entities, placement: placed, columnWidth: width, scale: scale)
+        let sources = Dictionary(entities.events.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return ZStack(alignment: .topLeading) {
             Text("\(role)  \(placed.events.count)일정").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary).offset(x: 3, y: 1)
             ForEach(placed.events, id: \.id) { event in
-                eventView(event, title: entities.events.first { $0.id == event.id }?.title ?? "", width: width, scale: scale)
+                if let source = sources[event.id] {
+                    eventView(event, source: source, width: width, scale: scale)
+                }
             }
-            ForEach(Array(placed.independent.enumerated()), id: \.offset) { _, transaction in
-                transactionView(transaction, width: width, scale: scale)
+            ForEach(placed.events, id: \.id) { event in
+                if let source = sources[event.id] {
+                    eventText(event, source: source, showsTitle: text.titlesShown.contains(event.id), showsTime: text.timesShown.contains(event.id), width: width, scale: scale)
+                }
+            }
+            ForEach(Array(text.clusters.enumerated()), id: \.offset) { _, cluster in
+                clusterView(cluster, width: width, scale: scale)
             }
         }
         .frame(width: width, height: partition.totalHeight, alignment: .topLeading)
     }
 
-    private func eventView(_ event: GridEventPlacement, title: String, width: CGFloat, scale: CGFloat) -> some View {
+    /// The static part of a day (which events and transactions it has) is built once per day, not per frame.
+    private func entitiesCache(_ day: AllocationDay) -> GridDayEntities {
+        let key = "\(fixtureIndex)-\(day.day.daysSinceUnixEpoch)"
+        if let found = entityCache.value[key] { return found }
+        let made = GridDayEntities.make(day)
+        counters.entityBuilds += 1
+        entityCache.value[key] = made
+        return made
+    }
+
+    /// The card alone. Its title and time are drawn in a layer above every card (`eventText`), so a card on top of another never covers a title.
+    private func eventView(_ event: GridEventPlacement, source: GridDayEntities.Event, width: CGFloat, scale: CGFloat) -> some View {
         let presentation = event.presentation
         let drawn = max(event.height, 2)
         let tint = Self.color(for: event.id)
         let top = event.top - (drawn - event.height) / 2
         let touch = max(drawn, 44)
+        let indent = CGFloat(source.indent) * 10
+        let cardWidth = width - 26 - indent - (source.pullsInOnRight ? 8 : 0)
         return ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: min(4, drawn / 2))
                 .fill(tint.opacity(0.10 + 0.20 * presentation.card + (1 - presentation.card) * 0.55))
                 .overlay(RoundedRectangle(cornerRadius: min(4, drawn / 2)).stroke(tint.opacity(0.35 + 0.4 * (1 - presentation.card)), lineWidth: presentation.card > 0.5 ? 0.8 : 0))
-                .frame(width: width - 26, height: drawn)
-            if presentation.title > 0 {
-                Text(title).font(.system(size: 12 * scale, weight: .semibold)).lineLimit(1).opacity(presentation.title)
-                    .padding(.horizontal, 4).padding(.top, 2 * scale).frame(width: width - 26, alignment: .leading)
-            }
-            if presentation.endTime > 0 {
-                Text("\(Self.fmt(Double(event.startMinute)))–\(Self.fmt(Double(event.endMinute)))").font(.system(size: 9 * scale)).monospacedDigit()
-                    .foregroundStyle(.secondary).opacity(presentation.endTime).padding(.horizontal, 4)
-                    .frame(width: width - 26, height: drawn, alignment: .bottomLeading).padding(.bottom, 2)
-            }
+                .frame(width: cardWidth, height: drawn)
         }
-        .frame(width: width - 26, height: drawn, alignment: .topLeading)
-        .offset(x: 4, y: top)
+        .frame(width: cardWidth, height: drawn, alignment: .topLeading)
+        .offset(x: 4 + indent, y: top)
         .overlay(alignment: .topLeading) {
-            Color.clear.frame(width: width - 26, height: touch).contentShape(Rectangle())
-                .offset(x: 4, y: event.top - (touch - event.height) / 2)
-                .onTapGesture { selected = "\(title) \(Self.fmt(Double(event.startMinute)))–\(Self.fmt(Double(event.endMinute)))" }
+            Color.clear.frame(width: cardWidth, height: touch).contentShape(Rectangle())
+                .offset(x: 4 + indent, y: event.top - (touch - event.height) / 2)
+                .onTapGesture { selected = "\(source.title) \(Self.fmt(Double(event.startMinute)))–\(Self.fmt(Double(event.endMinute)))" }
         }
     }
 
-    private func transactionView(_ transaction: GridTransactionPlacement, width: CGFloat, scale: CGFloat) -> some View {
-        ZStack(alignment: .trailing) {
-            if transaction.reveal > 0.5 {
-                Text("₩4,500 \(transaction.id.suffix(3))").font(.system(size: 10 * scale)).monospacedDigit().opacity(transaction.reveal >= 1 ? 1 : (transaction.reveal - 0.5) * 2)
-                    .padding(.trailing, 12)
+    private func eventText(_ event: GridEventPlacement, source: GridDayEntities.Event, showsTitle: Bool, showsTime: Bool, width: CGFloat, scale: CGFloat) -> some View {
+        let presentation = event.presentation
+        let drawn = max(event.height, 2)
+        let top = event.top - (drawn - event.height) / 2
+        let indent = CGFloat(source.indent) * 10
+        let cardWidth = width - 26 - indent - (source.pullsInOnRight ? 8 : 0)
+        return ZStack(alignment: .topLeading) {
+            if showsTitle {
+                Text(source.title).font(.system(size: 12 * scale, weight: .semibold)).lineLimit(1).opacity(presentation.title)
+                    .padding(.horizontal, 4).padding(.top, 2 * scale).frame(width: cardWidth, alignment: .leading)
             }
-            Circle().fill(Color.pink).frame(width: 6, height: 6).offset(x: 3)
+            if showsTime {
+                Text("\(Self.fmt(Double(event.startMinute)))–\(Self.fmt(Double(event.endMinute)))").font(.system(size: 9 * scale)).monospacedDigit()
+                    .foregroundStyle(.secondary).opacity(presentation.endTime).padding(.horizontal, 4)
+                    .frame(width: cardWidth, height: drawn, alignment: .bottomLeading).padding(.bottom, 2)
+            }
+        }
+        .frame(width: cardWidth, height: drawn, alignment: .topLeading)
+        .offset(x: 4 + indent, y: top)
+        .allowsHitTesting(false)
+    }
+
+    /// One transaction: its dot and, when there is room, its text. Dots that would touch are one count; the count is tappable and names every
+    /// transaction (id, time, amount) it stands for.
+    private func clusterView(_ cluster: GridTransactionCluster, width: CGFloat, scale: CGFloat) -> some View {
+        ZStack(alignment: .trailing) {
+            if cluster.count > 1 {
+                Text("\(cluster.count)").font(.system(size: 9, weight: .bold)).monospacedDigit().foregroundStyle(.white)
+                    .padding(.horizontal, 5).frame(minWidth: 16, minHeight: 13)
+                    .background(Capsule().fill(Color.pink)).offset(x: 1)
+            } else {
+                if cluster.textShown {
+                    Text(GridTextLayout.amountText(cluster.amounts.first ?? nil)).font(.system(size: 10 * scale)).monospacedDigit().padding(.trailing, 12)
+                }
+                Circle().fill(Color.pink).frame(width: 6, height: 6).offset(x: 3)
+            }
         }
         .frame(width: width - 4, height: 14, alignment: .trailing)
-        .offset(x: 0, y: transaction.y - 7)
-        .onTapGesture { selected = "거래 \(transaction.id) \(Self.fmt(Double(transaction.minute)))" }
+        .offset(x: 0, y: cluster.y - 7)
+        .onTapGesture {
+            let items = zip(zip(cluster.ids, cluster.minutes), cluster.amounts).map { "\($0.0) \(Self.fmt(Double($0.1))) \(GridTextLayout.amountText($1))" }
+            selected = "거래 \(cluster.count)건: " + items.joined(separator: ", ")
+        }
     }
 
     // MARK: Helpers
@@ -273,24 +342,6 @@ struct RenderGridScreen: View {
     static func duration(_ minutes: Double) -> String {
         let m = Int(minutes.rounded())
         return m % 60 == 0 ? "\(m / 60)시간" : "\(m / 60)시간 \(m % 60)분"
-    }
-
-    static func tint(_ compression: SlotCompression) -> Color {
-        switch compression {
-        case .normal: return .clear
-        case .light: return Color.gray.opacity(0.04)
-        case .dashed: return Color.gray.opacity(0.09)
-        case .folded: return Color.orange.opacity(0.10)
-        }
-    }
-
-    static func lineOpacity(_ compression: SlotCompression) -> Double {
-        switch compression {
-        case .normal: return 0.55
-        case .light: return 0.3
-        case .dashed: return 0.3
-        case .folded: return 0.45
-        }
     }
 
     static func color(for id: String) -> Color {

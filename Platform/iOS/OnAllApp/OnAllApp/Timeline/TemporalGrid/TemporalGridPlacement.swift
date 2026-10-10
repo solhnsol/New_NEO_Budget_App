@@ -12,6 +12,11 @@ struct GridDayEntities: Equatable, Sendable {
         let startMinute: Int
         let endMinute: Int
         let insideCount: Int
+        /// How the event lies on others (the engine's own analysis, once per day): 0 or 1 step in from the left, and pulled in on the right
+        /// when wholly inside another. Never a lane of its own.
+        var indent = 0
+        var pullsInOnRight = false
+        var groupSize = 1
     }
     struct Transaction: Equatable, Sendable {
         let id: String
@@ -19,6 +24,8 @@ struct GridDayEntities: Equatable, Sendable {
         /// Linked to an event and inside its time: drawn in the event, not on a line of its own.
         let isInsideEvent: Bool
         let eventID: String?
+        /// The transaction's own amount, as the ledger counts it (nil: not settled).
+        var minorUnits: Int64? = nil
     }
 
     let day: LocalDate
@@ -28,17 +35,24 @@ struct GridDayEntities: Equatable, Sendable {
     var independentTransactions: [Transaction] { transactions.filter { !$0.isInsideEvent } }
 
     static func make(_ day: AllocationDay) -> GridDayEntities {
+        let analysed = EventOverlapAnalysis.analyse(day.events.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) })
         let events = day.events
-            .map { Event(id: $0.id, title: $0.title, startMinute: $0.startMinute, endMinute: $0.endMinute, insideCount: $0.insideRange.count) }
+            .map { event -> Event in
+                let overlap = analysed[event.id]
+                return Event(
+                    id: event.id, title: event.title, startMinute: event.startMinute, endMinute: event.endMinute, insideCount: event.insideRange.count,
+                    indent: overlap?.indent ?? 0, pullsInOnRight: overlap?.pullsInOnRight ?? false, groupSize: overlap?.groupSize ?? 1
+                )
+            }
             .sorted { ($0.startMinute, $0.endMinute, $0.id) < ($1.startMinute, $1.endMinute, $1.id) }
         var transactions: [Transaction] = []
         for event in day.events {
             for transaction in event.linked where transaction.dayOffset == 0 {
-                transactions.append(Transaction(id: transaction.id, minute: transaction.minute, isInsideEvent: event.contains(transaction), eventID: event.id))
+                transactions.append(Transaction(id: transaction.id, minute: transaction.minute, isInsideEvent: event.contains(transaction), eventID: event.id, minorUnits: transaction.minorUnits))
             }
         }
         for transaction in day.transactions where transaction.dayOffset == 0 {
-            transactions.append(Transaction(id: transaction.id, minute: transaction.minute, isInsideEvent: false, eventID: nil))
+            transactions.append(Transaction(id: transaction.id, minute: transaction.minute, isInsideEvent: false, eventID: nil, minorUnits: transaction.minorUnits))
         }
         transactions.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
         return GridDayEntities(day: day.day, events: events, transactions: transactions)
@@ -66,6 +80,8 @@ struct GridTransactionPlacement: Equatable {
     /// 0 ... 1: how much of its text there is room for. The dot at the time is always there.
     let reveal: CGFloat
     let isInsideEvent: Bool
+    var eventID: String? = nil
+    var minorUnits: Int64? = nil
     var textShown: Bool { reveal >= 1 }
 }
 
@@ -102,7 +118,7 @@ enum GridPlacement {
         var index = 0
         for transaction in entities.transactions {
             if transaction.isInsideEvent {
-                placements.append(GridTransactionPlacement(id: transaction.id, minute: transaction.minute, y: y(Double(transaction.minute)), room: .infinity, reveal: 1, isInsideEvent: true))
+                placements.append(GridTransactionPlacement(id: transaction.id, minute: transaction.minute, y: y(Double(transaction.minute)), room: .infinity, reveal: 1, isInsideEvent: true, eventID: transaction.eventID, minorUnits: transaction.minorUnits))
                 continue
             }
             let here = ys[index]
@@ -111,7 +127,8 @@ enum GridPlacement {
             let room = min(before, after)
             placements.append(GridTransactionPlacement(
                 id: transaction.id, minute: transaction.minute, y: here, room: room,
-                reveal: transactionPitch > 0 ? min(1, max(0, room / transactionPitch)) : 1, isInsideEvent: false
+                reveal: transactionPitch > 0 ? min(1, max(0, room / transactionPitch)) : 1, isInsideEvent: false,
+                eventID: transaction.eventID, minorUnits: transaction.minorUnits
             ))
             index += 1
         }
