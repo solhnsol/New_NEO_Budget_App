@@ -13,6 +13,9 @@ struct TemporalGridParameters: Equatable, Sendable {
     var candidateStepMinutes = 5
     var minSlotMinutes = 10
     var maxSlotMinutes = 8 * 60
+    /// Whether a claim that even the shortest cell cannot fully meet still takes part in the search (its shortfall shrinks as it gets more room, so
+    /// a cell near it is worth something even if the claim is never fully met). With a shortest cell of an hour this is most short events.
+    var keepsPartlyServableClaims = false
     /// The height the planner assumes (the viewport at zoom 1). Zooming only scales it, and the partition is not planned again.
     var viewportHeight: CGFloat = 640
     var textScale: CGFloat = 1
@@ -74,6 +77,28 @@ struct TemporalGridParameters: Equatable, Sendable {
 
     /// A single cell's height at zoom 1.
     var slotHeight: CGFloat { viewportHeight / CGFloat(max(1, slotCount)) }
+
+    /// Hour-only policy: every boundary is a whole hour (HH:00) and no cell is shorter than an hour, so no cell is split for the sake of short events
+    /// however dense they are. The 5 minute policy (`default`) stays as the comparison.
+    static func hourly(slotCount: Int) -> TemporalGridParameters {
+        var p = TemporalGridParameters()
+        p.slotCount = slotCount
+        p.candidateStepMinutes = 60
+        p.minSlotMinutes = 60
+        // With an hour as the shortest cell most short events can never get the room they ask for; they still pull the nearby cells towards an
+        // hour instead of being ignored (measured: the day-to-day movement of the same hours halves at N=12).
+        p.keepsPartlyServableClaims = true
+        return p
+    }
+
+    /// Hour boundaries with half-hour cells allowed: an experiment to see whether the exception is needed, not a policy.
+    static func halfHour(slotCount: Int) -> TemporalGridParameters {
+        var p = TemporalGridParameters()
+        p.slotCount = slotCount
+        p.candidateStepMinutes = 30
+        p.minSlotMinutes = 30
+        return p
+    }
 
     static let `default` = TemporalGridParameters()
     static func with(slotCount: Int) -> TemporalGridParameters { var p = TemporalGridParameters(); p.slotCount = slotCount; return p }

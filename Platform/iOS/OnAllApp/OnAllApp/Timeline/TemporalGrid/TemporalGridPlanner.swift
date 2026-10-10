@@ -144,7 +144,12 @@ enum TemporalGridPlanner {
         var servable: [WeightedTemporalClaim] = []
         var unservable = 0
         for weighted in claims {
-            if weighted.claim.need / CGFloat(weighted.claim.length) > maxPointsPerMinute { unservable += 1 } else { servable.append(weighted) }
+            if weighted.claim.need / CGFloat(weighted.claim.length) > maxPointsPerMinute {
+                unservable += 1
+                if parameters.keepsPartlyServableClaims { servable.append(weighted) }
+            } else {
+                servable.append(weighted)
+            }
         }
 
         // cellCost[a / step * stride + steps] = cost of a cell starting at a and `steps` candidates long, from claims and crowding.

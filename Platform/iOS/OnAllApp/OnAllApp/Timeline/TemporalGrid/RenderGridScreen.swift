@@ -5,7 +5,7 @@ import SwiftUI
 /// each; what a cell stands for changes. Synthetic fixtures only (`TemporalGridFixtures`).
 ///
 /// Launch arguments (all optional): `-grid-fixture <0...29>`, `-grid-n <10|12|16>`, `-grid-zoom <1...3>`, `-grid-p <0...1>`,
-/// `-grid-main <window>`, `-grid-scale <1|1.5|2.2|3>`.
+/// `-grid-main <window>`, `-grid-scale <1|1.5|2.2|3>`, `-grid-policy <hourly|fine>`, `-grid-script <zoom|swipe>` (plays a short animation).
 struct RenderGridScreen: View {
     private static let fixtures = TemporalGridFixtures.all
 
@@ -15,6 +15,7 @@ struct RenderGridScreen: View {
     @State private var progress: Double = RenderGridScreen.argument("-grid-p").flatMap(Double.init) ?? 0
     @State private var window = RenderGridScreen.argument("-grid-main").flatMap { Int($0) } ?? 3
     @State private var textScale: Double = RenderGridScreen.argument("-grid-scale").flatMap(Double.init) ?? 1
+    @State private var hourly = RenderGridScreen.argument("-grid-policy") != "fine"
     @State private var selected: String?
     @State private var store = TemporalGridStore()
     @State private var counters = FrameCounters()
@@ -51,6 +52,23 @@ struct RenderGridScreen: View {
             }
         }
         .font(.system(size: 11))
+        .task { await runScript() }
+    }
+
+    /// `-grid-script zoom`: zoom 1 → 3 → 1; `-grid-script swipe`: p 0 → 1. For a short screen recording.
+    private func runScript() async {
+        guard let script = Self.argument("-grid-script") else { return }
+        try? await Task.sleep(for: .seconds(1))
+        let steps = 90
+        switch script {
+        case "zoom":
+            for step in 0...steps { zoom = 1 + 2 * Double(step) / Double(steps); try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .seconds(1))
+            for step in 0...steps { zoom = 3 - 2 * Double(step) / Double(steps); try? await Task.sleep(for: .milliseconds(50)) }
+        case "swipe":
+            for step in 0...steps { progress = Double(step) / Double(steps); try? await Task.sleep(for: .milliseconds(50)) }
+        default: break
+        }
     }
 
     // MARK: Controls
@@ -68,6 +86,7 @@ struct RenderGridScreen: View {
             }
             HStack {
                 Picker("N", selection: $slotCount) { ForEach([10, 12, 16], id: \.self) { Text("N=\($0)").tag($0) } }.pickerStyle(.segmented)
+                Picker("정책", selection: $hourly) { Text("정각").tag(true); Text("5분").tag(false) }.pickerStyle(.segmented).frame(width: 90)
                 Picker("글자", selection: $textScale) { ForEach([1.0, 1.5, 2.2, 3.0], id: \.self) { Text("×\($0.formatted())").tag($0) } }.pickerStyle(.segmented)
             }
             HStack {
@@ -111,7 +130,7 @@ struct RenderGridScreen: View {
     }
 
     private func parameters(viewport: CGFloat) -> TemporalGridParameters {
-        var p = TemporalGridParameters.with(slotCount: slotCount)
+        var p = hourly ? TemporalGridParameters.hourly(slotCount: slotCount) : TemporalGridParameters.with(slotCount: slotCount)
         p.viewportHeight = viewport
         p.textScale = CGFloat(textScale)
         p.allocation = scenario.parameters
@@ -143,7 +162,7 @@ struct RenderGridScreen: View {
             let a = state.a.zoomed(viewportHeight: viewport, zoomScale: CGFloat(zoom)), b = state.b.zoomed(viewportHeight: viewport, zoomScale: CGFloat(zoom))
             ScrollView(.vertical, showsIndicators: true) {
                 ZStack(alignment: .topLeading) {
-                    cells(shown: shown, a: a, b: b, width: width)
+                    cells(shown: shown, a: a, b: b, blend: blend, width: width)
                     columns(partition: shown, width: width)
                 }
                 .frame(width: width, height: shown.totalHeight, alignment: .topLeading)
@@ -151,9 +170,11 @@ struct RenderGridScreen: View {
         }
     }
 
-    /// The fixed horizontal lines (one style for every cell, at the same y at every p), the compression rail and the time labels.
-    private func cells(shown: TemporalGridPartition, a: TemporalGridPartition, b: TemporalGridPartition, width: CGFloat) -> some View {
-        let opacity = SlotCompression.labelOpacities(progress: progress)
+    /// The fixed horizontal lines (one style for every cell, at the same y at every p), the compression rail and the hour ticks of the shared axis.
+    private func cells(shown: TemporalGridPartition, a: TemporalGridPartition, b: TemporalGridPartition, blend: TemporalGridPartition, width: CGFloat) -> some View {
+        let ticks = HourTickPlan.make(partition: blend)
+        let boundaryHours = Set(blend.boundaries.filter { $0.truncatingRemainder(dividingBy: 60) == 0 }.map { Int($0 / 60) })
+        let labelHeight = HourTickPlan.labelLineHeight()
         return ZStack(alignment: .topLeading) {
             ForEach(0..<shown.slotCount, id: \.self) { slot in
                 let top = shown.top(ofSlot: slot)
@@ -162,24 +183,23 @@ struct RenderGridScreen: View {
                 // The rail takes the look of the first day's cell and then of the second's; between them it is both, faded.
                 rail(a, slot, shown.slotHeight).opacity(1 - progress).offset(x: Self.railX, y: top)
                 rail(b, slot, shown.slotHeight).opacity(progress).offset(x: Self.railX, y: top)
-                // Only the two planned partitions are labelled, one after the other: never both, and never a time in between.
-                label(a, slot).opacity(opacity.from).frame(width: Self.railX - 5, height: shown.slotHeight, alignment: .topLeading).clipped().offset(x: 3, y: top)
-                label(b, slot).opacity(opacity.to).frame(width: Self.railX - 5, height: shown.slotHeight, alignment: .topLeading).clipped().offset(x: 3, y: top)
             }
             Path { path in path.move(to: CGPoint(x: Self.gutter, y: 0)); path.addLine(to: CGPoint(x: Self.gutter, y: shown.totalHeight)) }
                 .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-        }
-    }
-
-    private func label(_ partition: TemporalGridPartition, _ slot: Int) -> some View {
-        let compression = SlotCompression(minutes: partition.minutes(inSlot: slot))
-        return VStack(alignment: .leading, spacing: 0) {
-            Text(Self.fmt(partition.start(ofSlot: slot))).font(.system(size: 10, weight: .semibold)).monospacedDigit()
-            if compression.showsRange || partition.slotHeight >= 44 {
-                Text("~\(Self.fmt(partition.end(ofSlot: slot)))").font(.system(size: 8)).foregroundStyle(.secondary).monospacedDigit()
-            }
-            if compression.showsRange && partition.slotHeight >= 36 {
-                Text(Self.duration(partition.minutes(inSlot: slot))).font(.system(size: 8, weight: .medium)).foregroundStyle(.secondary)
+            // A tick at the real y of every whole hour, on the axis only; the label of the hours that fit.
+            ForEach(0...24, id: \.self) { hour in
+                let y = shown.timeToY(Double(hour * 60))
+                let alpha = ticks.opacity(hour: hour, zoom: zoom)
+                Path { path in path.move(to: CGPoint(x: Self.railX + 5, y: y)); path.addLine(to: CGPoint(x: Self.gutter, y: y)) }
+                    .stroke(Color.secondary.opacity(0.35 + 0.35 * alpha), lineWidth: alpha > 0 ? 1 : 0.6)
+                if alpha > 0 {
+                    Text(Self.fmt(Double(hour * 60)))
+                        .font(.system(size: 10, weight: boundaryHours.contains(hour) ? .semibold : .regular)).monospacedDigit()
+                        .foregroundStyle(boundaryHours.contains(hour) ? Color.primary : Color.secondary)
+                        .frame(width: Self.railX - 5, height: labelHeight, alignment: .trailing)
+                        .opacity(alpha)
+                        .offset(x: 2, y: min(max(y - labelHeight / 2, 0), shown.totalHeight - labelHeight))
+                }
             }
         }
     }
