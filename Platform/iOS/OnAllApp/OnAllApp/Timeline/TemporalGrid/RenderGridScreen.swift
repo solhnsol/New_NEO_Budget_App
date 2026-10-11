@@ -5,7 +5,8 @@ import SwiftUI
 /// each; what a cell stands for changes. Synthetic fixtures only (`TemporalGridFixtures`).
 ///
 /// Launch arguments (all optional): `-grid-fixture <0...29>`, `-grid-n <10|12|16>`, `-grid-zoom <1...8>`, `-grid-p <0...1>`,
-/// `-grid-main <window>`, `-grid-scale <1|1.5|2.2|3>`, `-grid-policy <hourly|fine>`, `-grid-script <zoom|swipe>` (plays a short animation).
+/// `-grid-main <window>`, `-grid-scale <1|1.5|2.2|3>`, `-grid-policy <hourly|fine>`, `-grid-script <zoom|swipe|days>`, `-grid-anchor off` (plays a short animation).
+/// `-render-continuous` is the same screen with the continuous day space's panel (position, rendered and planned days, cache, anchor) shown.
 struct RenderGridScreen: View {
     private static let fixtures = TemporalGridFixtures.all
 
@@ -13,13 +14,22 @@ struct RenderGridScreen: View {
     final class StateMemo {
         var key = ""
         var state: GridState?
+        var windows: [Int: TemporalGridPartition] = [:]
     }
 
     @State private var fixtureIndex = RenderGridScreen.argument("-grid-fixture").flatMap { Int($0) } ?? 2
     @State private var slotCount = RenderGridScreen.argument("-grid-n").flatMap { Int($0) } ?? 12
     /// The grid's zoom and the scroll that goes with it live in the pinch scroll view; the screen around it does not observe them.
     @State private var pinch = PinchZoomModel(zoom: RenderGridScreen.argument("-grid-zoom").flatMap(Double.init).map { CGFloat($0) } ?? 1)
-    @State private var dateDrag: (base: Int, startReal: Double)?
+    /// Where the window is along the days, as an explicit state (`DayMoveModel`); `window` and `progress` below are its day and fraction.
+    @State private var move = DayMoveModel(day: 3, bounds: 1...5)
+    @State private var dragStart: Double?
+    @State private var ticking = false
+    /// Keep the time at the middle of the screen while the days move (on), or keep the scroll offset in points as before (off): the comparison.
+    @State private var anchorOn = RenderGridScreen.argument("-grid-anchor") != "off"
+    @State private var anchorTime: Double?
+    @State private var lastAnchor: ContinuousDayAxis.AnchoredOffset?
+    private static let showsPanel = ProcessInfo.processInfo.arguments.contains("-render-continuous")
     @State private var memo = StateMemo()
     @State private var progress: Double = RenderGridScreen.argument("-grid-p").flatMap(Double.init) ?? 0
     @State private var window = RenderGridScreen.argument("-grid-main").flatMap { Int($0) } ?? 3
@@ -51,7 +61,8 @@ struct RenderGridScreen: View {
     private var firstWindow: Int { min(max(window, windows.lowerBound), windows.upperBound) }
 
     var body: some View {
-        GeometryReader { outer in
+        _ = (move.position, anchorOn, lastAnchor)          // the panel below reads these inside closures: this screen must re-evaluate when they change
+        return GeometryReader { outer in
             VStack(spacing: 0) {
                 controls
                 Divider()
@@ -61,7 +72,13 @@ struct RenderGridScreen: View {
             }
         }
         .font(.system(size: 11))
-        .task { await runScript() }
+        .task {
+            // The model starts on the launch window (and the launch fraction, held where it is).
+            move = DayMoveModel(day: firstWindow, bounds: windows)
+            if progress > 0 { move.drag(to: Double(firstWindow) + progress) }
+            await runScript()
+        }
+        .onChange(of: fixtureIndex) { _, _ in move = DayMoveModel(day: firstWindow, bounds: windows); progress = 0; counters.entityBuilds = 0 }
     }
 
     private struct StatusBar: View {
@@ -72,6 +89,13 @@ struct RenderGridScreen: View {
                 .font(.system(size: 9)).foregroundStyle(.secondary).lineLimit(3).frame(maxWidth: .infinity, minHeight: 36, maxHeight: 36, alignment: .topLeading)
                 .padding(.horizontal, 8).padding(.vertical, 2)
         }
+    }
+
+    /// Re-evaluated when the zoom or the viewport height changes (the first layout), so what it shows is never one frame behind.
+    private struct SummaryHost: View {
+        @ObservedObject var model: PinchZoomModel
+        let content: () -> AnyView
+        var body: some View { content() }
     }
 
     private struct ZoomReadout: View {
@@ -98,7 +122,21 @@ struct RenderGridScreen: View {
         case "swipe":
             // The day move 0 → 1, a reversal half way back, then on to 1 again.
             let path: [Double] = (0...60).map { Double($0) / 60 } + (1...30).map { 1 - Double($0) / 60 } + (1...60).map { 0.5 + Double($0) / 120 }
-            for value in path { progress = value; try? await Task.sleep(for: .milliseconds(40)) }
+            for value in path { setProgress(value); try? await Task.sleep(for: .milliseconds(40)) }
+        case "days":
+            // Fast taps (+1 +1 +1), a reversal in the flight, then a long way back: the move model's own motion at zoom 3.
+            pinch.setZoom?(3, pinch.viewportHeight / 2)
+            try? await Task.sleep(for: .milliseconds(500))
+            // Scroll to 12:00 at the middle of the screen, so the anchor has something to hold.
+            let viewport = pinch.viewportHeight
+            pinch.setOffset?(ContinuousDayAxis.anchoredOffset(time: 12 * 60, partition: sharedPartition(position: position, viewport: viewport), zoom: pinch.zoom, viewport: viewport, focal: viewport / 2).offset)
+            try? await Task.sleep(for: .milliseconds(800))
+            moveBy(1); try? await Task.sleep(for: .milliseconds(150))
+            moveBy(1); try? await Task.sleep(for: .milliseconds(150))
+            moveBy(1); try? await Task.sleep(for: .milliseconds(500))
+            moveBy(-2); try? await Task.sleep(for: .milliseconds(1200))
+            moveBy(-3); try? await Task.sleep(for: .milliseconds(300))
+            moveBy(4)
         default: break
         }
     }
@@ -108,12 +146,16 @@ struct RenderGridScreen: View {
     private var controls: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Picker("fixture", selection: $fixtureIndex) {
-                    ForEach(Self.fixtures.indices, id: \.self) { Text(Self.fixtures[$0].name).tag($0) }
+                Menu {
+                    ForEach(Self.fixtures.indices, id: \.self) { index in Button(Self.fixtures[index].name) { fixtureIndex = index } }
+                } label: {
+                    Text(scenario.name).lineLimit(1).frame(maxWidth: 170, alignment: .leading)
                 }
-                .pickerStyle(.menu).labelsHidden()
                 Spacer()
-                Stepper("날짜 \(firstWindow)", value: $window, in: windows).labelsHidden()
+                Button("−3") { moveBy(-3) }.buttonStyle(.bordered).controlSize(.mini)
+                Button("−1") { moveBy(-1) }.buttonStyle(.bordered).controlSize(.mini)
+                Button("+1") { moveBy(1) }.buttonStyle(.bordered).controlSize(.mini)
+                Button("+3") { moveBy(3) }.buttonStyle(.bordered).controlSize(.mini)
                 Text("D=\(firstWindow)").monospacedDigit()
             }
             HStack {
@@ -124,22 +166,25 @@ struct RenderGridScreen: View {
             ZoomReadout(model: pinch)
             HStack {
                 Text("p \(progress.formatted(.number.precision(.fractionLength(2))))").monospacedDigit().frame(width: 74, alignment: .leading)
-                Slider(value: $progress, in: 0...1)
-                ForEach([0.0, 0.25, 0.5, 0.75, 1.0], id: \.self) { value in
-                    Button("\(Int(value * 100))") { progress = value }.buttonStyle(.bordered).controlSize(.mini)
+                Slider(value: Binding(get: { progress }, set: { setProgress($0) }), in: 0...1)
+                ForEach([0.0, 0.5, 1.0], id: \.self) { value in
+                    Button("\(Int(value * 100))") { setProgress(value) }.buttonStyle(.bordered).controlSize(.mini).fixedSize()
                 }
+                Button(anchorOn ? "앵커 ON" : "앵커 OFF") { anchorOn.toggle() }.buttonStyle(.bordered).controlSize(.mini).fixedSize()
             }
-            summary
+            SummaryHost(model: pinch) { summary }.frame(height: Self.showsPanel ? 74 : 24, alignment: .topLeading)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
     }
 
-    private var summary: some View {
-        let state = computeState(viewport: 1)
-        return VStack(alignment: .leading, spacing: 1) {
+    private var summary: AnyView {
+        guard pinch.viewportHeight > 1 else { return AnyView(EmptyView()) }
+        let state = computeState(viewport: pinch.viewportHeight)
+        return AnyView(VStack(alignment: .leading, spacing: 1) {
             Text("A(D) " + Self.boundaryText(state.a.boundaries)).monospacedDigit().font(.system(size: 8))
             Text("B(D+1) " + Self.boundaryText(state.b.boundaries)).monospacedDigit().font(.system(size: 8))
-        }
+            if Self.showsPanel { panel }
+        })
     }
 
     private static func boundaryText(_ boundaries: [Double]) -> String { boundaries.map { fmt($0) }.joined(separator: " ") }
@@ -167,19 +212,29 @@ struct RenderGridScreen: View {
     }
 
     /// The two partitions (for the window starting at D and the one starting at D+1). Planned only when the day, N, text size or viewport change.
-    private func computeState(viewport: CGFloat) -> GridState {
-        let key = "\(fixtureIndex)|\(firstWindow)|\(slotCount)|\(hourly)|\(textScale)|\(Int(viewport.rounded()))"
-        if memo.key == key, let state = memo.state { return state }
+    private func settingsKey(_ viewport: CGFloat) -> String {
+        "\(fixtureIndex)|\(slotCount)|\(hourly)|\(textScale)|\(Int(viewport.rounded()))"
+    }
+
+    /// The partition planned for the window whose main day is `window`, found in the memo (a day or a pinch frame never reaches the store).
+    private func windowPartition(_ window: Int, viewport: CGFloat) -> TemporalGridPartition {
+        let key = settingsKey(viewport)
+        if memo.key != key { memo.key = key; memo.windows = [:]; memo.state = nil }
+        let clamped = min(max(window, windows.lowerBound), windows.upperBound)
+        if let found = memo.windows[clamped] { return found }
         let p = parameters(viewport: max(viewport, 1))
-        let main = firstWindow
-        let days = scenario.days
-        func plan(_ main: Int) -> TemporalGridPartition {
-            store.plan(window: TemporalWindow(days: Array(days[(main - 1)...(main + 2)]), mainIndex: 1), parameters: p).partition
-        }
-        let state = GridState(a: plan(main), b: plan(min(main + 1, windows.upperBound)))
-        memo.key = key
-        memo.state = state
-        return state
+        let made = store.plan(window: TemporalWindow(days: Array(scenario.days[(clamped - 1)...(clamped + 2)]), mainIndex: 1), parameters: p).partition
+        memo.windows[clamped] = made
+        return made
+    }
+
+    /// The shared time partition at the window's position: the blend of the two windows around it.
+    private func sharedPartition(position: Double, viewport: CGFloat) -> TemporalGridPartition {
+        ContinuousDayAxis.partition(at: position, bounds: windows) { windowPartition($0, viewport: viewport) }
+    }
+
+    private func computeState(viewport: CGFloat) -> GridState {
+        GridState(a: windowPartition(firstWindow, viewport: viewport), b: windowPartition(firstWindow + 1, viewport: viewport))
     }
 
     // MARK: Grid
@@ -197,9 +252,7 @@ struct RenderGridScreen: View {
     /// scales them and places the items (no planning, no day analysis: the static entities are cached).
     private func gridContent(width: CGFloat, zoom: CGFloat, viewport: CGFloat, window: ClosedRange<CGFloat>) -> AnyView {
         guard viewport > 1 else { return AnyView(Color.clear.frame(width: width, height: 1)) }    // before the first layout
-        let state = computeState(viewport: viewport)
-        let blend = TemporalGridPartition.interpolated(from: state.a, to: state.b, progress: progress) ?? state.a
-        let shown = blend.zoomed(viewportHeight: viewport, zoomScale: zoom)
+        let shown = sharedPartition(position: Double(firstWindow) + progress, viewport: viewport).zoomed(viewportHeight: viewport, zoomScale: zoom)
         return AnyView(ZStack(alignment: .topLeading) {
             cells(shown: shown, width: width)
             columns(partition: shown, width: width, window: window)
@@ -207,38 +260,100 @@ struct RenderGridScreen: View {
         .frame(width: width, height: shown.totalHeight, alignment: .topLeading))
     }
 
-    /// The day move: a horizontal drag sets where between the days the grid is (the same `p` as the slider), and lets go on the nearer day.
-    /// The zoom is not touched, so it stays across days.
+    // MARK: The day move (state model; the real swipe is a later stage)
+
+    private var position: Double { Double(firstWindow) + progress }
+
+    /// A window onto the day line: columns of the width a day has on this screen.
+    private func geometry(width: CGFloat) -> DayAxisGeometry { DayAxisGeometry(dayWidth: (width - Self.gutter) / 2) }
+
+    /// A horizontal drag is the move model's `drag`/`release` (`Double` days per second); the screen only reads the model's position back.
     private func handleDateDrag(_ phase: DateDragPhase, width: CGFloat) {
-        let columnWidth = (width - Self.gutter) / 2
-        func real(_ translation: CGFloat) -> Double {
-            let start = dateDrag?.startReal ?? Double(firstWindow) + progress
-            return min(max(start - Double(translation / columnWidth), Double(windows.lowerBound)), Double(windows.upperBound))
-        }
-        func set(_ position: Double) {
-            let base = min(Int(position.rounded(.down)), windows.upperBound)
-            window = base
-            progress = base >= windows.upperBound ? 0 : position - Double(base)
-        }
+        let geometry = geometry(width: width)
         switch phase {
         case .changed(let translation):
-            if dateDrag == nil { dateDrag = (firstWindow, Double(firstWindow) + progress) }
-            set(real(translation))
+            if dragStart == nil { beginMove(); move.beginDrag(); dragStart = move.position }
+            move.drag(to: geometry.position(startingAt: dragStart ?? move.position, translation: translation))
+            applyMove()
         case .ended(let velocity):
-            let position = Double(window) + progress
-            let projected = position - Double(velocity / columnWidth) * 0.12
-            let target = min(max(projected.rounded(), Double(windows.lowerBound)), Double(windows.upperBound))
-            dateDrag = nil
-            Task { @MainActor in
-                let steps = 10
-                for step in 1...steps { set(position + (target - position) * Double(step) / Double(steps)); try? await Task.sleep(for: .milliseconds(16)) }
-                set(target)
-            }
+            dragStart = nil
+            move.release(velocity: -Double(velocity / geometry.dayWidth))
+            startTicker()
         case .cancelled:
-            let target = (Double(window) + progress).rounded()
-            dateDrag = nil
-            set(target)
+            dragStart = nil
+            move.release(velocity: 0)
+            startTicker()
         }
+    }
+
+    /// Rapid taps add up and a tap during a flight keeps its speed; a drag that begins in a flight takes over from where it is.
+    private func moveBy(_ delta: Int) {
+        beginMove()
+        move.retarget(by: delta)
+        startTicker()
+    }
+
+    private func setProgress(_ value: Double) {
+        beginMove()
+        move.drag(to: Double(firstWindow) + value)
+        applyMove()
+    }
+
+    /// At the start of a move from rest: which time is at the middle of the screen, to hold it there while the days move.
+    private func beginMove() {
+        guard !move.isMoving, pinch.viewportHeight > 1 else { return }
+        let viewport = pinch.viewportHeight
+        let partition = sharedPartition(position: move.position, viewport: viewport)
+        anchorTime = ContinuousDayAxis.time(atOffset: pinch.currentOffset?() ?? 0, partition: partition, zoom: pinch.zoom, viewport: viewport, focal: viewport / 2)
+    }
+
+    /// Show the model's position: the day and fraction the columns and the time blend are drawn at, and the scroll that keeps the anchor.
+    private func applyMove() {
+        window = move.day
+        progress = move.progress
+        guard anchorOn, let time = anchorTime, pinch.viewportHeight > 1 else { lastAnchor = nil; return }
+        let viewport = pinch.viewportHeight
+        let result = ContinuousDayAxis.anchoredOffset(time: time, partition: sharedPartition(position: move.position, viewport: viewport), zoom: pinch.zoom, viewport: viewport, focal: viewport / 2)
+        lastAnchor = result
+        pinch.setOffset?(result.offset)
+    }
+
+    /// Advances the spring by real elapsed time, once per display frame, while there is something to settle.
+    private func startTicker() {
+        guard !ticking else { return }
+        ticking = true
+        Task { @MainActor in
+            let clock = ContinuousClock()
+            var last = clock.now
+            while move.phase == .settling {
+                try? await Task.sleep(for: .milliseconds(8))
+                let now = clock.now
+                let elapsed = now - last
+                last = now
+                move.advance(by: Double(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18)
+                applyMove()
+            }
+            ticking = false
+        }
+    }
+
+    /// What the continuous space is doing now (`-render-continuous`).
+    private var panel: some View {
+        let geometry = geometry(width: UIScreen.main.bounds.width)
+        let rendered = geometry.renderedDays(at: move.position)
+        let planning = geometry.planningDays(at: move.position, bounds: windows)
+        let viewport = max(pinch.viewportHeight, 1)
+        let shared = sharedPartition(position: move.position, viewport: viewport)
+        let noon = shared.timeToY(720)
+        let phase = move.phase == .resting ? "정지" : (move.phase == .dragging ? "드래그" : "정착")
+        let anchor = anchorTime.map { String(format: "%02d:%02d", Int($0) / 60, Int($0) % 60) } ?? "—"
+        let anchored = lastAnchor.map { $0.clamped ? String(format: "한계 잔차 %.0f분", $0.residualMinutes) : "유지" } ?? "—"
+        return VStack(alignment: .leading, spacing: 1) {
+            Text(String(format: "위치 %.3f일 · %@ · 목표 %d · 속도 %.2f/s", move.position, phase, move.target, move.velocity)).monospacedDigit()
+            Text("그리는 날 \(rendered.lowerBound)…\(rendered.upperBound) · 계획 날 \(planning.lowerBound)…\(planning.upperBound) · 계획 \(store.planRuns) 프로필 \(store.profileBuilds) 적중 \(Int(store.hitRate * 100))% 엔티티 \(counters.entityBuilds)")
+            Text(String(format: "공유 y(12:00)=%.2f · 앵커 %@ %@ · %@", noon, anchor, anchored, anchorOn ? "시각 앵커" : "pt 유지"))
+        }
+        .font(.system(size: 8)).foregroundStyle(.secondary)
     }
 
     /// The fixed horizontal lines (one style for every cell, at the same y at every p) and the time axis: one thin solid line, with a tick at the
@@ -279,24 +394,24 @@ struct RenderGridScreen: View {
     // MARK: Columns
 
     private func columns(partition: TemporalGridPartition, width: CGFloat, window: ClosedRange<CGFloat>) -> some View {
-        let columnWidth = (width - Self.gutter) / 2
+        let geometry = DayAxisGeometry(dayWidth: (width - Self.gutter) / 2)
         let metrics = EventPresentation.Metrics.standard(scale: CGFloat(textScale))
         let pitch = GridPlacement.transactionPitch(scenario.parameters, textScale: CGFloat(textScale))
-        let first = firstWindow
-        return HStack(spacing: 0) {
-            ForEach(0..<3, id: \.self) { offset in
-                let day = scenario.days[first + offset]
-                column(day: day, partition: partition, metrics: metrics, pitch: pitch, width: columnWidth, window: window, role: offset == 0 ? "D" : (offset == 1 ? "D+1" : "D+2"))
+        let position = position
+        // Only the days that reach the window are drawn; each at its fixed width, at x = (day − position) · width.
+        let days = geometry.renderedDays(at: position).filter { scenario.days.indices.contains($0) }
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(days), id: \.self) { index in
+                column(day: scenario.days[index], dayIndex: index, partition: partition, metrics: metrics, pitch: pitch, width: geometry.dayWidth, window: window, role: "D\(index)")
+                    .offset(x: Self.gutter + geometry.x(ofDay: Double(index), at: position))
             }
         }
-        // The three days slide left by one column as p goes 0 → 1: the day swipe.
-        .offset(x: Self.gutter - CGFloat(progress) * columnWidth)
         .frame(width: width, alignment: .leading)
         .clipShape(Rectangle().path(in: CGRect(x: Self.gutter, y: 0, width: width - Self.gutter, height: partition.totalHeight)))
     }
 
-    private func column(day: AllocationDay, partition: TemporalGridPartition, metrics: EventPresentation.Metrics, pitch: CGFloat, width: CGFloat, window: ClosedRange<CGFloat>, role: String) -> some View {
-        let entities = entitiesCache(day)
+    private func column(day: AllocationDay, dayIndex: Int, partition: TemporalGridPartition, metrics: EventPresentation.Metrics, pitch: CGFloat, width: CGFloat, window: ClosedRange<CGFloat>, role: String) -> some View {
+        let entities = entitiesCache(day, index: dayIndex)
         let placed = GridPlacement.place(entities, partition: partition, metrics: metrics, transactionPitch: pitch)
         let scale = CGFloat(textScale)
         let text = GridTextLayout.resolve(entities: entities, placement: placed, columnWidth: width, scale: scale)
@@ -322,8 +437,8 @@ struct RenderGridScreen: View {
     }
 
     /// The static part of a day (which events and transactions it has) is built once per day, not per frame.
-    private func entitiesCache(_ day: AllocationDay) -> GridDayEntities {
-        let key = "\(fixtureIndex)-\(day.day.daysSinceUnixEpoch)"
+    private func entitiesCache(_ day: AllocationDay, index: Int) -> GridDayEntities {
+        let key = "\(fixtureIndex)-\(index)"
         if let found = entityCache.value[key] { return found }
         let made = GridDayEntities.make(day)
         counters.entityBuilds += 1

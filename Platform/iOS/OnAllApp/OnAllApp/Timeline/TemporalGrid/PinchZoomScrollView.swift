@@ -9,10 +9,13 @@ final class PinchZoomModel: ObservableObject {
     /// Which half-viewport band of the scroll is on screen (changes rarely; the content built for it reaches a viewport beyond each side).
     @Published var band = 0
     @Published var isInteracting = false
-    var viewportHeight: CGFloat = 0
+    @Published var viewportHeight: CGFloat = 0
     init(zoom: CGFloat = 1) { self.zoom = PinchZoomMath.clamped(zoom) }
     /// Set by the scroll view: change the zoom keeping the time at `focal` (from the top of the viewport) where it is.
     var setZoom: ((CGFloat, CGFloat) -> Void)?
+    /// Set by the scroll view: the scroll offset now, and a way to put it somewhere (the days moving under a zoomed view keep the time at the middle).
+    var currentOffset: (() -> CGFloat)?
+    var setOffset: ((CGFloat) -> Void)?
     // Measurements of the content's own build (the SwiftUI tree for one frame), in milliseconds.
     private(set) var buildSamples: [Double] = []
     private(set) var lastBuildCount = 0
@@ -146,6 +149,12 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
             container.onLayout = { [weak self] size in self?.layout(size) }
             model.setZoom = { [weak self] zoom, focal in self?.setZoom(zoom, focal: focal) }
+            model.currentOffset = { [weak self] in self?.scroll.contentOffset.y ?? 0 }
+            model.setOffset = { [weak self] offset in
+                guard let self, self.pinchStart == nil else { return }
+                self.stopAnimation()
+                self.applyContent(zoom: self.model.zoom, offset: offset)
+            }
         }
 
         // MARK: Layout
