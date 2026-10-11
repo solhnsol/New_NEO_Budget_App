@@ -15,7 +15,15 @@ final class PinchZoomModel: ObservableObject {
     var setZoom: ((CGFloat, CGFloat) -> Void)?
     /// Set by the scroll view: the scroll offset now, and a way to put it somewhere (the days moving under a zoomed view keep the time at the middle).
     var currentOffset: (() -> CGFloat)?
-    var setOffset: ((CGFloat) -> Void)?
+    /// Returns false when the offset was not applied because the person has the scroll in hand.
+    var setOffset: ((CGFloat) -> Bool)?
+    /// Whether the person scrolled or pinched since the last time this was read. The move reads it to take a new anchor.
+    private(set) var userMoved = false
+    func markUserMoved() { userMoved = true }
+    func consumeUserMoved() -> Bool { defer { userMoved = false }; return userMoved }
+    /// Frame pacing of a move (a swipe and the settle after it), the same display-link meter the pinch uses.
+    var startPace: (() -> Void)?
+    var stopPace: (() -> Void)?
     // Measurements of the content's own build (the SwiftUI tree for one frame), in milliseconds.
     private(set) var buildSamples: [Double] = []
     private(set) var lastBuildCount = 0
@@ -32,9 +40,15 @@ final class PinchZoomModel: ObservableObject {
 
 /// What a horizontal drag across the days is doing (the day move of the prototype).
 enum DateDragPhase {
+    /// A finger came down while the days were still moving: they stop under it (it may be a swipe, a scroll, a pinch or a tap).
+    case touchDown
+    /// The finger has gone far enough sideways to be a swipe.
+    case began
     case changed(translationX: CGFloat)
     case ended(velocityX: CGFloat)
     case cancelled
+    /// Every finger is up and none made a swipe: whatever was moving carries on to where it was going.
+    case touchUp
 }
 
 /// A vertical scroll view whose content is a SwiftUI grid, with a two-finger pinch that zooms the whole grid continuously (1 ... 8×) and keeps the
@@ -85,7 +99,8 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
     final class TouchCounter: UIGestureRecognizer {
         private(set) var count = 0
         var allLifted: (() -> Void)?
-        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) { count += touches.count }
+        var touchedDown: (() -> Void)?
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) { if count == 0 { touchedDown?() }; count += touches.count }
         override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) { lift(touches.count) }
         override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) { lift(touches.count) }
         private func lift(_ number: Int) { count = max(0, count - number); if count == 0 { allLifted?() } }
@@ -103,7 +118,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         var onDateDrag: (DateDragPhase) -> Void = { _ in }
         private let counter = TouchCounter()
         private var pinch: UIPinchGestureRecognizer!
-        private var datePan: UIPanGestureRecognizer!
+        private var datePan: DateSwipeRecognizer!
         private var pinchStart: (zoom: CGFloat, fraction: CGFloat)?
         private var lastFocal: CGFloat = 0
         private var suppressed = false
@@ -137,24 +152,31 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
             pinch.delegate = self
             container.addGestureRecognizer(pinch)
-            datePan = UIPanGestureRecognizer(target: self, action: #selector(handleDatePan(_:)))
+            datePan = DateSwipeRecognizer(target: self, action: #selector(handleDatePan(_:)))
             datePan.delegate = self
-            datePan.maximumNumberOfTouches = 1
+            datePan.cancelsTouchesInView = false
             container.addGestureRecognizer(datePan)
             counter.cancelsTouchesInView = false
             counter.delaysTouchesBegan = false
             counter.delaysTouchesEnded = false
             counter.allLifted = { [weak self] in self?.fingersUp() }
+            counter.touchedDown = { [weak self] in self?.onDateDrag(.touchDown) }
             container.addGestureRecognizer(counter)
 
             container.onLayout = { [weak self] size in self?.layout(size) }
             model.setZoom = { [weak self] zoom, focal in self?.setZoom(zoom, focal: focal) }
             model.currentOffset = { [weak self] in self?.scroll.contentOffset.y ?? 0 }
             model.setOffset = { [weak self] offset in
-                guard let self, self.pinchStart == nil else { return }
+                guard let self, self.pinchStart == nil else { return false }
+                // The scroll is in the person's hand (or coasting from it): leave it, and take a new anchor when they let go.
+                // (A finger that is merely down on it, swiping the days, is not scrolling.)
+                if self.scroll.isDragging || self.scroll.isDecelerating { self.model.markUserMoved(); return false }
                 self.stopAnimation()
                 self.applyContent(zoom: self.model.zoom, offset: offset)
+                return true
             }
+            model.startPace = { [weak self] in self?.startMeter() }
+            model.stopPace = { [weak self] in self?.stopMeter() }
         }
 
         // MARK: Layout
@@ -186,6 +208,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let container else { return }
+            if scrollView.isDragging || scrollView.isDecelerating { model.markUserMoved() }
             let band = PinchZoomMath.visibleBand(offset: max(0, scrollView.contentOffset.y), viewport: container.bounds.height)
             if model.band != band { model.band = band }
         }
@@ -222,12 +245,14 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             case .changed:
                 guard let start = pinchStart else { return }
                 lastFocal = focal
+                model.markUserMoved()
                 let next = PinchZoomMath.step(startZoom: start.zoom, scale: gesture.scale, fraction: start.fraction, focal: focal, viewport: viewport)
                 applyContent(zoom: next.zoom, offset: next.offset)
             case .ended, .cancelled, .failed:
                 guard let start = pinchStart else { return }
                 pinchStart = nil
                 model.isInteracting = false
+                model.markUserMoved()
                 stopMeter()
                 let target = PinchZoomMath.rest(zoom: model.zoom, fraction: start.fraction, focal: lastFocal, viewport: viewport)
                 if abs(target.zoom - model.zoom) > 0.0005 { animate(to: target) } else { applyContent(zoom: target.zoom, offset: target.offset) }
@@ -242,6 +267,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             suppressed = false
             scroll.panGestureRecognizer.isEnabled = true
             datePan.isEnabled = true
+            if !datePanning { onDateDrag(.touchUp) }
         }
 
         /// If the finger count were ever wrong, gestures still come back.
@@ -256,6 +282,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         // MARK: Frame pacing during a pinch
 
         private func startMeter() {
+            meter?.invalidate()
             meterIntervals = []; meterLast = 0
             model.resetBuildSamples()
             let link = CADisplayLink(target: self, selector: #selector(meterTick(_:)))
@@ -302,16 +329,19 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Moving the days
 
-        @objc private func handleDatePan(_ gesture: UIPanGestureRecognizer) {
+        @objc private func handleDatePan(_ gesture: DateSwipeRecognizer) {
             switch gesture.state {
             case .began:
                 datePanning = true
                 scroll.panGestureRecognizer.isEnabled = false
-                onDateDrag(.changed(translationX: 0))
+                model.resetBuildSamples()
+                startMeter()
+                onDateDrag(.began)
+                onDateDrag(.changed(translationX: gesture.translationX))
             case .changed:
-                if datePanning { onDateDrag(.changed(translationX: gesture.translation(in: container).x)) }
+                if datePanning { onDateDrag(.changed(translationX: gesture.translationX)) }
             case .ended:
-                if datePanning { datePanning = false; onDateDrag(.ended(velocityX: gesture.velocity(in: container).x)) }
+                if datePanning { datePanning = false; onDateDrag(.ended(velocityX: gesture.releaseVelocity)) }
                 if !suppressed { scroll.panGestureRecognizer.isEnabled = true }
             case .cancelled, .failed:
                 if datePanning { datePanning = false; onDateDrag(.cancelled) }
@@ -323,11 +353,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         // MARK: Gesture arbitration
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === datePan {
-                guard !suppressed, pinchStart == nil else { return false }
-                let velocity = datePan.velocity(in: container)
-                return abs(velocity.x) > abs(velocity.y) * 1.6        // a mostly horizontal drag only
-            }
+            if gestureRecognizer === datePan { return !suppressed && pinchStart == nil }       // the classifier has already said "mostly sideways"
             return true
         }
 
@@ -336,5 +362,53 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             return gestureRecognizer === counter || other === counter
         }
     }
+}
+
+/// One finger going mostly sideways (`HorizontalDragClassifier`): it begins after 4 points, fails on a mostly vertical movement, and is cancelled when a
+/// second finger comes down (a pinch). Its translation is from where the finger came down.
+final class DateSwipeRecognizer: UIGestureRecognizer {
+    private var classifier = HorizontalDragClassifier()
+    private var tracked: UITouch?
+    private var endedAt: TimeInterval = 0
+    var translationX: CGFloat { classifier.translation }
+    var releaseVelocity: CGFloat { classifier.velocity(at: endedAt) }
+
+    private func sample(_ touch: UITouch) -> HorizontalDragClassifier.Sample {
+        let point = touch.location(in: view)
+        return .init(time: touch.timestamp, x: point.x, y: point.y)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if tracked == nil, touches.count == 1, event.allTouches?.count == 1, let touch = touches.first {
+            tracked = touch
+            classifier.begin(sample(touch))
+        } else if state == .began || state == .changed {
+            state = .cancelled
+        } else {
+            state = .failed
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let tracked, touches.contains(tracked) else { return }
+        switch classifier.move(sample(tracked)) {
+        case .horizontal: state = state == .possible ? .began : .changed
+        case .vertical: if state == .possible { state = .failed }
+        case .undecided: break
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let tracked, touches.contains(tracked) else { return }
+        endedAt = tracked.timestamp
+        state = (state == .began || state == .changed) ? .ended : .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let tracked, touches.contains(tracked) else { return }
+        state = (state == .began || state == .changed) ? .cancelled : .failed
+    }
+
+    override func reset() { tracked = nil; classifier = HorizontalDragClassifier() }
 }
 #endif

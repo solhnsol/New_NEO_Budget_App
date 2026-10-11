@@ -79,3 +79,33 @@ enum ContinuousDayAxis {
         partition.zoomed(viewportHeight: viewport, zoomScale: zoom).yToTime(offset + focal)
     }
 }
+
+/// The time held at the middle of the screen while the days move, and the position the scroll offset was last right for. One value, no clock.
+///
+/// While the days move, the offset follows the anchor time. When the person scrolls or pinches (they set the offset themselves) the old anchor
+/// is no longer where they are looking, so the next step takes a new one from the offset they left, on the partition of the position the offset was
+/// last right for. The same goes for the very first step. That is the whole reset rule.
+struct AnchorState: Equatable {
+    private(set) var time: Double?
+    /// The position at which the scroll offset was last applied (or read).
+    private(set) var position: Double
+
+    init(position: Double) { self.position = position }
+
+    /// The offset to apply when the window moves to `newPosition`. `currentOffset` is the offset on screen now; `userMoved` is true when the person
+    /// changed the scroll or the zoom since the last step (so the anchor is taken again from where they left it).
+    mutating func offset(
+        forPosition newPosition: Double, currentOffset: CGFloat, userMoved: Bool, zoom: CGFloat, viewport: CGFloat, focal: CGFloat,
+        partitionAt: (Double) -> TemporalGridPartition
+    ) -> ContinuousDayAxis.AnchoredOffset {
+        if time == nil || userMoved {
+            time = ContinuousDayAxis.time(atOffset: currentOffset, partition: partitionAt(position), zoom: zoom, viewport: viewport, focal: focal)
+        }
+        let result = ContinuousDayAxis.anchoredOffset(time: time ?? 0, partition: partitionAt(newPosition), zoom: zoom, viewport: viewport, focal: focal)
+        position = newPosition
+        return result
+    }
+
+    /// The offset is not being applied now (the person has the scroll in their hand): keep the position the move has reached, and forget the anchor.
+    mutating func release(at newPosition: Double) { position = newPosition; time = nil }
+}

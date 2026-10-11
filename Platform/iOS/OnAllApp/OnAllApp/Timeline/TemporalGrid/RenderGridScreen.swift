@@ -27,8 +27,24 @@ struct RenderGridScreen: View {
     @State private var ticking = false
     /// Keep the time at the middle of the screen while the days move (on), or keep the scroll offset in points as before (off): the comparison.
     @State private var anchorOn = RenderGridScreen.argument("-grid-anchor") != "off"
-    @State private var anchorTime: Double?
+    @State private var anchorState = AnchorState(position: 3)
     @State private var lastAnchor: ContinuousDayAxis.AnchoredOffset?
+    /// The flight a finger stopped by coming down on it, to carry on if that finger turns out not to swipe.
+    @State private var caughtTarget: Int?
+    @State private var lastRelease = ""
+    @State private var applyCosts = ApplyCosts()
+
+    final class ApplyCosts {
+        var samples: [Double] = []
+        func record(_ ms: Double) { samples.append(ms); if samples.count > 600 { samples.removeFirst() } }
+        var summary: String {
+            guard !samples.isEmpty else { return "—" }
+            return String(format: "평균 %.3f/최대 %.3f ms (n=%d)", samples.reduce(0, +) / Double(samples.count), samples.max() ?? 0, samples.count)
+        }
+    }
+    /// How many days are across the screen. The move, the geometry and the columns read this one number; the plans (a window reads the day before
+    /// and two after) are still made for two.
+    private static let visibleDayColumns = 2
     private static let showsPanel = ProcessInfo.processInfo.arguments.contains("-render-continuous")
     @State private var memo = StateMemo()
     @State private var progress: Double = RenderGridScreen.argument("-grid-p").flatMap(Double.init) ?? 0
@@ -76,9 +92,13 @@ struct RenderGridScreen: View {
             // The model starts on the launch window (and the launch fraction, held where it is).
             move = DayMoveModel(day: firstWindow, bounds: windows)
             if progress > 0 { move.drag(to: Double(firstWindow) + progress) }
+            anchorState = AnchorState(position: move.position)
             await runScript()
         }
-        .onChange(of: fixtureIndex) { _, _ in move = DayMoveModel(day: firstWindow, bounds: windows); progress = 0; counters.entityBuilds = 0 }
+        .onChange(of: fixtureIndex) { _, _ in
+            move = DayMoveModel(day: firstWindow, bounds: windows); progress = 0; counters.entityBuilds = 0
+            anchorState = AnchorState(position: move.position)
+        }
     }
 
     private struct StatusBar: View {
@@ -129,7 +149,7 @@ struct RenderGridScreen: View {
             try? await Task.sleep(for: .milliseconds(500))
             // Scroll to 12:00 at the middle of the screen, so the anchor has something to hold.
             let viewport = pinch.viewportHeight
-            pinch.setOffset?(ContinuousDayAxis.anchoredOffset(time: 12 * 60, partition: sharedPartition(position: position, viewport: viewport), zoom: pinch.zoom, viewport: viewport, focal: viewport / 2).offset)
+            _ = pinch.setOffset?(ContinuousDayAxis.anchoredOffset(time: 12 * 60, partition: sharedPartition(position: position, viewport: viewport), zoom: pinch.zoom, viewport: viewport, focal: viewport / 2).offset)
             try? await Task.sleep(for: .milliseconds(800))
             moveBy(1); try? await Task.sleep(for: .milliseconds(150))
             moveBy(1); try? await Task.sleep(for: .milliseconds(150))
@@ -172,7 +192,7 @@ struct RenderGridScreen: View {
                 }
                 Button(anchorOn ? "앵커 ON" : "앵커 OFF") { anchorOn.toggle() }.buttonStyle(.bordered).controlSize(.mini).fixedSize()
             }
-            SummaryHost(model: pinch) { summary }.frame(height: Self.showsPanel ? 74 : 24, alignment: .topLeading)
+            SummaryHost(model: pinch) { summary }.frame(height: Self.showsPanel ? 84 : 24, alignment: .topLeading)
         }
         .padding(.horizontal, 8).padding(.vertical, 4)
     }
@@ -265,57 +285,74 @@ struct RenderGridScreen: View {
     private var position: Double { Double(firstWindow) + progress }
 
     /// A window onto the day line: columns of the width a day has on this screen.
-    private func geometry(width: CGFloat) -> DayAxisGeometry { DayAxisGeometry(dayWidth: (width - Self.gutter) / 2) }
+    private func geometry(width: CGFloat) -> DayAxisGeometry {
+        DayAxisGeometry(dayWidth: (width - Self.gutter) / CGFloat(Self.visibleDayColumns), visibleColumns: Self.visibleDayColumns)
+    }
 
-    /// A horizontal drag is the move model's `drag`/`release` (`Double` days per second); the screen only reads the model's position back.
+    /// The swipe is `DayMoveModel`'s `drag`/`release` (days per second); the screen only reads the model's position back. A finger coming down
+    /// stops a flight under it at once; a new drag takes over from the position the flight had reached; nothing is ignored while days are moving.
     private func handleDateDrag(_ phase: DateDragPhase, width: CGFloat) {
         let geometry = geometry(width: width)
         switch phase {
+        case .touchDown:
+            guard move.phase == .settling else { return }
+            caughtTarget = move.target
+            move.beginDrag()
+            applyMove()
+        case .began:
+            caughtTarget = nil
+            if move.phase != .dragging { move.beginDrag() }
+            dragStart = move.position
         case .changed(let translation):
-            if dragStart == nil { beginMove(); move.beginDrag(); dragStart = move.position }
+            if dragStart == nil { dragStart = move.position; if move.phase != .dragging { move.beginDrag() } }
             move.drag(to: geometry.position(startingAt: dragStart ?? move.position, translation: translation))
             applyMove()
         case .ended(let velocity):
             dragStart = nil
-            move.release(velocity: -Double(velocity / geometry.dayWidth))
+            let daysPerSecond = -Double(velocity / geometry.dayWidth)
+            move.release(velocity: daysPerSecond)
+            lastRelease = String(format: "해제 %.2f일/s → %d", daysPerSecond, move.target)
             startTicker()
         case .cancelled:
             dragStart = nil
             move.release(velocity: 0)
+            lastRelease = "취소 → \(move.target)"
+            startTicker()
+        case .touchUp:
+            guard let caught = caughtTarget, move.phase == .dragging, dragStart == nil else { return }
+            caughtTarget = nil
+            move.retarget(to: caught)             // nothing swiped: the flight goes on to where it was going
             startTicker()
         }
     }
 
     /// Rapid taps add up and a tap during a flight keeps its speed; a drag that begins in a flight takes over from where it is.
     private func moveBy(_ delta: Int) {
-        beginMove()
         move.retarget(by: delta)
         startTicker()
     }
 
     private func setProgress(_ value: Double) {
-        beginMove()
         move.drag(to: Double(firstWindow) + value)
         applyMove()
     }
 
-    /// At the start of a move from rest: which time is at the middle of the screen, to hold it there while the days move.
-    private func beginMove() {
-        guard !move.isMoving, pinch.viewportHeight > 1 else { return }
-        let viewport = pinch.viewportHeight
-        let partition = sharedPartition(position: move.position, viewport: viewport)
-        anchorTime = ContinuousDayAxis.time(atOffset: pinch.currentOffset?() ?? 0, partition: partition, zoom: pinch.zoom, viewport: viewport, focal: viewport / 2)
-    }
-
     /// Show the model's position: the day and fraction the columns and the time blend are drawn at, and the scroll that keeps the anchor.
     private func applyMove() {
+        let start = CFAbsoluteTimeGetCurrent()
+        defer { applyCosts.record((CFAbsoluteTimeGetCurrent() - start) * 1000) }
         window = move.day
         progress = move.progress
-        guard anchorOn, let time = anchorTime, pinch.viewportHeight > 1 else { lastAnchor = nil; return }
+        let userMoved = pinch.consumeUserMoved()
+        guard anchorOn, pinch.viewportHeight > 1 else { anchorState.release(at: move.position); lastAnchor = nil; return }
         let viewport = pinch.viewportHeight
-        let result = ContinuousDayAxis.anchoredOffset(time: time, partition: sharedPartition(position: move.position, viewport: viewport), zoom: pinch.zoom, viewport: viewport, focal: viewport / 2)
+        let result = anchorState.offset(
+            forPosition: move.position, currentOffset: pinch.currentOffset?() ?? 0, userMoved: userMoved, zoom: pinch.zoom, viewport: viewport, focal: viewport / 2,
+            partitionAt: { sharedPartition(position: $0, viewport: viewport) }
+        )
         lastAnchor = result
-        pinch.setOffset?(result.offset)
+        // Not applied while the person has the scroll in hand: the anchor is taken again from where they leave it.
+        if pinch.setOffset?(result.offset) == false { anchorState.release(at: move.position) }
     }
 
     /// Advances the spring by real elapsed time, once per display frame, while there is something to settle.
@@ -334,6 +371,7 @@ struct RenderGridScreen: View {
                 applyMove()
             }
             ticking = false
+            pinch.stopPace?()
         }
     }
 
@@ -346,12 +384,13 @@ struct RenderGridScreen: View {
         let shared = sharedPartition(position: move.position, viewport: viewport)
         let noon = shared.timeToY(720)
         let phase = move.phase == .resting ? "정지" : (move.phase == .dragging ? "드래그" : "정착")
-        let anchor = anchorTime.map { String(format: "%02d:%02d", Int($0) / 60, Int($0) % 60) } ?? "—"
+        let anchor = anchorState.time.map { String(format: "%02d:%02d", Int($0) / 60, Int($0) % 60) } ?? "—"
         let anchored = lastAnchor.map { $0.clamped ? String(format: "한계 잔차 %.0f분", $0.residualMinutes) : "유지" } ?? "—"
         return VStack(alignment: .leading, spacing: 1) {
             Text(String(format: "위치 %.3f일 · %@ · 목표 %d · 속도 %.2f/s", move.position, phase, move.target, move.velocity)).monospacedDigit()
             Text("그리는 날 \(rendered.lowerBound)…\(rendered.upperBound) · 계획 날 \(planning.lowerBound)…\(planning.upperBound) · 계획 \(store.planRuns) 프로필 \(store.profileBuilds) 적중 \(Int(store.hitRate * 100))% 엔티티 \(counters.entityBuilds)")
             Text(String(format: "공유 y(12:00)=%.2f · 앵커 %@ %@ · %@", noon, anchor, anchored, anchorOn ? "시각 앵커" : "pt 유지"))
+            Text("스와이프 \(lastRelease.isEmpty ? "—" : lastRelease)\(caughtTarget.map { " · 잡음→\($0)" } ?? "") · 적용 \(applyCosts.summary)")
         }
         .font(.system(size: 8)).foregroundStyle(.secondary)
     }
@@ -394,7 +433,7 @@ struct RenderGridScreen: View {
     // MARK: Columns
 
     private func columns(partition: TemporalGridPartition, width: CGFloat, window: ClosedRange<CGFloat>) -> some View {
-        let geometry = DayAxisGeometry(dayWidth: (width - Self.gutter) / 2)
+        let geometry = geometry(width: width)
         let metrics = EventPresentation.Metrics.standard(scale: CGFloat(textScale))
         let pitch = GridPlacement.transactionPitch(scenario.parameters, textScale: CGFloat(textScale))
         let position = position
