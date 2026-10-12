@@ -25,7 +25,12 @@ struct DayCachePolicy: Equatable {
 }
 
 struct DayCache: Equatable {
-    private(set) var timelines: [LocalDate: DayTimeline] = [:]
+    private(set) var timelines: [LocalDate: DayTimeline] = [:] { didSet { revision &+= 1 } }
+    /// Changes whenever a day is added, replaced or dropped, so a reader that kept something made from the days can tell cheaply whether to look again. Not part of
+    /// equality: two caches holding the same days are equal.
+    private(set) var revision = 0
+
+    static func == (lhs: DayCache, rhs: DayCache) -> Bool { lhs.timelines == rhs.timelines }
 
     subscript(day: LocalDate) -> DayTimeline? { timelines[day] }
     var days: Set<LocalDate> { Set(timelines.keys) }

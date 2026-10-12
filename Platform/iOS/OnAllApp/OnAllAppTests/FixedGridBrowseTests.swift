@@ -16,7 +16,7 @@ private let provenance = AssignmentProvenance.user(at: 1, evidenceVersion: nil)
 // MARK: Building days
 
 /// A `DayTimeline` with the content of an `AllocationDay` (the fixtures are written as those): the same ids, titles, minutes and links.
-private func timeline(_ source: AllocationDay, zone: DisplayTimeZone = seoul) throws -> DayTimeline {
+func fixtureTimeline(_ source: AllocationDay, zone: DisplayTimeZone = seoul) throws -> DayTimeline {
     let start = zone.dayBounds(source.day).start
     var events: [CalendarEvent] = []
     var markers: [TransactionMarker] = []
@@ -107,7 +107,7 @@ private func visibleTitles(_ plan: DayRenderPlan) -> Int { plan.events.filter { 
 @Test func everyFixtureKeepsEveryEventAndTransactionItsTimeItsLinksAndAWayToTouchItOnTheFixedGrid() throws {
     var rows: [String] = []
     for scenario in TemporalGridFixtures.all {
-        let days = try scenario.days.prefix(6).map { try timeline($0) }
+        let days = try scenario.days.prefix(6).map { try fixtureTimeline($0) }
         let window = Array(days[1...4])                                    // D-1, D, D+1, D+2 with D = days[2]
         let height = scenario.viewportHeight
         let scale = scenario.textScale
@@ -166,7 +166,7 @@ private func reachableEvents(_ plan: DayRenderPlan) throws -> Set<BlockID> {
 @MainActor
 @Test func overlappingEventsAreEachSelectableAndTouchingOneOpensItsDetails() throws {
     let scenario = try #require(TemporalGridFixtures.all.first { $0.name.hasPrefix("7 ") })
-    let days = try scenario.days.prefix(6).map { try timeline($0) }
+    let days = try scenario.days.prefix(6).map { try fixtureTimeline($0) }
     let (drawn, _) = try fixed(Array(days[1...4]), height: 640, scale: 1)
     let plan = drawn.plans[0]
     let day = drawn.timelines[0]
@@ -194,7 +194,7 @@ private func reachableEvents(_ plan: DayRenderPlan) throws -> Set<BlockID> {
 @MainActor
 @Test func everyKindOfTouchOpensTheSameSheetItOpensInBrowse() throws {
     let scenario = try #require(TemporalGridFixtures.all.first { $0.name.hasPrefix("17 ") })
-    let days = try scenario.days.prefix(6).map { try timeline($0) }
+    let days = try scenario.days.prefix(6).map { try fixtureTimeline($0) }
     let (drawn, _) = try fixed(Array(days[1...4]), height: 640, scale: 1)
     let plan = drawn.plans[0], day = drawn.timelines[0]
     var kinds = Set<String>()
@@ -211,7 +211,7 @@ private func reachableEvents(_ plan: DayRenderPlan) throws -> Set<BlockID> {
     #expect(kinds.contains("marker") || kinds.contains("overflow"))
     // A linked transaction on its own line opens the allocation sheet with the event it belongs to.
     let linked = try #require(TemporalGridFixtures.all.first { $0.name.hasPrefix("15 ") })
-    let linkedDays = try linked.days.prefix(6).map { try timeline($0) }
+    let linkedDays = try linked.days.prefix(6).map { try fixtureTimeline($0) }
     let (linkedDrawn, _) = try fixed(Array(linkedDays[1...4]), height: 640, scale: 1)
     let lines = linkedDrawn.plans[0].lines.filter { $0.link != nil || $0.linkedEventTitle != nil }
     for line in lines {
@@ -225,7 +225,7 @@ private func reachableEvents(_ plan: DayRenderPlan) throws -> Set<BlockID> {
 @MainActor
 @Test func theGridIsPlannedOnceAndNoFrameRunsThePlannerTheEngineOrTheDayAnalysis() throws {
     let scenario = try #require(TemporalGridFixtures.all.first { $0.name.hasPrefix("18 ") })     // 32 events
-    let days = try scenario.days.prefix(6).map { try timeline($0) }
+    let days = try scenario.days.prefix(6).map { try fixtureTimeline($0) }
     let window = Array(days[1...4])
     let model = FixedGridBrowseModel()
     let preparations = DayPlanPreparations()
@@ -257,7 +257,7 @@ private func reachableEvents(_ plan: DayRenderPlan) throws -> Set<BlockID> {
     var lines: [String] = []
     for name in ["18 ", "17 ", "14 ", "19 "] {
         let scenario = try #require(TemporalGridFixtures.all.first { $0.name.hasPrefix(name) })
-        let days = try scenario.days.prefix(6).map { try timeline($0) }
+        let days = try scenario.days.prefix(6).map { try fixtureTimeline($0) }
         let window = Array(days[1...4])
         let scale = scenario.textScale
         let model = FixedGridBrowseModel(), preparations = DayPlanPreparations()

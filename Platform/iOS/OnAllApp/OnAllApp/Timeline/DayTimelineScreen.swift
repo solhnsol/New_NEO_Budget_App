@@ -59,11 +59,21 @@ struct DayTimelineScreen: View {
     /// Goes to another day picked from the strip or the header, with the motion the system calendar has. The week strip answers at once (its
     /// circle and capsule); the next day slides in just as it does for a swipe; a day further away is a quick cross-fade instead of a
     /// run through the days in between.
+    private var noAnimationFixed: Transaction { var transaction = Transaction(); transaction.disablesAnimations = true; return transaction }
+
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0, !isChangingDay else { return }
         isChangingDay = true
         defer { isChangingDay = false }
+        if BrowseAxisMode.current == .fixedGrid {
+            // The fixed grid runs its own days to the new one (the selected day changing is what it answers).
+            Haptics.snap()
+            withTransaction(noAnimationFixed) { _ = model.moveTo(day) }
+            let policy = DayPrefetchPolicy.browse
+            await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy)
+            return
+        }
         let column = (screenWidth - 60) / 2
         pendingDays = delta
         var noAnimation = Transaction()
@@ -123,12 +133,15 @@ struct DayTimelineScreen: View {
             Divider()
             if BrowseAxisMode.current == .fixedGrid, timelines.count == 2 {
                 FixedGridBrowseView(
-                    strip: stripWithJump, today: model.today, zone: model.dayZone,
+                    model: model, today: model.today, zone: model.dayZone,
                     onSelect: { selection = $0 },
                     onMoveDays: { days in
-                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.loadMissing() } }
+                        // The days already read are shown in this frame; what the new window is missing (and the margin kept ahead) is read after.
+                        if model.moveTo(model.selectedDay.adding(days: days)) {
+                            let policy = DayPrefetchPolicy.browse
+                            Task { await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy) }
+                        }
                     },
-                    swipeOffset: $swipeOffset,
                     pendingDays: $pendingDays
                 )
             } else if let editor = model.editor, timelines.count == 2 {

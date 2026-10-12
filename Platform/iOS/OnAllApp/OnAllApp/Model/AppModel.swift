@@ -45,6 +45,10 @@ final class AppModel {
     private(set) var dayReads = 0
     /// The days kept, for tests and diagnostics.
     var cachedDays: Set<LocalDate> { cache.days }
+    /// A day as it is kept, if it is (read-only: the fixed grid draws any day around its moving position from here).
+    func cachedTimeline(for day: LocalDate) -> DayTimeline? { cache[day] }
+    /// Changes whenever the kept days change.
+    var dataRevision: Int { cache.revision }
     private var fullReloadsInFlight = 0
     private(set) var week: [WeekStripDay] = []
     /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.

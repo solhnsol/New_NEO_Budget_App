@@ -1,7 +1,6 @@
 import SwiftUI
 import UIKit
 
-#if DEBUG
 /// The zoom and what the screen reads about it. The hosted content observes this; the screen around it does not, so a pinch redraws only the grid.
 @MainActor
 final class PinchZoomModel: ObservableObject {
@@ -411,4 +410,3 @@ final class DateSwipeRecognizer: UIGestureRecognizer {
 
     override func reset() { tracked = nil; classifier = HorizontalDragClassifier() }
 }
-#endif
