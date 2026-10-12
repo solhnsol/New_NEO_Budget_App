@@ -20,17 +20,20 @@ struct DayMoveModel: Equatable {
     private(set) var target: Int
     private(set) var phase = Phase.resting
     let bounds: ClosedRange<Int>
+    /// The most days one release may carry the window over (`DayPrefetchPolicy` says how many days must be read ahead for a given hop).
+    let hopLimit: Int
 
     /// The spring's natural frequency (rad/s): a move of one day settles in about 0.4 s.
     static let frequency = 14.0
     /// How far ahead a release looks: a flick of `v` days per second lands `v · lookahead` days further on.
     static let lookahead = 0.15
-    /// The most days one release may carry the window over.
+    /// The default for the most days one release may carry the window over (the DEBUG grid). Browse starts at 1: see `DayPrefetchPolicy.browse`.
     static let maximumHop = 3
 
-    init(day: Int, bounds: ClosedRange<Int>) {
+    init(day: Int, bounds: ClosedRange<Int>, maximumHop: Int = DayMoveModel.maximumHop) {
         let clamped = min(max(day, bounds.lowerBound), bounds.upperBound)
         self.bounds = bounds
+        hopLimit = max(1, maximumHop)
         position = Double(clamped)
         target = clamped
     }
@@ -56,7 +59,7 @@ struct DayMoveModel: Equatable {
     /// The finger lets go at `velocity` days per second (positive: towards later days).
     mutating func release(velocity releaseVelocity: Double) {
         let projected = clamp(position + releaseVelocity * Self.lookahead)
-        let hop = Self.maximumHop
+        let hop = hopLimit
         let nearest = Int(position.rounded())
         let landing = min(max(Int(projected.rounded()), nearest - hop), nearest + hop)
         settle(to: landing, velocity: releaseVelocity)

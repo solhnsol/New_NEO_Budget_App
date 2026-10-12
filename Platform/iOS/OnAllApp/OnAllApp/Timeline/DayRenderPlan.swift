@@ -104,8 +104,152 @@ struct DayRenderPlan {
     /// The thinnest an event is ever drawn, however short its time is.
     static let thinnestDrawn: CGFloat = 2
 
+    /// Everything about one day that does not depend on where time is drawn, how large it is drawn or what is focused: which events overlap and how, the
+    /// engine's decision for each event and transaction, the linked transactions inside each event in the order they are shown, what each transaction says,
+    /// which transactions are lines and which overflows, which touch areas meet. It changes only when the day's data, the role or the engine's layout
+    /// changes, so it is made once and every frame (a zoom, a scroll, a move between two days) only places it (`init(prepared:...)`): no overlap analysis, no
+    /// ordering, no lookups of what a transaction says, no matching of the engine's output to the day's items.
+    final class Prepared {
+        struct Shape { let indent: Int; let pullsInOnRight: Bool }
+        /// A transaction line or an overflow, in time order. `requiredHeight` is the overflow's own height; a line's height depends on the text size.
+        struct Unit {
+            let anchor: Int
+            let id: String
+            let requiredHeight: CGFloat?
+            let index: Int
+            var isOverflow: Bool { requiredHeight != nil }
+        }
+
+        let day: LocalDate
+        let role: DayRole?
+        let blocks: [EventBlock]
+        let byID: [BlockID: EventBlock]
+        let content: DayContentLayout
+        let shapes: [BlockID: Shape]
+        let placements: [BlockID: EventPlacement]
+        let insideAll: [BlockID: [AllocationItem]]
+        /// The inside transactions in the order a card shows them, and the minute of the day each happened at (for where its row's dot is).
+        let insideSorted: [BlockID: [AllocationItem]]
+        let insideMinutes: [BlockID: [Int]]
+        let displays: [String: TransactionDisplay]
+        let sourceLines: [TransactionLine]
+        let sourceOverflows: [TransactionOverflow]
+        let units: [Unit]
+        /// The title of the event each line is linked to, by the line's index.
+        let lineLinkTitles: [String?]
+        let conflicts: [[Candidate]]
+        let defaultHitOrder: [BlockID]
+
+        init(timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?) {
+            let blocks = timeline.blocks
+            let allocationDay = AllocationDay(timeline)
+            let byRealEnd: [String: Int] = Dictionary(blocks.map { ($0.id.rawValue, max($0.endMinute, $0.startMinute + 1)) }, uniquingKeysWith: { first, _ in first })
+            let analysed = EventOverlapAnalysis.analyse(allocationDay.events.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) })
+            var placements: [BlockID: EventPlacement] = [:]
+            if let role, let layout {
+                for placement in layout.events where placement.key.role == role {
+                    for block in blocks where block.id.rawValue == placement.id && placements[block.id] == nil { placements[block.id] = placement }
+                }
+            }
+            // Which events lie on one another is judged by their real times (the engine counts an event as at least a quarter hour long).
+            let realOverlap: [String: EventOverlap] = EventOverlapAnalysis.analyse(
+                allocationDay.events.map {
+                    AllocationEvent(id: $0.id, title: $0.title, startMinute: $0.startMinute, endMinute: byRealEnd[$0.id] ?? $0.endMinute, linked: $0.linked)
+                }.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) }
+            )
+            var shapes: [BlockID: Shape] = [:]
+            for block in blocks {
+                let overlap = realOverlap[block.id.rawValue] ?? placements[block.id]?.overlap ?? analysed[block.id.rawValue]
+                shapes[block.id] = Shape(indent: overlap?.indent ?? 0, pullsInOnRight: overlap?.pullsInOnRight ?? false)
+            }
+            var insideAll: [BlockID: [AllocationItem]] = [:]
+            var insideSorted: [BlockID: [AllocationItem]] = [:]
+            var insideMinutes: [BlockID: [Int]] = [:]
+            for block in blocks {
+                let inside = DayRenderPlan.insideTransactions(of: block)
+                insideAll[block.id] = inside
+                let sorted = AllocationOrdering.byAmountDescending(inside)
+                insideSorted[block.id] = sorted
+                insideMinutes[block.id] = sorted.map { Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000) }
+            }
+
+            var sourceLines: [TransactionLine] = []
+            var sourceOverflows: [TransactionOverflow] = []
+            if let role, let layout {
+                sourceLines = layout.lines.filter { $0.role == role }
+                sourceOverflows = layout.overflows.filter { $0.role == role }
+            } else {
+                // A day the engine did not lay out: every transaction is a line, at its time.
+                for marker in timeline.markers {
+                    sourceLines.append(TransactionLine(
+                        key: ItemKey(role: .secondary, kind: .transactionLink, id: marker.transactionID.rawValue), role: .secondary,
+                        transactionID: marker.transactionID.rawValue, minute: marker.positionMinute,
+                        kind: marker.flow == .refund ? .refund : .spend, currency: marker.amount.currency, minorUnits: marker.amount.minorUnits,
+                        link: nil, isPartlyLinked: false
+                    ))
+                }
+            }
+            var units: [Unit] = []
+            for (i, line) in sourceLines.enumerated() { units.append(Unit(anchor: line.minute, id: line.transactionID, requiredHeight: nil, index: i)) }
+            for (i, overflow) in sourceOverflows.enumerated() {
+                units.append(Unit(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, requiredHeight: overflow.requiredHeight, index: i))
+            }
+            units.sort { ($0.anchor, $0.id) < ($1.anchor, $1.id) }
+            var titles: [String: String] = [:]
+            for block in blocks where titles[block.id.rawValue] == nil { titles[block.id.rawValue] = block.title }
+            lineLinkTitles = sourceLines.map { line in line.link.flatMap { titles[$0.eventID] } }
+
+            // What the engine says about touch areas meeting, in terms of what the renderer draws.
+            let lineIDs = Set(sourceLines.map(\.transactionID)), overflowIDs = Set(sourceOverflows.map(\.id)), blockIDs = Dictionary(blocks.map { ($0.id.rawValue, $0.id) }, uniquingKeysWith: { first, _ in first })
+            func candidate(_ id: String) -> Candidate? {
+                if lineIDs.contains(id) { return .line(id) }
+                if overflowIDs.contains(id) { return .overflow(id) }
+                if let block = blockIDs[id] { return .event(block) }
+                return nil
+            }
+            var conflictSets: [[Candidate]] = []
+            if let layout, let role {
+                let mine = Set(layout.events.filter { $0.key.role == role }.map(\.id) + sourceLines.map(\.transactionID) + sourceOverflows.map(\.id))
+                for conflict in layout.touchConflicts where conflict.candidates.allSatisfy({ mine.contains($0) }) {
+                    let list = conflict.candidates.compactMap(candidate)
+                    if list.count > 1 { conflictSets.append(list) }
+                }
+            }
+
+            let content = DayContentLayout(blocks: blocks)
+            self.day = timeline.day
+            self.role = role
+            self.blocks = blocks
+            self.byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            self.content = content
+            self.shapes = shapes
+            self.placements = placements
+            self.insideAll = insideAll
+            self.insideSorted = insideSorted
+            self.insideMinutes = insideMinutes
+            self.displays = DayRenderPlan.displays(of: timeline)
+            self.sourceLines = sourceLines
+            self.sourceOverflows = sourceOverflows
+            self.units = units
+            self.conflicts = conflictSets
+            self.defaultHitOrder = content.hitOrder(focused: nil)
+        }
+    }
+
     init(
         timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
+        textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
+        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
+    ) {
+        self.init(
+            prepared: Prepared(timeline: timeline, role: role, layout: layout), geometry: geometry, layoutWidth: layoutWidth, textScale: textScale,
+            expanded: expanded, focused: focused, parameters: parameters, metrics: metrics, titleWidth: titleWidth
+        )
+    }
+
+    /// Places a prepared day: only what depends on the axis, the text size and the focus is worked out here.
+    init(
+        prepared: Prepared, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
         metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
     ) {
@@ -113,48 +257,30 @@ struct DayRenderPlan {
         let metrics = metrics ?? .standard(scale: scale)
         let contentWidth = geometry.contentWidth(totalWidth: layoutWidth)
         let contentLeft = geometry.gutterWidth
-        let blocks = timeline.blocks
-        let content = DayContentLayout(blocks: blocks)
-        let byRealEnd: [String: Int] = Dictionary(blocks.map { ($0.id.rawValue, max($0.endMinute, $0.startMinute + 1)) }, uniquingKeysWith: { first, _ in first })
-        let allocationDay = AllocationDay(timeline)
-        let analysed = EventOverlapAnalysis.analyse(allocationDay.events.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) })
-
-        func placement(_ block: EventBlock) -> EventPlacement? {
-            guard let role, let layout else { return nil }
-            return layout.events.first { $0.key.role == role && $0.id == block.id.rawValue }
-        }
-        func overlap(_ block: EventBlock) -> EventOverlap? { placement(block)?.overlap ?? analysed[block.id.rawValue] }
-        // Which events lie on one another is judged by their real times (the engine counts an event as at least a quarter hour long).
-        let realOverlap: [String: EventOverlap] = EventOverlapAnalysis.analyse(
-            allocationDay.events.map {
-                AllocationEvent(id: $0.id, title: $0.title, startMinute: $0.startMinute, endMinute: byRealEnd[$0.id] ?? $0.endMinute, linked: $0.linked)
-            }.sorted { ($0.startMinute, -$0.endMinute, $0.id) < ($1.startMinute, -$1.endMinute, $1.id) }
-        )
+        let blocks = prepared.blocks
+        let content = prepared.content
+        let byID = prepared.byID
 
         // Frames. An event is exactly as tall as its time on the axis: nothing stretches it, nothing shortens it for the next event.
         // Events that truly overlap overlap on screen, in the same column, each indented by at most one step (an inner one is also pulled
         // in on the right). The selected or opened event keeps the size its handles are drawn for.
         var frames: [BlockID: CGRect] = [:]
         for block in blocks {
-            let shape = realOverlap[block.id.rawValue] ?? overlap(block)
+            let shape = prepared.shapes[block.id]
             let insets = CardInsets(left: CGFloat(shape?.indent ?? 0) * parameters.indentStep, right: (shape?.pullsInOnRight ?? false) ? 6 : 0)
             var frame = geometry.blockFrame(block, totalWidth: layoutWidth, expanded: expanded == block.id, insets: insets)
             if expanded != block.id, block.id != focused {
                 // The real span (the display span is padded to a quarter hour for short events, which would stretch them).
                 frame.origin.y = geometry.y(minute: block.startMinute)
-                frame.size.height = max(0, geometry.y(minute: block.endMinute) - frame.origin.y)
+                frame.size.height = max(0, geometry.y(bottomOfSpanFrom: block.startMinute, to: block.endMinute) - frame.origin.y)
             }
             frames[block.id] = frame
         }
-        let byID = Dictionary(blocks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // How each event looks, from its height alone.
         var presentations: [BlockID: EventPresentation] = [:]
-        var insideAll: [BlockID: [AllocationItem]] = [:]
         for block in blocks {
-            let inside = Self.insideTransactions(of: block)
-            insideAll[block.id] = inside
-            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: inside.count, metrics: metrics)
+            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics)
         }
 
         // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.
@@ -172,12 +298,12 @@ struct DayRenderPlan {
         )
 
         // Events, back to front.
-        let ordered = content.hitOrder(focused: focused ?? expanded).reversed()
+        let ordered = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
         var eventItems: [EventItem] = []
-        for id in ordered {
+        for id in ordered.reversed() {
             guard let block = byID[id], let frame = frames[id], let presentation = presentations[id] else { continue }
-            let placed = placement(block)
-            let inside = AllocationOrdering.byAmountDescending(insideAll[id] ?? [])
+            let placed = prepared.placements[id]
+            let inside = prepared.insideSorted[id] ?? []
             let shown = presentation.shownRows
             let place = places[id] ?? .init()
             var drawn = frame
@@ -198,7 +324,7 @@ struct DayRenderPlan {
                     default: return nil
                     }
                 }(),
-                insideAnchors: inside.prefix(shown).map { geometry.y(minute: Int(($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)) },
+                insideAnchors: (prepared.insideMinutes[id] ?? []).prefix(shown).map { geometry.y(minute: $0) },
                 startTimeFits: place.dx == 0 && place.dy == 0 && !place.overflows && frame.width >= titleRoom
             ))
         }
@@ -207,14 +333,7 @@ struct DayRenderPlan {
         // really has room: a row is written once there is a row's height between it and the one before it in time, whether or not that one
         // is written (so what is written only ever grows with the room, and never flickers); until then its dot stays, and so does its touch
         // area, and its text comes in from the left as the room appears. The engine's overflow cards are the one summary there is; none is made here.
-        struct Unit {
-            let anchor: Int
-            let id: String
-            let height: CGFloat
-            let isOverflow: Bool
-            let index: Int
-        }
-        let displays = Self.displays(of: timeline)
+        let displays = prepared.displays
         var lineItems: [LineItem] = []
         var overflowItems: [OverflowItem] = []
         let lineWidth = min(contentWidth, max(parameters.minimumLineWidth, contentWidth * parameters.lineWidthShare))
@@ -222,29 +341,8 @@ struct DayRenderPlan {
         let gap = parameters.lineGap * scale
         let airInset = 4 * scale
         let ramp = metrics.ramp
-
-        var sourceLines: [TransactionLine] = []
-        var sourceOverflows: [TransactionOverflow] = []
-        if let role, let layout {
-            sourceLines = layout.lines.filter { $0.role == role }
-            sourceOverflows = layout.overflows.filter { $0.role == role }
-        } else {
-            // A day the engine did not lay out: every transaction is a line, at its time.
-            for marker in timeline.markers {
-                sourceLines.append(TransactionLine(
-                    key: ItemKey(role: .secondary, kind: .transactionLink, id: marker.transactionID.rawValue), role: .secondary,
-                    transactionID: marker.transactionID.rawValue, minute: marker.positionMinute,
-                    kind: marker.flow == .refund ? .refund : .spend, currency: marker.amount.currency, minorUnits: marker.amount.minorUnits,
-                    link: nil, isPartlyLinked: false
-                ))
-            }
-        }
-        var units: [Unit] = []
-        for (i, line) in sourceLines.enumerated() { units.append(Unit(anchor: line.minute, id: line.transactionID, height: parameters.transactionRow * scale, isOverflow: false, index: i)) }
-        for (i, overflow) in sourceOverflows.enumerated() {
-            units.append(Unit(anchor: (overflow.startMinute + overflow.endMinute) / 2, id: overflow.id, height: overflow.requiredHeight, isOverflow: true, index: i))
-        }
-        units.sort { ($0.anchor, $0.id) < ($1.anchor, $1.id) }
+        let sourceLines = prepared.sourceLines
+        let sourceOverflows = prepared.sourceOverflows
 
         // Where an event's title is written, a row keeps to the right part the engine left it; if even that meets the title, its text waits.
         func titleRects(wide: Bool) -> [CGRect] {
@@ -257,15 +355,16 @@ struct DayRenderPlan {
         let realTitleRows = titleRects(wide: false)
         var lastCenter: CGFloat?
         var lastText: CGFloat = 0
-        for unit in units {
+        for unit in prepared.units {
+            let unitHeight = unit.requiredHeight ?? parameters.transactionRow * scale
             let center = geometry.y(minute: unit.anchor)
-            let text = unit.height - 2 * airInset
+            let text = unitHeight - 2 * airInset
             var reveal: CGFloat = 1
             if let lastCenter, !unit.isOverflow {
                 let need = (lastText + text) / 2 + gap
                 reveal = min(1, max(0, (center - lastCenter - need) / max(0.001, ramp)))
             }
-            var frame = CGRect(x: lineX, y: center - unit.height / 2, width: lineWidth, height: unit.height)
+            var frame = CGRect(x: lineX, y: center - unitHeight / 2, width: lineWidth, height: unitHeight)
             if !wideTitleRows.contains(where: { $0.intersects(frame.insetBy(dx: 0, dy: airInset)) }) {
                 frame = CGRect(x: contentLeft, y: frame.minY, width: frame.maxX - contentLeft, height: frame.height)
             } else if realTitleRows.contains(where: { $0.intersects(frame.insetBy(dx: 0, dy: airInset)) }) {
@@ -273,34 +372,17 @@ struct DayRenderPlan {
             }
             lastCenter = center
             lastText = text
-            let missing = max(0, parameters.minimumTouchHeight - unit.height)
+            let missing = max(0, parameters.minimumTouchHeight - unitHeight)
             let touch = frame.insetBy(dx: 0, dy: -missing / 2)
             if !unit.isOverflow {
                 let line = sourceLines[unit.index]
-                let linkTitle = line.link.flatMap { link in blocks.first { $0.id.rawValue == link.eventID }?.title }
-                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: linkTitle, frame: frame, touchFrame: touch, anchorY: center, reveal: reveal))
+                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: prepared.lineLinkTitles[unit.index], frame: frame, touchFrame: touch, anchorY: center, reveal: reveal))
             } else {
                 let overflow = sourceOverflows[unit.index]
                 overflowItems.append(OverflowItem(
                     id: overflow.id, frame: frame, touchFrame: touch, anchorY: center, members: overflow.members, countsByKind: overflow.countsByKind,
                     amountTotals: overflow.amountTotals, showsAmountTotal: overflow.showsAmountTotal, reveal: reveal
                 ))
-            }
-        }
-
-        // What the engine says about touch areas meeting, in terms of what the renderer draws.
-        func candidate(_ id: String) -> Candidate? {
-            if lineItems.contains(where: { $0.id == id }) { return .line(id) }
-            if overflowItems.contains(where: { $0.id == id }) { return .overflow(id) }
-            if let block = blocks.first(where: { $0.id.rawValue == id }) { return .event(block.id) }
-            return nil
-        }
-        var conflictSets: [[Candidate]] = []
-        if let layout, let role {
-            let mine = Set(layout.events.filter { $0.key.role == role }.map(\.id) + sourceLines.map(\.transactionID) + sourceOverflows.map(\.id))
-            for conflict in layout.touchConflicts where conflict.candidates.allSatisfy({ mine.contains($0) }) {
-                let list = conflict.candidates.compactMap(candidate)
-                if list.count > 1 { conflictSets.append(list) }
             }
         }
 
@@ -335,8 +417,8 @@ struct DayRenderPlan {
         events = eventItems
         lines = lineItems
         overflows = overflowItems
-        conflicts = conflictSets
-        hitOrder = content.hitOrder(focused: focused ?? expanded)
+        conflicts = prepared.conflicts
+        hitOrder = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
     }
 
     /// The linked transactions that happened within the event's own time, whatever the card has room to show.

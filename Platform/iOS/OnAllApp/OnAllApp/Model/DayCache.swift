@@ -38,16 +38,17 @@ struct DayCache: Equatable {
     mutating func insert(_ timeline: DayTimeline) { timelines[timeline.day] = timeline }
 
     /// Days just read are added (or replace the same day); then what the window no longer covers is dropped.
-    mutating func merge(_ loaded: [LocalDate: DayTimeline], around day: LocalDate, policy: DayCachePolicy = .standard) {
+    mutating func merge(_ loaded: [LocalDate: DayTimeline], around day: LocalDate, policy: DayCachePolicy = .standard, protecting: Set<LocalDate> = []) {
         for (key, timeline) in loaded { timelines[key] = timeline }
-        evict(around: day, policy: policy)
+        evict(around: day, policy: policy, protecting: protecting)
     }
 
-    mutating func evict(around day: LocalDate, policy: DayCachePolicy = .standard) {
-        let keep = policy.retained(around: day)
+    /// `protecting`: days that stay whatever the window says (the days on screen while the window is somewhere else, ahead of a move).
+    mutating func evict(around day: LocalDate, policy: DayCachePolicy = .standard, protecting: Set<LocalDate> = []) {
+        let keep = policy.retained(around: day).union(protecting)
         for key in timelines.keys where !keep.contains(key) { timelines[key] = nil }
         if timelines.count > policy.capacity {
-            let farthest = timelines.keys.sorted { abs($0.daysSinceUnixEpoch - day.daysSinceUnixEpoch) > abs($1.daysSinceUnixEpoch - day.daysSinceUnixEpoch) }
+            let farthest = timelines.keys.filter { !protecting.contains($0) }.sorted { abs($0.daysSinceUnixEpoch - day.daysSinceUnixEpoch) > abs($1.daysSinceUnixEpoch - day.daysSinceUnixEpoch) }
             for key in farthest.prefix(timelines.count - policy.capacity) { timelines[key] = nil }
         }
     }

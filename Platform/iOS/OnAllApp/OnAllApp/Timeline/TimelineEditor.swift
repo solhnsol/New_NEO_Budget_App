@@ -651,7 +651,7 @@ final class TimelineEditor {
     /// Starts a new event from a drag across empty space at `y`.
     @discardableResult
     func beginCreate(atY y: CGFloat, timeline: DayTimeline, geometry: TimelineGeometry, column: Int = 0) -> Bool {
-        guard mode == .idle else { return false }
+        guard mode == .idle, geometry.preservesInstantIdentity else { return false }
         let planner = TimelineEditPlanner(policy: environment.policy, zone: environment.zone, geometry: geometry, timeline: timeline)
         self.planner = planner
         block = nil

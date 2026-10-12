@@ -258,13 +258,13 @@ final class AppModel {
     /// around the selected day that are not kept, and evicts what the window left behind. Nothing already read is read again, and nothing near the selected
     /// day is dropped. Calendars and the life state are not read (a move does not change them). If a full `reload` is running it is the fresher read, so this
     /// becomes that.
-    func loadMissing(extra: Int = 0) async {
+    func loadMissing(extra: Int = 0, policy: DayCachePolicy = .standard) async {
         guard let service else { return }
         guard fullReloadsInFlight == 0 else { await reload(); return }
         generation += 1
         let mine = generation
         let focus = selectedDay
-        let missing = cache.missing(around: focus, extra: extra)
+        let missing = cache.missing(around: focus, policy: policy, extra: extra)
         var weeksToRead: [LocalDate] = []
         for offset in [-7, 0, 7] where weekCells[focus.adding(days: offset)] == nil { weeksToRead.append(focus.adding(days: offset)) }
         do {
@@ -278,7 +278,7 @@ final class AppModel {
                 if day == focus { loadedWeek = days }
             }
             guard mine == generation else { return }
-            cache.merge(loaded, around: focus)
+            cache.merge(loaded, around: focus, policy: policy)
             for (day, cell) in cells { weekCells[day] = cell }
             if let loadedWeek { week = loadedWeek }
             let shown = visibleTimelines
@@ -291,6 +291,32 @@ final class AppModel {
             guard mine == generation else { return }
             phase = .failed("일정과 거래를 불러오지 못했습니다.")
         }
+    }
+
+    /// While the window of days is between days (a swipe in progress, a flight to another day) and `selectedDay` has not moved yet: reads the days that the position
+    /// and the day being headed for need (`DayPrefetchPolicy.neededDays`), nearest the position first, keeps the days on screen, and evicts around the position.
+    /// `position` and `target` are epoch days. Nothing about the selected day changes. If a full `reload` is running it is left to finish (it is the fresher read) and
+    /// nothing is read; a read that a `reload` overtakes is dropped.
+    func prefetch(forPosition position: Double, target: Int? = nil, policy: DayPrefetchPolicy = .browse) async {
+        guard let service, fullReloadsInFlight == 0 else { return }
+        let needed = DayPrefetchPolicy.neededDays(position: position, target: target).map { LocalDate(daysSinceUnixEpoch: $0) }
+        let missing = needed.filter { cache[$0] == nil }.sorted { abs(Double($0.daysSinceUnixEpoch) - position) < abs(Double($1.daysSinceUnixEpoch) - position) }
+        let epoch = generation
+        let focus = LocalDate(daysSinceUnixEpoch: Int(position.rounded()))
+        // The two days on screen, and what a window of days around the selected one is required to hold, stay whatever the window is doing.
+        let onScreen = Set([selectedDay, selectedDay.adding(days: 1)])
+        guard !missing.isEmpty else {
+            cache.evict(around: focus, policy: policy.cachePolicy, protecting: onScreen.union(needed))
+            return
+        }
+        var loaded: [LocalDate: DayTimeline] = [:]
+        for day in missing {
+            dayReads += 1
+            guard let timeline = try? await service.dayTimeline(for: day) else { return }
+            loaded[day] = timeline
+        }
+        guard epoch == generation, fullReloadsInFlight == 0 else { return }
+        cache.merge(loaded, around: focus, policy: policy.cachePolicy, protecting: onScreen.union(needed))
     }
 
     /// Runs one edit of an event's meaning (type, place, people, linked transactions) and shows the result. The day is reloaded

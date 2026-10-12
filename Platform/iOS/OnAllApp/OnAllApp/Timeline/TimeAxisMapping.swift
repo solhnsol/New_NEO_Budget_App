@@ -25,9 +25,26 @@ protocol TimeAxisMapping {
 
     func y(exactMinute: Double) -> CGFloat
     func exactMinute(atY y: CGFloat) -> Double
+
+    /// Where a span that ends (exclusively) at `minute` ends on the axis. The same as `y(minute:)` on every axis whose minutes map one to one onto the axis;
+    /// an axis that maps another clock onto its own (`ElapsedMinuteAxisMapping`) answers differently at a daylight-saving transition, where the end of the last
+    /// minute covered is not the start of the minute after it.
+    func y(endMinute minute: Int) -> CGFloat
+
+    /// Where the span `[start, end)` ends on the axis. For an axis with one-to-one minutes it is `y(endMinute: end)`; across a repeated hour it is the furthest the
+    /// span reaches (`DayWallClock.wallRange`), which is not necessarily where its last minute is.
+    func y(bottomOfSpanFrom start: Int, to end: Int) -> CGFloat
+
+    /// Whether a height can be turned back into **the one instant it came from**. `minute(atY:)` is always the nearest minute of the axis' own domain, but on an
+    /// axis where two instants share a position (the repeated hour of a fall-back day) it can name only the first of them. **Whatever turns a position into a time
+    /// that is saved (moving, resizing, creating) must refuse an axis for which this is `false`**; reading, hit-testing and display may use `minute(atY:)` freely.
+    var preservesInstantIdentity: Bool { get }
 }
 
 extension TimeAxisMapping {
+    func y(endMinute minute: Int) -> CGFloat { y(minute: minute) }
+    func y(bottomOfSpanFrom start: Int, to end: Int) -> CGFloat { y(endMinute: end) }
+    var preservesInstantIdentity: Bool { true }
     func y(exactMinute minute: Double) -> CGFloat { y(minute: Int(minute.rounded())) }
     func exactMinute(atY y: CGFloat) -> Double { Double(minute(atY: y)) }
 
@@ -40,7 +57,7 @@ extension TimeAxisMapping {
         let available = contentWidth(totalWidth: totalWidth)
         let used = expanded ? CardInsets.zero : insets
         let top = y(minute: block.displayStartMinute)
-        let bottom = y(minute: block.displayEndMinute)
+        let bottom = y(bottomOfSpanFrom: block.displayStartMinute, to: block.displayEndMinute)
         return CGRect(
             x: gutterWidth + used.left,
             y: top,

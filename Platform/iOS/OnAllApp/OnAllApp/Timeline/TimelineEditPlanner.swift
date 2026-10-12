@@ -40,7 +40,8 @@ struct TimelineEditPlanner {
     }
 
     func preview(_ kind: Kind, block: EventBlock, translationY: CGFloat) -> TimedEdit? {
-        guard let original = range(of: block) else { return nil }
+        // A position that cannot be turned back into one instant must not become a saved time (see `TimeAxisMapping.preservesInstantIdentity`).
+        guard geometry.preservesInstantIdentity, let original = range(of: block) else { return nil }
         switch kind {
         case .move:
             let delta = Int64(minute(movedFrom: block.startMinute, by: translationY) - block.startMinute) * 60_000
@@ -58,6 +59,7 @@ struct TimelineEditPlanner {
 
     /// A drag across empty space between two vertical positions in the grid.
     func createPreview(fromY: CGFloat, toY: CGFloat) -> TimedEdit {
+        precondition(geometry.preservesInstantIdentity, "a creation cannot be read off an axis that does not keep the instant (see TimeAxisMapping.preservesInstantIdentity)")
         let first = dayStartUnixMilliseconds + Int64(geometry.minute(atY: fromY)) * 60_000
         let second = dayStartUnixMilliseconds + Int64(geometry.minute(atY: toY)) * 60_000
         return policy.create(dragFrom: first, to: second, in: zone, keepingInside: day)

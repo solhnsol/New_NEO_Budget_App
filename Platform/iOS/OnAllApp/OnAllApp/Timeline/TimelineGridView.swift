@@ -104,6 +104,8 @@ struct TimelineGridView: View {
     private static let edgePadding: CGFloat = EditHit.handleRadius
     private static let editScrollRoom: CGFloat = 320
     @State private var probe = ScrollProbe()
+    /// What does not change while the axis does (a zoom of the axis, a move between two shapes): made once per day, placed by every frame.
+    @State private var preparations = DayPlanPreparations()
 
     /// The two days on screen; either may still be waiting to be read.
     private var visible: [DayTimeline?] { [strip[safe: 1]?.timeline, strip[safe: 2]?.timeline] }
@@ -272,7 +274,7 @@ struct TimelineGridView: View {
     /// Where everything of a day goes, from the engine's layout and the axis. Drawing and hit-testing both use it.
     private func plan(_ timeline: DayTimeline, geometry: TimelineGeometry, width: CGFloat) -> DayRenderPlan {
         DayRenderPlan(
-            timeline: timeline, role: role(of: timeline), layout: editor.adaptive, geometry: geometry, layoutWidth: width, textScale: textScale,
+            prepared: preparations.prepared(timeline: timeline, role: role(of: timeline), layout: editor.adaptive), geometry: geometry, layoutWidth: width, textScale: textScale,
             expanded: timeline.blocks.first { editor.isExpanded($0) }?.id, focused: focusedID(in: timeline),
             metrics: presentationMetrics, titleWidth: { editor.titleWidth(for: $0) }
         )
