@@ -5,6 +5,8 @@ import UIKit
 /// What opens a detail sheet. Event blocks do not: they expand in place.
 enum TimelineSelection: Identifiable {
     case allDay(AllDayItem)
+    /// An event, opened from the fixed grid (which has no in-place opening): its details and the way to its Activity.
+    case event(EventBlock)
     case marker(TransactionMarkerItem)
     /// A transaction linked to an event, drawn on its own line because it happened outside the event's time.
     case allocation(AllocationItem, eventTitle: String?)
@@ -14,6 +16,7 @@ enum TimelineSelection: Identifiable {
     var id: String {
         switch self {
         case let .allDay(item): return "allday-" + item.id.rawValue
+        case let .event(block): return "event-" + block.id.rawValue
         case let .marker(marker): return "marker-" + marker.transactionID.rawValue
         case let .allocation(item, _): return "allocation-" + item.allocationID.rawValue
         case let .overflow(selection): return "overflow-" + selection.overflowID

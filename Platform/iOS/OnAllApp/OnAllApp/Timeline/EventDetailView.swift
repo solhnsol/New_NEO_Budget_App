@@ -5,12 +5,15 @@ import SwiftUI
 struct EventDetailView: View {
     let selection: TimelineSelection
     let zoneIdentifier: String
+    /// Opens the event's Activity sheet (type, place, people, transactions). Only for an event selection.
+    var onEditInfo: (EventBlock) -> Void = { _ in }
 
     var body: some View {
         NavigationStack {
             List {
                 switch selection {
                 case let .allDay(item): allDaySections(item)
+                case let .event(block): eventSections(block)
                 case let .marker(marker): markerSections(marker)
                 case let .allocation(item, eventTitle): allocationSection(item, eventTitle: eventTitle)
                 case let .overflow(selection): overflowSections(selection)
@@ -24,10 +27,22 @@ struct EventDetailView: View {
     private var title: String {
         switch selection {
         case let .allDay(item): return item.title
+        case let .event(block): return block.title
         case let .marker(marker): return marker.title ?? "지출"
         case let .allocation(item, _): return item.title ?? "거래"
         case let .overflow(selection): return selection.counts
         }
+    }
+
+    @ViewBuilder
+    private func eventSections(_ block: EventBlock) -> some View {
+        Section {
+            row("시간", Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (block.state == .eventMissing ? " · 캘린더에서 삭제됨" : ""))
+            ForEach(ExpandedBlockPlan.metaRows(for: block), id: \.label) { meta in row(meta.label, meta.value) }
+            if !block.isEditable { row("편집", "읽기 전용") }
+            Button { onEditInfo(block) } label: { Label("활동 정보", systemImage: "square.and.pencil") }
+        }
+        allocationSections(block.allocations, spend: block.allocatedSpend, refunds: block.allocatedRefunds)
     }
 
     @ViewBuilder

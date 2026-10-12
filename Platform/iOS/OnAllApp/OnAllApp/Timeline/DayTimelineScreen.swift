@@ -121,7 +121,17 @@ struct DayTimelineScreen: View {
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
             )
             Divider()
-            if let editor = model.editor, timelines.count == 2 {
+            if BrowseAxisMode.current == .fixedGrid, timelines.count == 2 {
+                FixedGridBrowseView(
+                    strip: stripWithJump, today: model.today, zone: model.dayZone,
+                    onSelect: { selection = $0 },
+                    onMoveDays: { days in
+                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.loadMissing() } }
+                    },
+                    swipeOffset: $swipeOffset,
+                    pendingDays: $pendingDays
+                )
+            } else if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
                     strip: stripWithJump, today: model.today, zone: model.dayZone, editor: editor,
                     onSelect: { selection = $0 },
@@ -144,7 +154,14 @@ struct DayTimelineScreen: View {
             }
         }
         .sheet(item: $selection) { item in
-            EventDetailView(selection: item, zoneIdentifier: zoneIdentifier)
+            EventDetailView(selection: item, zoneIdentifier: zoneIdentifier, onEditInfo: { block in
+                // One sheet at a time: the details close, then the Activity sheet opens.
+                selection = nil
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    infoEvent = block.eventKey
+                }
+            })
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }

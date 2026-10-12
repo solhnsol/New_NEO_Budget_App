@@ -196,6 +196,8 @@
 
 ### Phase 1 — 읽기 전용 격자 Browse (플래그 `-browse-temporal`)
 
+> **진행 상태**: 1A(`phase1a-rendering-foundations.md`)와 1B(기존 Browse 렌더러를 고정 격자에 연결한 읽기 전용 내부 경로, `docs/ui-reviews/browse-fixed-grid/README.md`)가 구현됨. 핀치·연속 날짜 스와이프·편집은 아직 없다.
+
 작업: `TemporalBrowseGrid`(`TimelineScrollHost` + `HourAxis` + `DayRenderPlan` on `TemporalGeometry`)로 `TimelineGridView`의 읽기 경로를 대체. `BrowseViewState`(`DayMoveModel`, `AnchorState`, 줌 모델). `AppModel` 캐시 병합형, 선읽기 반경. 주 스트립/헤더/종일 헤더를 `position`/`target`으로 구동. 창별 분할·`fixedAxis` 레이아웃 캐시. 편집 UI는 비활성(플래그 모드에서 길게 누르기 무시). 탭은 상세 시트(일정), 거래 선택·오버플로 시트 유지.
 
 완료 기준:
