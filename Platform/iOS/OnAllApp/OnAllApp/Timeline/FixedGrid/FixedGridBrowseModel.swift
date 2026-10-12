@@ -277,15 +277,80 @@ final class FixedGridBrowseModel {
     /// Whether some window's partition is still easing to a new plan (the screen draws frames until none is).
     var isEasing: Bool {
         let now = clock()
+        if let thaw, now - thaw.began < Self.transitionDuration { return true }
         return transitions.values.contains { now - $0.began < Self.transitionDuration }
+    }
+
+    // MARK: Edit sessions (freeze / unfreeze)
+
+    /// What an edit session holds still: the shared time partition and the engine's decisions as they were drawn when it began, and the data they were made
+    /// from (`baseline`, for telling what changed outside meanwhile). While frozen, days are still read, the cache still changes and the planning ahead still
+    /// plans (the partitions it makes wait for the end of the session); only what is drawn stays.
+    struct Freeze {
+        let id: Int
+        let position: Double
+        /// Unzoomed, as `shared` returns it.
+        let partition: TemporalGridPartition
+        let decisions: [Int: Decision]
+        let zoomKey: Int
+        let baseline: FixedGridEditBaseline
+    }
+    private(set) var frozen: Freeze?
+    private var freezes = 0
+    /// After a session: what was drawn during it, easing into what is planned now (the partition), and the decisions it drew with (the screen crossfades
+    /// them to the new ones over the same time).
+    private struct Thaw { let partition: TemporalGridPartition; let decisions: [Int: Decision]; let began: CFTimeInterval }
+    private var thaw: Thaw?
+
+    /// Begins an edit session at `position` (at rest), with the decisions for `zoomKey` of the windows `windows` drawn now. Returns the session's id; a session
+    /// already open is returned as it is (one at a time).
+    @discardableResult
+    func freeze(position: Double, bounds: ClosedRange<Int>, windows: Set<Int>, zoomKey: Int, inputs: Inputs, baseline: FixedGridEditBaseline) -> Int {
+        if let frozen { return frozen.id }
+        let partition = shared(position: position, bounds: bounds, inputs: inputs)
+        var decisions: [Int: Decision] = [:]
+        for window in windows { decisions[window] = decisionForDrawing(window: window, zoomKey: zoomKey, isInteracting: false, inputs: inputs) }
+        freezes += 1
+        thaw = nil
+        frozen = Freeze(id: freezes, position: position, partition: partition, decisions: decisions, zoomKey: zoomKey, baseline: baseline)
+        return freezes
+    }
+
+    /// Ends the session `id`: what is drawn eases from the frozen partition to the one planned now, over `transitionDuration` (no jump), and the decisions
+    /// pass from the frozen ones to the current ones over the same time (`thawing`).
+    func unfreeze(_ id: Int) {
+        guard let frozen, frozen.id == id else { return }
+        thaw = Thaw(partition: frozen.partition, decisions: frozen.decisions, began: clock())
+        self.frozen = nil
+    }
+
+    /// While a session's end eases in: the decision a window was drawn with during the session, and how far (0 … 1) the new one has come.
+    func thawing(window: Int) -> (decision: Decision, weight: Double)? {
+        guard let thaw, let decision = thaw.decisions[window] else { return nil }
+        let t = (clock() - thaw.began) / Self.transitionDuration
+        guard t < 1 else { return nil }
+        return (decision, 1 - pow(1 - max(0, t), 3))
+    }
+
+    private func frozenPartition(_ frozen: Freeze, inputs: Inputs) -> TemporalGridPartition {
+        // The same times in the same cells; only the height follows the room (a rotation during a session).
+        guard frozen.partition.totalHeight != inputs.environment.viewportHeight, inputs.environment.viewportHeight > 1 else { return frozen.partition }
+        return TemporalGridPartition(boundaries: frozen.partition.boundaries, totalHeight: inputs.environment.viewportHeight) ?? frozen.partition
     }
 
     /// The shared time partition at a position: the blend of the two planned windows around it (`ContinuousDayAxis`).
     /// Only the windows it used keep what they showed: a window the days have left is not on screen, so a later plan for it has nothing to ease from.
+    /// During an edit session it is the frozen partition, whatever the data does; at a session's end it eases from that to this.
     func shared(position: Double, bounds: ClosedRange<Int>, inputs: Inputs) -> TemporalGridPartition {
+        if let frozen { return frozenPartition(frozen, inputs: inputs) }
         var used: Set<Int> = []
-        let result = ContinuousDayAxis.partition(at: position, bounds: bounds) { used.insert($0); return partition(window: $0, inputs: inputs) }
+        var result = ContinuousDayAxis.partition(at: position, bounds: bounds) { used.insert($0); return partition(window: $0, inputs: inputs) }
         if shown.count > used.count { shown = shown.filter { used.contains($0.key) } }
+        if let thaw {
+            let t = (clock() - thaw.began) / Self.transitionDuration
+            if t >= 1 { self.thaw = nil }
+            else { result = TemporalGridPartition.interpolated(from: thaw.partition, to: result, progress: 1 - pow(1 - max(0, t), 3)) ?? result }
+        }
         return result
     }
 
@@ -381,6 +446,7 @@ final class FixedGridBrowseModel {
 
     /// The decision to draw with: the one for `zoomKey`, or, while a pinch has the zoom moving, the nearest one made already for this window (a pinch frame never runs the engine).
     func decisionForDrawing(window: Int, zoomKey: Int, isInteracting: Bool, inputs: Inputs) -> Decision {
+        if let frozen { return frozen.decisions[window] ?? Decision(layout: nil, titleWidths: [:]) }      // the session's, whatever the zoom or the data
         if isInteracting, !hasDecision(window: window, zoomKey: zoomKey) {
             let near = decisions.filter { $0.key.window == window }.min { abs($0.key.zoomKey - zoomKey) < abs($1.key.zoomKey - zoomKey) }
             if let near { return near.value.decision }

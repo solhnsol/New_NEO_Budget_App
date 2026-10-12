@@ -37,6 +37,9 @@ struct FixedGridBrowseView: View {
     @State private var caughtTarget: Int?
     @State private var lastNeeded: ClosedRange<Int>?
     @State private var choice: TouchChoice?
+    /// The event an edit session is open on (only the DEBUG edit probe opens one in this phase), and the session's id in the planner.
+    @State private var editing: EditingEvent?
+    struct EditingEvent: Equatable { let epoch: Int; let blockID: BlockID; let session: Int }
     @State private var noticeEmphasis = false
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -60,6 +63,10 @@ struct FixedGridBrowseView: View {
         var haptic: UISelectionFeedbackGenerator?
         /// Frames that drew a day from two decisions, frames where those two differed, and the most things crossfaded in one (DEBUG reports).
         var blendFrames = 0, differingFrames = 0, crossfadedMost = 0
+        /// What the DEBUG edit probe saw: handle taps, handle drags and their steps, long presses meaning "create" on empty grid, and the day position when a
+        /// handle drag began and ended (a drag from a handle must not move the days).
+        var handleTaps = 0, handleDrags = 0, handleSteps = 0, createPresses = 0
+        var dragPositions: [Double] = []
         var probeWrite: Task<Void, Never>?
     }
 
@@ -125,6 +132,7 @@ struct FixedGridBrowseView: View {
                 headerStrip(width: outer.size.width)
                 Divider()
                 EditingNotice(emphasised: noticeEmphasis)
+                if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
             }
             .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
@@ -219,7 +227,7 @@ struct FixedGridBrowseView: View {
     }
 
     private func grid(width: CGFloat) -> some View {
-        PinchZoomScrollView(model: pinch, onDateDrag: { handleDateDrag($0, width: width) }) { zoom, viewport, window in
+        PinchZoomScrollView(model: pinch, onDateDrag: { handleDateDrag($0, width: width) }, gestures: gestureHooks()) { zoom, viewport, window in
             gridContent(width: width, zoom: zoom, viewport: viewport, window: window)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -282,16 +290,14 @@ struct FixedGridBrowseView: View {
                 .offset(x: Self.gutter)
             }
             .frame(width: width, height: height, alignment: .topLeading)
-            .contentShape(Rectangle())
-            .onTapGesture { location in handleTap(at: location, width: width, zoom: zoom, viewport: viewport) }
-            .onLongPressGesture(minimumDuration: 0.6) { emphasiseNotice() }
+            .overlay(alignment: .topLeading) { editHandles() }
         )
     }
 
     /// Where everything of a day goes, from the day's prepared data under one decision and the shared axis. Drawing and touching both use it.
-    private func plan(_ timeline: DayTimeline, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat) -> DayRenderPlan {
+    private func plan(_ timeline: DayTimeline, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat, decision: FixedGridBrowseModel.Decision? = nil) -> DayRenderPlan {
         planner.renderPlan(
-            timeline, source: source, decision: frame.decision(source), partition: frame.shown, zone: zone, layoutWidth: layoutWidth, textScale: textScale,
+            timeline, source: source, decision: decision ?? frame.decision(source), partition: frame.shown, zone: zone, layoutWidth: layoutWidth, textScale: textScale,
             metrics: TextMeasurer.presentationMetrics(), preparations: preparations
         )
     }
@@ -309,6 +315,15 @@ struct FixedGridBrowseView: View {
             ZStack(alignment: .topLeading) {
                 dayContent(timeline, plan: leaving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: false) { blend.leaving.contains($0) ? 1 - w : 0 }
                 dayContent(timeline, plan: arriving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: true) { blend.arriving.contains($0) ? w : 1 }
+            }
+        } else if let thaw = planner.thawing(window: column.from.window) {
+            // An edit session has just ended: the decisions it drew with pass to the current ones over the axis's easing, the same way.
+            let during = plan(timeline, source: column.from, frame: frame, layoutWidth: layoutWidth, decision: thaw.decision)
+            let blend = FixedGridColumns.blend(during, leaving)
+            let w = thaw.weight
+            ZStack(alignment: .topLeading) {
+                dayContent(timeline, plan: during, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: false) { blend.leaving.contains($0) ? 1 - w : 0 }
+                dayContent(timeline, plan: leaving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: true) { blend.arriving.contains($0) ? w : 1 }
             }
         } else {
             dayContent(timeline, plan: leaving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: true) { _ in 1 }
@@ -366,17 +381,158 @@ struct FixedGridBrowseView: View {
 
     // MARK: Touch
 
+    /// What a point of the grid touches: the day, its plan as drawn (the decision a touch goes to), the point in the day's coordinates, and where the day's column
+    /// begins in the grid's. The one hit test of the grid: touch-down ownership, taps and long presses all use it.
+    private struct Touched {
+        let epoch: Int
+        let timeline: DayTimeline
+        let plan: DayRenderPlan
+        let local: CGPoint
+        let columnX: CGFloat
+        var hit: DayRenderPlan.Hit { plan.hit(at: local) }
+    }
+
+    private func touched(at point: CGPoint) -> Touched? {
+        let width = room.width, viewport = pinch.viewportHeight
+        guard viewport > 1, width > Self.gutter, point.x >= Self.gutter else { return nil }
+        let geometry = geometry(width: width)
+        let frame = frame(zoom: pinch.zoom, viewport: viewport, width: width)
+        let epoch = Int((position + Double((point.x - Self.gutter) / geometry.dayWidth)).rounded(.down))
+        guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) else { return nil }
+        let columnX = geometry.x(ofDay: Double(epoch), at: position)
+        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+        return Touched(epoch: epoch, timeline: timeline, plan: plan, local: CGPoint(x: point.x - columnX, y: point.y), columnX: columnX)
+    }
+
+    /// The grid's touches for the scroll view's recognizers (`FixedGridGestures` decides who owns each).
+    private func gestureHooks() -> GridGestureHooks {
+        GridGestureHooks(
+            start: { point in FixedGridGestures.start(at: point, gutter: Self.gutter, mode: gestureMode) { touched(at: point)?.hit ?? .nothing } },
+            mode: { gestureMode },
+            tap: { point, start in handleTap(at: point, start: start) },
+            longPress: { phase, point, start in handleLongPress(phase, at: point, start: start) },
+            handlePan: { phase, point, hit in handleHandleDrag(phase, at: point, hit: hit) }
+        )
+    }
+
+    /// The mode the grid is in now; while editing, the chosen card where it is drawn now (it follows the zoom; the days do not move in a session).
+    private var gestureMode: FixedGridGestures.Mode {
+        guard let editing, let target = editTarget(editing) else { return .browse }
+        return .editing(target)
+    }
+
+    private func editTarget(_ editing: EditingEvent) -> FixedGridGestures.EditTarget? {
+        let width = room.width, viewport = pinch.viewportHeight
+        guard viewport > 1, width > Self.gutter, let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: editing.epoch)) else { return nil }
+        let geometry = geometry(width: width)
+        let frame = frame(zoom: pinch.zoom, viewport: viewport, width: width)
+        guard let column = frame.column(editing.epoch) else { return nil }
+        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+        guard let item = plan.events.first(where: { $0.block.id == editing.blockID }) else { return nil }
+        return FixedGridGestures.EditTarget(
+            epoch: editing.epoch, blockID: editing.blockID, frame: item.frame.offsetBy(dx: geometry.x(ofDay: Double(editing.epoch), at: position), dy: 0),
+            canResizeStart: !item.block.continuesFromPreviousDay, canResizeEnd: !item.block.continuesToNextDay
+        )
+    }
+
+    private func handleTap(at point: CGPoint, start: FixedGridGestures.Start) {
+        switch FixedGridGestures.tap(start: start, mode: gestureMode, daysAtRest: move.phase == .resting) {
+        case .none: break
+        case .select: select(at: point)
+        case .handle: room.handleTaps += 1                                        // future: the 15-minute time bubble
+        case let .chooseOther(hit):
+            if case let .event(id) = hit, let found = touched(at: point) { beginEditing(id, in: found) }   // the probe: the session moves to that event
+        case .endEditing: endEditing()
+        }
+    }
+
+    private func handleLongPress(_ phase: GridGestureHooks.Phase, at point: CGPoint, start: FixedGridGestures.Start) {
+        guard phase == .began else { return }
+        switch FixedGridGestures.longPress(start: start, mode: gestureMode) {
+        case .none: break
+        case let .notice(future):
+            emphasiseNotice()
+            if ProbeExperiment.editProbe, case let .edit(id)? = future, let found = touched(at: point) { beginEditing(id, in: found) }
+        case .createDraft: room.createPresses += 1                                 // future: a draft dragged out from here
+        }
+    }
+
+    private func handleHandleDrag(_ phase: GridGestureHooks.Phase, at point: CGPoint, hit: EditHit) {
+        switch phase {
+        case .began: room.handleDrags += 1; room.dragPositions.append(position)
+        case .moved: room.handleSteps += 1
+        case .ended, .cancelled: room.dragPositions.append(position)          // future: the time follows the finger; nothing changes here
+        }
+        axisTick &+= 1
+    }
+
+    // MARK: Edit sessions (the frame for editing; no editing yet)
+
+    /// Opens a session on an event: the time partition and the engine's decisions on screen are frozen (`FixedGridBrowseModel.freeze`) and the original is
+    /// taken (`FixedGridEditBaseline`). The days keep being read meanwhile.
+    private func beginEditing(_ blockID: BlockID, in found: Touched) {
+        guard move.phase == .resting, let block = found.timeline.blocks.first(where: { $0.id == blockID }) else { return }
+        if let editing { planner.unfreeze(editing.session) }
+        let viewport = pinch.viewportHeight
+        let inputs = inputs(viewport: viewport, width: room.width)
+        let columns = FixedGridColumns.columns(days: geometry(width: room.width).renderedDays(at: position), position: position, bounds: move.bounds)
+        let windows = FixedGridColumns.windows(of: columns)
+        var days: [LocalDate: DayTimeline] = [:]
+        for window in windows { for offset in -1...2 { let day = LocalDate(daysSinceUnixEpoch: window + offset); days[day] = model.cachedTimeline(for: day) } }
+        let baseline = FixedGridEditBaseline(dataGeneration: model.dataGeneration, dataRevision: model.dataRevision, days: days, target: (found.timeline.day, block))
+        let session = planner.freeze(
+            position: position, bounds: move.bounds, windows: windows, zoomKey: planner.plannedZoomKey(current: pinch.zoom, settling: pinch.settlingZoom),
+            inputs: inputs, baseline: baseline
+        )
+        editing = EditingEvent(epoch: found.epoch, blockID: blockID, session: session)
+        Haptics.enterEdit()
+    }
+
+    /// Ends the session: the axis eases from what was frozen to what is planned now, and the decisions crossfade with it (`unfreeze`, `thawing`).
+    private func endEditing() {
+        guard let editing else { return }
+        planner.unfreeze(editing.session)
+        self.editing = nil
+        axisTick &+= 1
+    }
+
+    /// DEBUG probe: the chosen card's handles.
+    @ViewBuilder
+    private func editHandles() -> some View {
+        if ProbeExperiment.editProbe, let target = gestureMode.target {
+            ZStack(alignment: .topLeading) {
+                if target.canResizeStart { handleDot(EditHit.startHandle(of: target.frame)) }
+                if target.canResizeEnd { handleDot(EditHit.endHandle(of: target.frame)) }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func handleDot(_ center: CGPoint) -> some View {
+        Circle().fill(Color.white).overlay(Circle().stroke(Color.accentColor, lineWidth: 2)).frame(width: 12, height: 12)
+            .offset(x: center.x - 6, y: center.y - 6)
+    }
+
+    /// DEBUG probe: what the session sees.
+    private var editProbeText: String {
+        let changes = planner.frozen.map { $0.baseline.changes(dataGeneration: model.dataGeneration, dataRevision: model.dataRevision) { model.cachedTimeline(for: $0) } }
+        let outside: String
+        if let changes {
+            outside = changes.isClean ? "외부 변경 없음"
+                : "외부 변경: \(changes.reloaded ? "재로드 " : "")\(changes.changedDays.isEmpty ? "" : "날짜 \(changes.changedDays.count) ")대상 \(changes.target)"
+        } else {
+            outside = "세션 없음"
+        }
+        let moved = zip(room.dragPositions.dropLast(), room.dragPositions.dropFirst()).enumerated().filter { $0.offset % 2 == 0 }.contains { $0.element.0 != $0.element.1 }
+        return "편집 시험 \(editing == nil ? "꺼짐" : "켜짐") · 핸들 탭 \(room.handleTaps) · 핸들 끌기 \(room.handleDrags)(\(room.handleSteps)) · 날짜 이동 \(moved ? "있음" : "없음") · 만들기 \(room.createPresses) · \(outside)"
+    }
+
     /// One tap handler for everything of the days, decided by the plan that was drawn. Taps count when the days are at rest (a finger that comes down on a moving day line stops
     /// it instead).
-    private func handleTap(at point: CGPoint, width: CGFloat, zoom: CGFloat, viewport: CGFloat) {
-        guard move.phase == .resting, point.x >= Self.gutter else { return }
-        let geometry = geometry(width: width)
-        let frame = frame(zoom: zoom, viewport: viewport, width: width)
-        let epoch = Int((position + Double((point.x - Self.gutter) / geometry.dayWidth)).rounded(.down))
-        guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) else { return }
-        let local = CGPoint(x: point.x - (geometry.x(ofDay: Double(epoch), at: position) + 0), y: point.y)
-        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
-        switch plan.hit(at: local) {
+    private func select(at point: CGPoint) {
+        guard move.phase == .resting, let found = touched(at: point) else { return }
+        let timeline = found.timeline, plan = found.plan
+        switch found.hit {
         case .nothing: break
         case let .event(id): perform(.event(id), in: timeline, plan: plan)
         case let .line(id): perform(.line(id), in: timeline, plan: plan)
@@ -569,6 +725,7 @@ struct FixedGridBrowseView: View {
     /// The selected day was changed by something else (the week strip, the header's arrows, "오늘"): the days run to it, or jump when it is far.
     private func selectionChangedOutside() {
         guard move.phase == .resting, Double(selectedEpoch) != move.position else { return }
+        if editing != nil { endEditing() }                                        // a session is on the days it began on
         let distance = selectedEpoch - Int(move.position.rounded())
         let from = Int(move.position.rounded())
         guard abs(distance) <= 3 else { rebase(keeping: nil); position = move.position; anchorState.release(at: move.position); return }
@@ -809,6 +966,16 @@ private struct DayLoadingMark: View {
         .padding(.horizontal, 8).padding(.vertical, 4)
         .background(.thinMaterial, in: Capsule())
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// DEBUG: the edit probe's line.
+private struct EditProbeLine: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.caption2.monospacedDigit()).foregroundStyle(.purple).lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 12).padding(.vertical, 2)
+            .accessibilityIdentifier("editProbe")
     }
 }
 

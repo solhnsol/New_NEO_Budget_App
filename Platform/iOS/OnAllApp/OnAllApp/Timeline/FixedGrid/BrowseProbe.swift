@@ -105,6 +105,9 @@ enum ProbeExperiment {
     /// Before/after: the 2B-1 rules — decisions from the window nearest the position (`FixedGridColumns.legacyColumns`), and the zoom key of the frames
     /// and the rested zoom from the zoom as it is when the pinch ends (not where it comes to rest).
     static let legacyColumns = flag("-probe-legacy-columns")
+    /// `-browse-temporal-edit-probe` (2B-3): a long press on an event opens an edit session with nothing to edit — the time partition and the decisions frozen,
+    /// the chosen event's handles drawn, handle taps and drags counted, a tap on empty grid ends it — to check who owns which touch. No data is changed.
+    static let editProbe = flag("-browse-temporal-edit-probe")
     static let legacyZoomKey = flag("-probe-legacy-zoom-key")
 
     private static func flag(_ name: String) -> Bool {

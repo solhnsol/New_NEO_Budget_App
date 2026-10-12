@@ -56,6 +56,19 @@ final class ProbedHostingController: UIHostingController<AnyView> {
     }
 }
 
+/// The fixed grid's own touches, taken by UIKit recognizers on the same container as the pinch, the day swipe and the scroll, so UIKit arbitrates them all
+/// (`FixedGridGestures` says which may take a touch). Locations are in the grid's content coordinates (the hosted SwiftUI content's).
+struct GridGestureHooks {
+    enum Phase: Equatable { case began, moved, ended, cancelled }
+    /// What is under a point (asked once per touch, at touch-down).
+    var start: (CGPoint) -> FixedGridGestures.Start
+    var mode: () -> FixedGridGestures.Mode
+    var tap: (CGPoint, FixedGridGestures.Start) -> Void
+    var longPress: (Phase, CGPoint, FixedGridGestures.Start) -> Void
+    /// A drag that began on a handle of the chosen event (editing only).
+    var handlePan: (Phase, CGPoint, EditHit) -> Void
+}
+
 /// What a horizontal drag across the days is doing (the day move of the prototype).
 enum DateDragPhase {
     /// A finger came down while the days were still moving: they stop under it (it may be a swipe, a scroll, a pinch or a tap).
@@ -78,12 +91,15 @@ enum DateDragPhase {
 struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
     let model: PinchZoomModel
     var onDateDrag: (DateDragPhase) -> Void
+    /// The grid's taps, long presses and handle drags; `nil` for none (the DEBUG prototype grid).
+    var gestures: GridGestureHooks? = nil
     @ViewBuilder var content: (_ zoom: CGFloat, _ viewport: CGFloat, _ window: ClosedRange<CGFloat>) -> Content
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
 
     func makeUIView(context: Context) -> Container {
         let container = Container()
+        context.coordinator.hooks = gestures
         if ProbeExperiment.stableRoot {
             let box = ContentBox(build: content)
             context.coordinator.box = box
@@ -96,6 +112,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
     func updateUIView(_ container: Container, context: Context) {
         context.coordinator.onDateDrag = onDateDrag
+        context.coordinator.hooks = gestures
         if let box = context.coordinator.box as? ContentBox {
             box.build = content
             box.objectWillChange.send()
@@ -165,8 +182,18 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         private var datePan: DateSwipeRecognizer!
         private var pinchStart: (zoom: CGFloat, fraction: CGFloat)?
         private var lastFocal: CGFloat = 0
-        private var suppressed = false
         private var datePanning = false
+        var hooks: GridGestureHooks?
+        private var tap: UITapGestureRecognizer?
+        private var longPress: UILongPressGestureRecognizer?
+        private var handlePan: UIPanGestureRecognizer?
+        /// What each running recognizer keeps off (`FixedGridGestures.suppressed`), until it ends or every finger is up.
+        private var holds: [FixedGridGestures.Recognizer: Set<FixedGridGestures.Recognizer>] = [:]
+        /// What each touch began on, decided once at touch-down.
+        private var starts: [ObjectIdentifier: (start: FixedGridGestures.Start, point: CGPoint)] = [:]
+        private var tapStart: FixedGridGestures.Start = .empty
+        private var longPressStart: FixedGridGestures.Start = .empty
+        private var handleStart: (hit: EditHit, point: CGPoint)?
         private var link: CADisplayLink?
         private var meter: CADisplayLink?
         private var meterLast: CFTimeInterval = 0
@@ -206,6 +233,20 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             counter.allLifted = { [weak self] in self?.fingersUp() }
             counter.touchedDown = { [weak self] in self?.onDateDrag(.touchDown) }
             container.addGestureRecognizer(counter)
+            if hooks != nil {
+                let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+                let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+                longPress.minimumPressDuration = 0.6
+                longPress.allowableMovement = 10
+                let handlePan = UIPanGestureRecognizer(target: self, action: #selector(handleHandlePan(_:)))
+                handlePan.maximumNumberOfTouches = 1
+                for recognizer in [tap, longPress, handlePan] as [UIGestureRecognizer] {
+                    recognizer.delegate = self
+                    recognizer.cancelsTouchesInView = false
+                    container.addGestureRecognizer(recognizer)
+                }
+                self.tap = tap; self.longPress = longPress; self.handlePan = handlePan
+            }
 
             container.onLayout = { [weak self] size in self?.layout(size) }
             model.setZoom = { [weak self] zoom, focal in self?.setZoom(zoom, focal: focal) }
@@ -284,9 +325,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 BrowseProbe.mark(.pinchBegan)
                 stopAnimation()
                 scroll.setContentOffset(scroll.contentOffset, animated: false)       // stops any inertia at once
-                scroll.panGestureRecognizer.isEnabled = false
-                datePan.isEnabled = false
-                suppressed = true
+                hold(by: .pinch)                                                      // no one-finger gesture until every finger is up (a long press is cancelled)
                 if datePanning { datePanning = false; onDateDrag(.cancelled) }
                 model.isInteracting = true
                 startMeter()
@@ -317,18 +356,91 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         }
 
         private func fingersUp() {
+            starts = [:]
             guard pinchStart == nil else { return }
-            suppressed = false
-            scroll.panGestureRecognizer.isEnabled = true
-            datePan.isEnabled = true
+            holds = [:]
+            applyHolds()
             if !datePanning { onDateDrag(.touchUp) }
+        }
+
+        // MARK: Holds
+
+        private func hold(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = FixedGridGestures.suppressed(while: recognizer); applyHolds() }
+        private func release(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = nil; applyHolds() }
+        private var held: Set<FixedGridGestures.Recognizer> { holds.values.reduce(into: []) { $0.formUnion($1) } }
+
+        /// Switches each recognizer off while something holds it (switching one off cancels what it was doing) and back on after.
+        private func applyHolds() {
+            let off = held
+            func set(_ recognizer: UIGestureRecognizer?, _ kind: FixedGridGestures.Recognizer) {
+                guard let recognizer else { return }
+                let on = !off.contains(kind)
+                if recognizer.isEnabled != on { recognizer.isEnabled = on }
+            }
+            set(scroll.panGestureRecognizer, .scroll); set(datePan, .dateSwipe); set(pinch, .pinch)
+            set(tap, .tap); set(longPress, .longPress); set(handlePan, .handlePan)
+        }
+
+        private func kind(of recognizer: UIGestureRecognizer) -> FixedGridGestures.Recognizer? {
+            switch recognizer {
+            case datePan: .dateSwipe
+            case pinch: .pinch
+            case tap: .tap
+            case longPress: .longPress
+            case handlePan: .handlePan
+            default: nil
+            }
+        }
+
+        private func start(of touch: UITouch) -> (start: FixedGridGestures.Start, point: CGPoint) {
+            let key = ObjectIdentifier(touch)
+            if let found = starts[key] { return found }
+            let point = touch.location(in: hosting?.view)
+            let made = (hooks?.start(point) ?? .empty, point)
+            starts[key] = made
+            return made
+        }
+
+        // MARK: Taps, long presses, handle drags
+
+        @objc private func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended, let hooks else { return }
+            hooks.tap(gesture.location(in: hosting?.view), tapStart)
+        }
+
+        @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+            guard let hooks else { return }
+            let point = gesture.location(in: hosting?.view)
+            switch gesture.state {
+            case .began: hold(by: .longPress); hooks.longPress(.began, point, longPressStart)
+            case .changed: hooks.longPress(.moved, point, longPressStart)
+            case .ended: release(by: .longPress); hooks.longPress(.ended, point, longPressStart)
+            case .cancelled, .failed: release(by: .longPress); hooks.longPress(.cancelled, point, longPressStart)
+            default: break
+            }
+        }
+
+        @objc private func handleHandlePan(_ gesture: UIPanGestureRecognizer) {
+            guard let hooks, let start = handleStart else { return }
+            let point = gesture.location(in: hosting?.view)
+            switch gesture.state {
+            case .began:
+                hold(by: .handlePan)
+                // A pan begins after the finger has moved a little; the drag starts from where it came down (what was hit-tested) and catches up.
+                hooks.handlePan(.began, start.point, start.hit)
+                hooks.handlePan(.moved, point, start.hit)
+            case .changed: hooks.handlePan(.moved, point, start.hit)
+            case .ended: release(by: .handlePan); hooks.handlePan(.ended, point, start.hit)
+            case .cancelled, .failed: release(by: .handlePan); hooks.handlePan(.cancelled, point, start.hit)
+            default: break
+            }
         }
 
         /// If the finger count were ever wrong, gestures still come back.
         private func scheduleFallback() {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(1.5))
-                guard let self, self.pinchStart == nil, self.suppressed else { return }
+                guard let self, self.pinchStart == nil, self.holds[.pinch] != nil else { return }
                 self.fingersUp()
             }
         }
@@ -390,7 +502,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             switch gesture.state {
             case .began:
                 datePanning = true
-                scroll.panGestureRecognizer.isEnabled = false
+                hold(by: .dateSwipe)
                 model.resetBuildSamples()
                 startMeter()
                 onDateDrag(.began)
@@ -399,10 +511,10 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 if datePanning { onDateDrag(.changed(translationX: gesture.translationX)) }
             case .ended:
                 if datePanning { datePanning = false; onDateDrag(.ended(velocityX: gesture.releaseVelocity)) }
-                if !suppressed { scroll.panGestureRecognizer.isEnabled = true }
+                release(by: .dateSwipe)
             case .cancelled, .failed:
                 if datePanning { datePanning = false; onDateDrag(.cancelled) }
-                if !suppressed { scroll.panGestureRecognizer.isEnabled = true }
+                release(by: .dateSwipe)
             default: break
             }
         }
@@ -410,8 +522,29 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         // MARK: Gesture arbitration
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            if gestureRecognizer === datePan { return !suppressed && pinchStart == nil }       // the classifier has already said "mostly sideways"
+            if gestureRecognizer === datePan { return !held.contains(.dateSwipe) && pinchStart == nil }       // the classifier has already said "mostly sideways"
+            if let kind = kind(of: gestureRecognizer) { return !held.contains(kind) }
             return true
+        }
+
+        /// Ownership is decided at touch-down (`FixedGridGestures.receives`): a recognizer that may not have a touch never receives it, so it makes nothing wait.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let hooks, let kind = kind(of: gestureRecognizer) else { return true }
+            let found = start(of: touch)
+            guard FixedGridGestures.receives(kind, start: found.start, mode: hooks.mode()), !held.contains(kind) else { return false }
+            switch kind {
+            case .tap: tapStart = found.start
+            case .longPress: longPressStart = found.start
+            case .handlePan: if case let .handle(hit) = found.start { handleStart = (hit, found.point) }
+            default: break
+            }
+            return true
+        }
+
+        /// A drag from a handle: the scroll, the day swipe and the pinch wait for the handle pan to decide (it only ever has touches that began on a handle).
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldBeRequiredToFailBy other: UIGestureRecognizer) -> Bool {
+            guard let handlePan, gestureRecognizer === handlePan else { return false }
+            return other === scroll.panGestureRecognizer || other === datePan || other === pinch
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
