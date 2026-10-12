@@ -51,7 +51,9 @@ struct WeekStripView: View {
     private var pageStart: Int { position - LocalDate(daysSinceUnixEpoch: position).weekday }
 
     var body: some View {
-        VStack(spacing: 2) {
+        let probe = BrowseProbe.begin(.weekStripBody)
+        defer { BrowseProbe.end(probe) }
+        return VStack(spacing: 2) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
                     Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity)

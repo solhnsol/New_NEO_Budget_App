@@ -37,6 +37,20 @@ final class PinchZoomModel: ObservableObject {
     }
 }
 
+/// The grid's hosting controller, with its layout pass measured (`BrowseProbe.Kind.hostLayout`): SwiftUI laying out the grid inside UIKit's layout.
+final class ProbedHostingController: UIHostingController<AnyView> {
+    private var layoutProbe: BrowseProbe.Token?
+    override func viewWillLayoutSubviews() {
+        layoutProbe = BrowseProbe.begin(.hostLayout)
+        super.viewWillLayoutSubviews()
+    }
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        BrowseProbe.end(layoutProbe)
+        layoutProbe = nil
+    }
+}
+
 /// What a horizontal drag across the days is doing (the day move of the prototype).
 enum DateDragPhase {
     /// A finger came down while the days were still moving: they stop under it (it may be a swipe, a scroll, a pinch or a tap).
@@ -81,6 +95,8 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         let build: (CGFloat, CGFloat, ClosedRange<CGFloat>) -> C
         var body: some View {
             let start = CFAbsoluteTimeGetCurrent()
+            let probe = BrowseProbe.begin(.gridBuild)
+            defer { BrowseProbe.end(probe) }
             let view = build(model.zoom, model.viewportHeight, PinchZoomMath.buildWindow(band: model.band, viewport: model.viewportHeight))
             model.recordBuild((CFAbsoluteTimeGetCurrent() - start) * 1000)
             return view
@@ -113,7 +129,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         let model: PinchZoomModel
         weak var container: Container?
         let scroll = UIScrollView()
-        var hosting: UIHostingController<AnyView>?
+        var hosting: ProbedHostingController?
         var onDateDrag: (DateDragPhase) -> Void = { _ in }
         private let counter = TouchCounter()
         private var pinch: UIPinchGestureRecognizer!
@@ -142,7 +158,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             scroll.contentInsetAdjustmentBehavior = .never
             scroll.delegate = self
             container.addSubview(scroll)
-            let host = UIHostingController(rootView: root)
+            let host = ProbedHostingController(rootView: root)
             host.view.backgroundColor = .clear
             host.safeAreaRegions = []
             scroll.addSubview(host.view)
@@ -231,6 +247,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             let focal = gesture.numberOfTouches > 0 ? gesture.location(in: container).y : lastFocal
             switch gesture.state {
             case .began:
+                BrowseProbe.mark(.pinchBegan)
                 stopAnimation()
                 scroll.setContentOffset(scroll.contentOffset, animated: false)       // stops any inertia at once
                 scroll.panGestureRecognizer.isEnabled = false
@@ -246,9 +263,10 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 lastFocal = focal
                 model.markUserMoved()
                 let next = PinchZoomMath.step(startZoom: start.zoom, scale: gesture.scale, fraction: start.fraction, focal: focal, viewport: viewport)
-                applyContent(zoom: next.zoom, offset: next.offset)
+                BrowseProbe.measure(.pinchStep) { applyContent(zoom: next.zoom, offset: next.offset) }
             case .ended, .cancelled, .failed:
                 guard let start = pinchStart else { return }
+                BrowseProbe.mark(.pinchEnded)
                 pinchStart = nil
                 model.isInteracting = false
                 model.markUserMoved()

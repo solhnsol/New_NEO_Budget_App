@@ -1,0 +1,31 @@
+script swipes zoom 1.00 seconds 11.70
+step cost: mean 0.094 / p50 0.063 / p99 0.404 / max 1.981 ms (n=932)
+step interval: mean 9.582 / p50 9.172 / p99 20.109 / max 61.362 ms (n=928)
+display frames: mean 16.762 / p50 16.667 / p99 16.667 / max 44.550 ms (n=697); late (>1.5x median) 3 of 697
+view build: 0.16/0.12/0.65 ms (n=600)
+partitions: background 6, planned in a frame 2, engine runs 8, found 4949
+day reads during script: 9, cached 8, selected 4d from today, position 20742.000
+partitions held while a day was read 37, axis transitions 1; reads dropped as stale 0, failed now 0
+PROBE swipes
+recorded 11.71 s; display frames n=697 mean 16.762 p50 16.667 p99 16.667 max 44.550 ms; nominal 16.67 ms; late (>1.5x) 3
+main run-loop turns busy: n=2846 mean 0.964 p50 0.228 p99 6.905 max 22.679 ms
+  screenBody: n=982 mean 0.045 p50 0.033 p99 0.154 max 0.209 ms
+  gridBuild: n=987 mean 0.129 p50 0.091 p99 0.500 max 2.364 ms
+  hostLayout: n=540 mean 0.446 p50 0.310 p99 1.187 max 2.025 ms
+  applyMove: n=932 mean 0.089 p50 0.060 p99 0.367 max 1.978 ms
+  framePlan: n=1 mean 2.233 p50 2.233 p99 2.233 max 2.233 ms
+  engine: n=5 mean 0.029 p50 0.027 p99 0.038 max 0.038 ms
+  warmAhead: n=4 mean 0.058 p50 0.064 p99 0.074 max 0.074 ms
+  warmLand: n=4 mean 0.002 p50 0.002 p99 0.003 max 0.003 ms
+  cacheMerge: n=34 mean 0.045 p50 0.032 p99 0.182 max 0.182 ms
+  haptics: n=16 mean 0.206 p50 0.089 p99 1.916 max 1.916 ms
+  transitionTick: n=33 mean 0.004 p50 0.002 p99 0.028 max 0.028 ms
+  outerBody: n=44 mean 0.112 p50 0.087 p99 0.299 max 0.299 ms
+  weekStripBody: n=68 mean 0.019 p50 0.012 p99 0.101 max 0.101 ms
+  summaryBody: n=8 mean 0.009 p50 0.010 p99 0.013 max 0.013 ms
+marks: axisTransition 1, boundary 16, dayLanded 7, dragBegan 12, released 12, rested 6, selectedDayChanged 8
+  late +0.033s 44.6 ms: busiest turn 12.3 ms (app 3.8, unattributed 8.5) [hostLayout 3.5, gridBuild 0.6, applyMove 0.5, screenBody 0.3, outerBody 0.2, cacheMerge 0.1, weekStripBody 0.0] marks [dragBegan]
+  late +1.456s 33.3 ms: busiest turn 18.7 ms (app 2.3, unattributed 16.4) [applyMove 2.1, haptics 1.9, hostLayout 1.3, gridBuild 0.3, screenBody 0.1, outerBody 0.1, weekStripBody 0.0] marks [boundary]
+  late +9.939s 33.3 ms: busiest turn 16.3 ms (app 1.2, unattributed 15.1) [gridBuild 0.7, applyMove 0.5, screenBody 0.2, hostLayout 0.2, outerBody 0.2, haptics 0.2, weekStripBody 0.1] marks [boundary]
+late frames, summed: app spans 7.3 ms, unattributed 40.0 ms; by kind (inclusive) [hostLayout 5.0, applyMove 3.0, haptics 2.1, gridBuild 1.6, screenBody 0.6, outerBody 0.5, weekStripBody 0.1, cacheMerge 0.1]
+late frames near a mark: boundary 2, dragBegan 1

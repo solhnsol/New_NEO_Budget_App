@@ -43,10 +43,19 @@ struct FixedGridBrowseView: View {
     /// The room as the screen last heard of it (the `Room` above is for code outside a frame; these make planning ahead start when the room becomes known or changes).
     @State private var knownViewport: CGFloat = 0
     @State private var knownWidth: CGFloat = 0
+    /// Bumped while a window's partition eases to a new plan (a day arrived), so the frames of the easing are drawn.
+    @State private var axisTick = 0
     @Environment(\.dynamicTypeSize) private var dynamicType
 
-    /// The width the grid has, for the parts that run outside a frame (the spring's ticker, the planning ahead).
-    final class Room { var width: CGFloat = 0 }
+    /// The width the grid has, for the parts that run outside a frame (the spring's ticker, the planning ahead), and what runs between frames.
+    final class Room {
+        var width: CGFloat = 0
+        var easing = false
+        /// Reads of a day on screen that failed and were tried again.
+        var retries: [LocalDate: Int] = [:]
+        var probePath: String?
+        var probeWrite: Task<Void, Never>?
+    }
 
     /// What each step of a move cost and how far apart the steps were, in milliseconds (reported by the DEBUG scripts).
     final class Costs {
@@ -102,7 +111,9 @@ struct FixedGridBrowseView: View {
     }
 
     var body: some View {
-        _ = (position, planningVersion, model.dataRevision)             // this screen re-evaluates when the days move, planning ahead lands or the kept days change
+        let probe = BrowseProbe.begin(.screenBody)
+        defer { BrowseProbe.end(probe) }
+        _ = (position, planningVersion, model.dataRevision, axisTick)   // this screen re-evaluates when the days move, planning ahead lands, the kept days change or the axis eases
         return GeometryReader { outer in
             VStack(spacing: 0) {
                 headerStrip(width: outer.size.width)
@@ -120,14 +131,16 @@ struct FixedGridBrowseView: View {
         .task {
             // The days around the selected one and the margin the cache keeps ahead (the screen read only the four it draws).
             let policy = DayPrefetchPolicy.browse
-            await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy)
+            await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy, failsScreen: false)
         }
         .task { await runDebugScript() }
+        .task { startProbeIfAsked() }
+        .task(id: failedOnScreen) { await retryFailedOnScreen() }
         .task(id: WarmKey(selected: selectedEpoch, revision: model.dataRevision, version: planningVersion, zoomKey: restedZoomKey, viewport: knownViewport, text: "\(dynamicType)", width: knownWidth)) {
             await warmAhead()
         }
         .onReceive(pinch.$viewportHeight.removeDuplicates()) { knownViewport = $0 }
-        .onReceive(pinch.$isInteracting.removeDuplicates().filter { !$0 }) { _ in restedZoomKey = FixedGridBrowseModel.zoomKey(pinch.zoom) }
+        .onReceive(pinch.$isInteracting.removeDuplicates().filter { !$0 }) { _ in restedZoomKey = FixedGridBrowseModel.zoomKey(pinch.zoom); writeProbeSoon() }
         .onChange(of: model.selectedDay) { _, _ in selectionChangedOutside() }
     }
 
@@ -176,6 +189,7 @@ struct FixedGridBrowseView: View {
         let shown = planner.shared(position: position, bounds: bounds, inputs: inputs).zoomed(viewportHeight: viewport, zoomScale: zoom)
         let layoutWindow = min(max(Int(position.rounded()), bounds.lowerBound), bounds.upperBound)
         let decision = planner.decisionForDrawing(window: layoutWindow, zoomKey: FixedGridBrowseModel.zoomKey(zoom), isInteracting: pinch.isInteracting, inputs: inputs)
+        if planner.isEasing { easeAxis() }
         return Frame(shown: shown, decision: decision, layoutWindow: layoutWindow)
     }
 
@@ -184,6 +198,38 @@ struct FixedGridBrowseView: View {
             gridContent(width: width, zoom: zoom, viewport: viewport, window: window)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topLeading) { loadingMarks(width: width) }
+    }
+
+    /// A day on screen that is not kept yet says whether it is being read or could not be read (a kept day with nothing on it is drawn as the empty day it is).
+    private func loadingMarks(width: CGFloat) -> some View {
+        let geometry = geometry(width: width)
+        let missing = geometry.renderedDays(at: position).filter { model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: $0)) == nil }
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(missing), id: \.self) { epoch in
+                DayLoadingMark(state: model.loadState(for: LocalDate(daysSinceUnixEpoch: epoch)))
+                    .frame(width: geometry.dayWidth)
+                    .offset(x: geometry.x(ofDay: Double(epoch), at: position) - Self.gutter, y: 12)
+            }
+        }
+        .frame(width: max(0, width - Self.gutter), height: 56, alignment: .topLeading)
+        .clipped()
+        .offset(x: Self.gutter)
+        .allowsHitTesting(false)
+    }
+
+    /// The days on screen whose read failed (tried again a few times, a second apart).
+    private var failedOnScreen: [LocalDate] {
+        [model.selectedDay, model.selectedDay.adding(days: 1)].filter { model.loadState(for: $0) == .failed }
+    }
+
+    private func retryFailedOnScreen() async {
+        let days = failedOnScreen.filter { (room.retries[$0] ?? 0) < 3 }
+        guard !days.isEmpty else { return }
+        try? await Task.sleep(for: .seconds(1))
+        guard !Task.isCancelled, move.phase == .resting else { return }
+        for day in days { room.retries[day, default: 0] += 1 }
+        await model.prefetch(forPosition: Double(selectedEpoch))
     }
 
     private func gridContent(width: CGFloat, zoom: CGFloat, viewport: CGFloat, window: ClosedRange<CGFloat>) -> AnyView {
@@ -313,6 +359,7 @@ struct FixedGridBrowseView: View {
             takeOverSelection()
             applyMove()
         case .began:
+            BrowseProbe.mark(.dragBegan)
             caughtTarget = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
@@ -323,6 +370,7 @@ struct FixedGridBrowseView: View {
             move.drag(to: DayPrefetchPolicy.browse.clampedPosition(raw, selected: selectedEpoch))
             applyMove()
         case .ended(let velocity):
+            BrowseProbe.mark(.released)
             dragStart = nil
             move.release(velocity: -Double(velocity / geometry.dayWidth))
             holdToHop()
@@ -367,11 +415,21 @@ struct FixedGridBrowseView: View {
     /// the anchor.
     private func applyMove() {
         let started = CFAbsoluteTimeGetCurrent()
-        defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000) }
+        let probe = BrowseProbe.begin(.applyMove)
+        defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
         let pending = FixedGridMove.pending(position: move.position, selected: selectedEpoch)
-        if pendingDays != pending { pendingDays = pending; Haptics.snap() }
+        if pendingDays != pending {
+            BrowseProbe.mark(.boundary)
+            pendingDays = pending
+            BrowseProbe.measure(.haptics) { Haptics.snap() }
+        }
         prefetch()
+        holdAnchor()
+    }
+
+    /// The scroll that keeps the time at the middle of the screen where it was, on the partition drawn now (the days moving, or the axis easing to a new plan).
+    private func holdAnchor() {
         let userMoved = pinch.consumeUserMoved()
         let viewport = pinch.viewportHeight
         guard viewport > 1, room.width > Self.gutter else { anchorState.release(at: move.position); return }
@@ -383,6 +441,22 @@ struct FixedGridBrowseView: View {
         )
         // Not applied while the person has the scroll in hand: the anchor is taken again from where they leave it.
         if pinch.setOffset?(result.offset) == false { anchorState.release(at: move.position) }
+    }
+
+    /// Draws the frames of an axis easing to a new plan (a day arrived while it was held), keeping the time at the middle of the screen where it is.
+    private func easeAxis() {
+        guard !room.easing else { return }
+        room.easing = true
+        Task { @MainActor in
+            defer { room.easing = false }
+            repeat {
+                try? await Task.sleep(for: .milliseconds(8))
+                BrowseProbe.measure(.transitionTick) {
+                    axisTick &+= 1
+                    if move.phase == .resting { holdAnchor() }
+                }
+            } while planner.isEasing
+        }
     }
 
     /// The days the position needs are read ahead (`AppModel.prefetch`) whenever what it needs changes, never on every frame.
@@ -421,6 +495,8 @@ struct FixedGridBrowseView: View {
 
     /// The days have come to rest: the selected day, the week strip and the cache take the day the line is on.
     private func commit() {
+        BrowseProbe.mark(.rested)
+        writeProbeSoon()
         let day = Int(move.position.rounded())
         if day != selectedEpoch { onMoveDays(day - selectedEpoch) }
         rebase(keeping: nil)
@@ -466,6 +542,7 @@ struct FixedGridBrowseView: View {
         guard let script else { return }
         try? await Task.sleep(for: .milliseconds(800))
         costs = Costs()
+        BrowseProbeRecorder.shared.start()
         let meter = FrameMeter()
         meter.start()
         let started = CFAbsoluteTimeGetCurrent()
@@ -493,6 +570,35 @@ struct FixedGridBrowseView: View {
             }
             while move.phase != .resting { try? await Task.sleep(for: .milliseconds(50)) }
             try? await Task.sleep(for: .milliseconds(400))
+        case "swipes", "swipes-zoomed":
+            // Real drag phases through the same handler the recognizer calls: slow drags across the halfway line and back, past it, a hard flick, a touch
+            // that catches a flight and swipes on, a reversal mid-flight. 8 ms per finger sample (120 Hz touches).
+            if script == "swipes-zoomed" { pinch.setZoom?(3, pinch.viewportHeight / 2); restedZoomKey = FixedGridBrowseModel.zoomKey(3); try? await Task.sleep(for: .milliseconds(600)) }
+            let width = room.width
+            let day = geometry(width: width).dayWidth
+            func swipe(_ points: [CGFloat], velocity: CGFloat, caught: Bool = false) async {
+                if caught { handleDateDrag(.touchDown, width: width) }
+                handleDateDrag(.began, width: width)
+                for x in points { handleDateDrag(.changed(translationX: x), width: width); try? await Task.sleep(for: .milliseconds(8)) }
+                handleDateDrag(.ended(velocityX: velocity), width: width)
+            }
+            func ramp(to x: CGFloat, steps: Int) -> [CGFloat] { (1...steps).map { x * CGFloat($0) / CGFloat(steps) } }
+            for _ in 0..<2 {
+                await swipe(ramp(to: -0.4 * day, steps: 40), velocity: 0)                                  // short slow drag: returns
+                try? await Task.sleep(for: .milliseconds(700))
+                await swipe(ramp(to: -0.7 * day, steps: 50), velocity: 0)                                  // past half: next day
+                try? await Task.sleep(for: .milliseconds(800))
+                await swipe(ramp(to: -0.25 * day, steps: 8), velocity: -1800)                              // hard flick
+                try? await Task.sleep(for: .milliseconds(180))
+                await swipe(ramp(to: -0.3 * day, steps: 10), velocity: -1600, caught: true)               // caught mid-flight, flicked on
+                try? await Task.sleep(for: .milliseconds(150))
+                await swipe(ramp(to: 0.35 * day, steps: 12), velocity: 1700, caught: true)                // reversal mid-flight
+                try? await Task.sleep(for: .milliseconds(900))
+                await swipe(ramp(to: 0.6 * day, steps: 40) + ramp(to: 0.6 * day, steps: 40).reversed().map { $0 * 0.5 }, velocity: 0)   // across the line and back
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+            while move.phase != .resting { try? await Task.sleep(for: .milliseconds(50)) }
+            try? await Task.sleep(for: .milliseconds(400))
         default: break
         }
         let seconds = CFAbsoluteTimeGetCurrent() - started
@@ -508,8 +614,34 @@ struct FixedGridBrowseView: View {
         partitions: background \(planner.backgroundPlans), planned in a frame \(planner.framePlans), engine runs \(planner.continuousLayoutRuns), found \(planner.partitionHits)
         day reads during script: \(model.dayReads - reads), cached \(model.cachedDays.count), selected \(model.selectedDay.daysSinceUnixEpoch - Int(Date().timeIntervalSince1970 / 86400))d from today, position \(String(format: "%.3f", move.position))
         """
-        print("MEASURE browse-temporal\n" + text)
-        if let path = Self.argument("-browse-temporal-log") { try? text.write(toFile: path, atomically: true, encoding: .utf8) }
+        let report = text + "\n" + "partitions held while a day was read \(planner.heldPartitions), axis transitions \(planner.transitionsBegun); reads dropped as stale \(model.staleReadsDropped), failed now \(model.failedDays.count)\n" + BrowseProbeRecorder.shared.report(title: script)
+        print("MEASURE browse-temporal\n" + report)
+        if let path = Self.argument("-browse-temporal-log") { try? report.write(toFile: path, atomically: true, encoding: .utf8) }
+        #endif
+    }
+
+    // MARK: Measuring by hand
+
+    /// `-browse-temporal-probe <path>`: records from the first appearance and writes the report (cumulative) each time the days come to rest or a pinch ends,
+    /// so real touches can be measured. DEBUG builds only.
+    private func startProbeIfAsked() {
+        #if DEBUG
+        guard let path = Self.argument("-browse-temporal-probe") else { return }
+        room.probePath = path
+        BrowseProbeRecorder.shared.start()
+        #endif
+    }
+
+    private func writeProbeSoon() {
+        #if DEBUG
+        guard let path = room.probePath else { return }
+        room.probeWrite?.cancel()
+        room.probeWrite = Task { @MainActor [planner, model] in
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            let header = "selected \(model.selectedDay.daysSinceUnixEpoch); day reads \(model.dayReads); cached \(model.cachedDays.count); held partitions \(planner.heldPartitions); axis transitions \(planner.transitionsBegun); planned in a frame \(planner.framePlans), background \(planner.backgroundPlans), engine runs \(planner.continuousLayoutRuns); stale reads dropped \(model.staleReadsDropped)\n"
+            try? (header + BrowseProbeRecorder.shared.report(title: "by hand")).write(toFile: path, atomically: true, encoding: .utf8)
+        }
         #endif
     }
 
@@ -526,7 +658,7 @@ struct FixedGridBrowseView: View {
         for window in windows {
             guard !Task.isCancelled else { return }
             if planner.plannedPartition(window: window, inputs: inputs) != nil, !planner.hasDecision(window: window, zoomKey: restedZoomKey) {
-                _ = planner.decision(window: window, zoomKey: restedZoomKey, inputs: inputs)
+                BrowseProbe.measure(.warmAhead) { _ = planner.decision(window: window, zoomKey: restedZoomKey, inputs: inputs) }
             }
             await Task.yield()
         }
@@ -566,6 +698,28 @@ enum FixedGridTouch {
 }
 
 // MARK: Pieces
+
+/// What a day on screen that is not kept yet shows: that it is being read, or that it could not be read (and is tried again).
+private struct DayLoadingMark: View {
+    let state: AppModel.DayLoadState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if state == .failed {
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
+                Text("불러오지 못했습니다")
+            } else {
+                ProgressView().controlSize(.mini)
+                Text("불러오는 중")
+            }
+        }
+        .font(.caption2)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8).padding(.vertical, 4)
+        .background(.thinMaterial, in: Capsule())
+        .accessibilityElement(children: .combine)
+    }
+}
 
 /// The line that says what this view does not do.
 private struct EditingNotice: View {

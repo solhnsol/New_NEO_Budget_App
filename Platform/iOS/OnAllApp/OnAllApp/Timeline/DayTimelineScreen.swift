@@ -17,7 +17,9 @@ struct DayTimelineScreen: View {
     @State private var isChangingDay = false
 
     var body: some View {
-        NavigationStack {
+        let probe = BrowseProbe.begin(.outerBody)
+        defer { BrowseProbe.end(probe) }
+        return NavigationStack {
             content
                 .navigationTitle(model.isDemo ? "데모" : "")
                 .navigationBarTitleDisplayMode(.inline)
@@ -52,7 +54,8 @@ struct DayTimelineScreen: View {
                 await model.reload()
             }
         case .ready:
-            if !model.visibleTimelines.isEmpty { ready(model.visibleTimelines) }
+            // The fixed grid draws a day that is still being read (or failed) itself, so it is shown whatever the two days' state is.
+            if !model.visibleTimelines.isEmpty || BrowseAxisMode.current == .fixedGrid { ready(model.visibleTimelines) }
         }
     }
 
@@ -71,7 +74,7 @@ struct DayTimelineScreen: View {
             Haptics.snap()
             withTransaction(noAnimationFixed) { _ = model.moveTo(day) }
             let policy = DayPrefetchPolicy.browse
-            await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy)
+            await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy, failsScreen: false)
             return
         }
         let column = (screenWidth - 60) / 2
@@ -131,7 +134,7 @@ struct DayTimelineScreen: View {
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
             )
             Divider()
-            if BrowseAxisMode.current == .fixedGrid, timelines.count == 2 {
+            if BrowseAxisMode.current == .fixedGrid {
                 FixedGridBrowseView(
                     model: model, today: model.today, zone: model.dayZone,
                     onSelect: { selection = $0 },
@@ -139,7 +142,7 @@ struct DayTimelineScreen: View {
                         // The days already read are shown in this frame; what the new window is missing (and the margin kept ahead) is read after.
                         if model.moveTo(model.selectedDay.adding(days: days)) {
                             let policy = DayPrefetchPolicy.browse
-                            Task { await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy) }
+                            Task { await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy, failsScreen: false) }
                         }
                     },
                     pendingDays: $pendingDays
@@ -231,7 +234,9 @@ private struct SummaryBar: View {
     let timelines: [DayTimeline]
 
     var body: some View {
-        VStack(spacing: 2) {
+        let probe = BrowseProbe.begin(.summaryBody)
+        defer { BrowseProbe.end(probe) }
+        return VStack(spacing: 2) {
             ForEach(timelines, id: \.day) { timeline in
                 let summary = timeline.summary
                 HStack(spacing: 10) {

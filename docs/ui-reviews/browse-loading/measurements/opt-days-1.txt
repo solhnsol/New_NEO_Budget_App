@@ -1,0 +1,27 @@
+script days zoom 1.00 seconds 4.02
+step cost: mean 0.043 / p50 0.029 / p99 0.139 / max 1.961 ms (n=339)
+step interval: mean 9.659 / p50 9.110 / p99 17.519 / max 96.276 ms (n=338)
+display frames: mean 16.807 / p50 16.667 / p99 16.667 / max 43.609 ms (n=238); late (>1.5x median) 1 of 238
+view build: 0.06/0.05/2.66 ms (n=386)
+partitions: background 4, planned in a frame 1, engine runs 5, found 1856
+day reads during script: 2, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+PROBE days
+recorded 4.02 s; display frames n=238 mean 16.807 p50 16.667 p99 16.667 max 43.609 ms; nominal 16.67 ms; late (>1.5x) 1
+main run-loop turns busy: n=994 mean 0.856 p50 0.277 p99 6.472 max 19.444 ms
+  screenBody: n=358 mean 0.020 p50 0.017 p99 0.061 max 0.189 ms
+  gridBuild: n=368 mean 0.051 p50 0.045 p99 0.175 max 0.251 ms
+  hostLayout: n=198 mean 0.707 p50 0.665 p99 1.959 max 2.579 ms
+  applyMove: n=339 mean 0.040 p50 0.028 p99 0.129 max 1.955 ms
+  engine: n=1 mean 0.005 p50 0.005 p99 0.005 max 0.005 ms
+  warmAhead: n=1 mean 0.009 p50 0.009 p99 0.009 max 0.009 ms
+  warmLand: n=1 mean 0.001 p50 0.001 p99 0.001 max 0.001 ms
+  cacheMerge: n=17 mean 0.014 p50 0.014 p99 0.037 max 0.037 ms
+  haptics: n=2 mean 0.944 p50 1.844 p99 1.844 max 1.844 ms
+  outerBody: n=16 mean 0.048 p50 0.037 p99 0.170 max 0.170 ms
+  weekStripBody: n=16 mean 0.010 p50 0.009 p99 0.036 max 0.036 ms
+  summaryBody: n=2 mean 0.002 p50 0.003 p99 0.003 max 0.003 ms
+marks: boundary 2, dayLanded 2, rested 2, selectedDayChanged 2
+  late +0.050s 43.6 ms: busiest turn 19.4 ms (app 1.0, unattributed 18.5) [hostLayout 5.0, gridBuild 0.5, applyMove 0.3, screenBody 0.2, outerBody 0.2, cacheMerge 0.0, weekStripBody 0.0] marks []
+late frames, summed: app spans 1.0 ms, unattributed 18.5 ms; by kind (inclusive) [hostLayout 5.0, gridBuild 0.5, applyMove 0.3, screenBody 0.2, outerBody 0.2, cacheMerge 0.0, weekStripBody 0.0]
+late frames near a mark: 

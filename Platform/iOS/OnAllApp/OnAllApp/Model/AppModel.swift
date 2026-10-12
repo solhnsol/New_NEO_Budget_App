@@ -49,6 +49,17 @@ final class AppModel {
     func cachedTimeline(for day: LocalDate) -> DayTimeline? { cache[day] }
     /// Changes whenever the kept days change.
     var dataRevision: Int { cache.revision }
+
+    /// Whether a day is kept, being read, failed to read, or not asked for. A kept day with nothing on it is `.loaded` (an empty day), never `.loading`.
+    enum DayLoadState: Equatable { case loaded, loading, failed, notRead }
+
+    func loadState(for day: LocalDate) -> DayLoadState {
+        if cache[day] != nil { return .loaded }
+        if let running = reading[day], running.generation == dataGeneration { return .loading }
+        if fullReloadsInFlight > 0 { return .loading }
+        if failedDays.contains(day) { return .failed }
+        return .notRead
+    }
     private var fullReloadsInFlight = 0
     private(set) var week: [WeekStripDay] = []
     /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.
@@ -67,7 +78,28 @@ final class AppModel {
     private let ledger: AppLedger
     private var service: CalendarCommandService?
     private let prepare: (@Sendable () async -> Void)?
-    private var generation = 0
+    /// The data generation: moves only when the calendar may have changed (`reload`). A day read in an earlier generation is stale and is never kept. A move does
+    /// not touch it, so a read that a move outran is still kept (the day is still that day).
+    private(set) var dataGeneration = 0
+    /// The move requests (`prefetch`): moves with every one, and says which days the move needs now. Separate from `dataGeneration`.
+    private(set) var navigationRevision = 0
+    private var navigationNeeded: Set<LocalDate> = []
+    /// The cache policy of the last read (the fixed grid's and Browse's have the same numbers).
+    private var keptPolicy = DayCachePolicy.standard
+    /// The day reads under way, one per day: a second asker joins the first instead of reading the day again.
+    private struct Reading {
+        let generation: Int
+        let token: Int
+        let task: Task<Bool, any Error>
+    }
+    private var reading: [LocalDate: Reading] = [:]
+    private var readTokens = 0
+    /// Days whose read failed in this data generation and that are not kept (they are read again when asked for).
+    private(set) var failedDays: Set<LocalDate> = []
+    /// Reads that landed after the calendar changed and were dropped. For tests and diagnostics.
+    private(set) var staleReadsDropped = 0
+    /// Wraps every day read (tests and the DEBUG launch arguments inject delays and failures here). `nil`: the service is read directly.
+    var dayReadInterceptor: (@MainActor (LocalDate, @escaping @MainActor () async throws -> DayTimeline) async throws -> DayTimeline)?
     private var observer: Task<Void, Never>?
 
     private init(
@@ -188,6 +220,7 @@ final class AppModel {
     @discardableResult
     func moveTo(_ day: LocalDate) -> Bool {
         guard day != selectedDay else { return false }
+        BrowseProbe.mark(.selectedDayChanged)
         selectedDay = day
         if visibleTimelines.count == 2 { editor?.timelinesDidChange(visibleTimelines) }
         return true
@@ -225,14 +258,14 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
-        generation += 1
-        let mine = generation
+        dataGeneration += 1
+        let mine = dataGeneration
         fullReloadsInFlight += 1
         defer { fullReloadsInFlight -= 1 }
         do {
             let first = selectedDay
             var loaded: [LocalDate: DayTimeline] = [:]
-            for day in DayCachePolicy.standard.required(around: first) { dayReads += 1; loaded[day] = try await service.dayTimeline(for: day) }
+            for day in DayCachePolicy.standard.required(around: first) { loaded[day] = try await readTimeline(day, service: service) }
             let loadedWeek = try await service.weekStrip(containing: selectedDay, firstWeekday: 0)
             var cells: [LocalDate: WeekStripDay] = [:]
             for offset in [-7, 0, 7] {
@@ -240,8 +273,9 @@ final class AppModel {
                 for cell in days { cells[cell.day] = cell }
             }
             let loadedCalendars = try await provider.calendars()
-            guard mine == generation else { return }
-            cache.replaceAll(with: loaded)
+            guard mine == dataGeneration else { return }
+            BrowseProbe.measure(.cacheMerge) { cache.replaceAll(with: loaded) }
+            failedDays = []
             let shown = visibleTimelines
             if shown.count == 2 { editor?.timelinesDidChange(shown) }
             week = loadedWeek
@@ -250,10 +284,10 @@ final class AppModel {
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
-            guard mine == generation else { return }
+            guard mine == dataGeneration else { return }
             phase = .denied
         } catch {
-            guard mine == generation else { return }
+            guard mine == dataGeneration else { return }
             phase = .failed("일정과 거래를 불러오지 못했습니다.")
         }
     }
@@ -262,65 +296,131 @@ final class AppModel {
     /// around the selected day that are not kept, and evicts what the window left behind. Nothing already read is read again, and nothing near the selected
     /// day is dropped. Calendars and the life state are not read (a move does not change them). If a full `reload` is running it is the fresher read, so this
     /// becomes that.
-    func loadMissing(extra: Int = 0, policy: DayCachePolicy = .standard) async {
+    ///
+    /// Each day is kept as soon as it is read (nearest first), so a day on screen does not wait for the others or for the weeks. A day that fails is marked
+    /// failed and the others are still kept. A newer move does not throw this one's days away (they are still those days); only a `reload` (a new data
+    /// generation) makes them stale.
+    ///
+    /// `failsScreen`: whether a day on screen that could not be read fails the whole screen (`phase = .failed`, Browse's behaviour). The fixed grid passes
+    /// `false`: it marks that column as failed and reads it again, and the rest of the screen stays.
+    func loadMissing(extra: Int = 0, policy: DayCachePolicy = .standard, failsScreen: Bool = true) async {
         guard let service else { return }
         guard fullReloadsInFlight == 0 else { await reload(); return }
-        generation += 1
-        let mine = generation
+        keptPolicy = policy
+        let mine = dataGeneration
         let focus = selectedDay
         let missing = cache.missing(around: focus, policy: policy, extra: extra)
         var weeksToRead: [LocalDate] = []
         for offset in [-7, 0, 7] where weekCells[focus.adding(days: offset)] == nil { weeksToRead.append(focus.adding(days: offset)) }
+        var failure: (any Error)?
+        for day in missing {
+            do { try await read(day) } catch { failure = failure ?? error }
+        }
+        var cells: [LocalDate: WeekStripDay] = [:]
+        var loadedWeeks: [[WeekStripDay]] = []
         do {
-            var loaded: [LocalDate: DayTimeline] = [:]
-            for day in missing { dayReads += 1; loaded[day] = try await service.dayTimeline(for: day) }
-            var cells: [LocalDate: WeekStripDay] = [:]
-            var loadedWeek: [WeekStripDay]?
             for day in weeksToRead {
                 let days = try await service.weekStrip(containing: day, firstWeekday: 0)
                 for cell in days { cells[cell.day] = cell }
-                if day == focus { loadedWeek = days }
+                loadedWeeks.append(days)
             }
-            guard mine == generation else { return }
-            cache.merge(loaded, around: focus, policy: policy)
-            for (day, cell) in cells { weekCells[day] = cell }
-            if let loadedWeek { week = loadedWeek }
-            let shown = visibleTimelines
-            if shown.count == 2 { editor?.timelinesDidChange(shown) }
-            phase = .ready
-        } catch CalendarProviderFailure.accessUnavailable {
-            guard mine == generation else { return }
-            phase = .denied
-        } catch {
-            guard mine == generation else { return }
-            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+        } catch { failure = failure ?? error }
+        guard mine == dataGeneration else { return }
+        BrowseProbe.measure(.cacheMerge) { cache.evict(around: selectedDay, policy: policy, protecting: protectedDays) }
+        forgetFailuresNoLongerWanted()
+        for (day, cell) in cells { weekCells[day] = cell }
+        // The week of the day selected now (a later move may have read it already, or this read may be for a day that is no longer selected).
+        if let current = loadedWeeks.first(where: { $0.contains { $0.day == selectedDay } }) { week = current }
+        let shown = visibleTimelines
+        if shown.count == 2 { editor?.timelinesDidChange(shown) }
+        switch failure {
+        case nil: phase = .ready
+        case CalendarProviderFailure.accessUnavailable?: phase = .denied
+        default: phase = shown.count == 2 || !failsScreen ? .ready : .failed("일정과 거래를 불러오지 못했습니다.")
         }
     }
 
     /// While the window of days is between days (a swipe in progress, a flight to another day) and `selectedDay` has not moved yet: reads the days that the position
-    /// and the day being headed for need (`DayPrefetchPolicy.neededDays`), nearest the position first, keeps the days on screen, and evicts around the position.
-    /// `position` and `target` are epoch days. Nothing about the selected day changes. If a full `reload` is running it is left to finish (it is the fresher read) and
-    /// nothing is read; a read that a `reload` overtakes is dropped.
+    /// and the day being headed for need (`DayPrefetchPolicy.neededDays`), nearest the position first, keeps the days on screen and the days the latest move
+    /// needs, and evicts the rest of what the window around the selected day does not hold. `position` and `target` are epoch days. Nothing about the selected
+    /// day changes. If a full `reload` is running it is left to finish (it is the fresher read) and nothing is read; a read that a `reload` overtakes is dropped.
+    /// Each day is kept as it lands; a failed day does not drop the others; a day a later move no longer needs is not read.
     func prefetch(forPosition position: Double, target: Int? = nil, policy: DayPrefetchPolicy = .browse) async {
-        guard let service, fullReloadsInFlight == 0 else { return }
+        guard service != nil, fullReloadsInFlight == 0 else { return }
+        keptPolicy = policy.cachePolicy
         let needed = DayPrefetchPolicy.neededDays(position: position, target: target).map { LocalDate(daysSinceUnixEpoch: $0) }
+        navigationRevision += 1
+        navigationNeeded = Set(needed)
+        forgetFailuresNoLongerWanted()
         let missing = needed.filter { cache[$0] == nil }.sorted { abs(Double($0.daysSinceUnixEpoch) - position) < abs(Double($1.daysSinceUnixEpoch) - position) }
-        let epoch = generation
-        let focus = LocalDate(daysSinceUnixEpoch: Int(position.rounded()))
-        // The two days on screen, and what a window of days around the selected one is required to hold, stay whatever the window is doing.
-        let onScreen = Set([selectedDay, selectedDay.adding(days: 1)])
         guard !missing.isEmpty else {
-            cache.evict(around: focus, policy: policy.cachePolicy, protecting: onScreen.union(needed))
+            BrowseProbe.measure(.cacheMerge) { cache.evict(around: selectedDay, policy: policy.cachePolicy, protecting: protectedDays) }
             return
         }
-        var loaded: [LocalDate: DayTimeline] = [:]
         for day in missing {
-            dayReads += 1
-            guard let timeline = try? await service.dayTimeline(for: day) else { return }
-            loaded[day] = timeline
+            guard fullReloadsInFlight == 0 else { return }
+            guard cache[day] == nil, isWanted(day) else { continue }
+            try? await read(day)
         }
-        guard epoch == generation, fullReloadsInFlight == 0 else { return }
-        cache.merge(loaded, around: focus, policy: policy.cachePolicy, protecting: onScreen.union(needed))
+    }
+
+    // MARK: Reading one day
+
+    /// A failure is remembered only for a day the window still wants (one it has left is simply not read).
+    private func forgetFailuresNoLongerWanted() {
+        if !failedDays.isEmpty { failedDays = failedDays.filter(isWanted) }
+    }
+
+    /// What eviction never drops: the two days on screen and the days the latest move needs.
+    private var protectedDays: Set<LocalDate> { navigationNeeded.union([selectedDay, selectedDay.adding(days: 1)]) }
+
+    /// Whether a day is still wanted where the window is now (around the selected day, or by the latest move).
+    private func isWanted(_ day: LocalDate) -> Bool {
+        keptPolicy.retained(around: selectedDay).contains(day) || protectedDays.contains(day)
+    }
+
+    /// Reads a day in this data generation, or joins the read of it already under way, and keeps it the moment it lands if the calendar did not change
+    /// meanwhile and the window still wants it. Throws what the read threw (the day is then marked failed; nothing else is touched).
+    private func read(_ day: LocalDate) async throws {
+        guard let service else { return }
+        let generation = dataGeneration
+        if let running = reading[day], running.generation == generation {
+            _ = try await running.task.value
+            return
+        }
+        readTokens += 1
+        let token = readTokens
+        failedDays.remove(day)
+        let task = Task<Bool, any Error> { @MainActor [weak self] in
+            guard let self else { return false }
+            defer { if self.reading[day]?.token == token { self.reading[day] = nil } }
+            do {
+                let timeline = try await self.readTimeline(day, service: service)
+                return self.keep(timeline, for: day, readIn: generation)
+            } catch {
+                if generation == self.dataGeneration, self.cache[day] == nil { self.failedDays.insert(day) }
+                throw error
+            }
+        }
+        reading[day] = Reading(generation: generation, token: token, task: task)
+        _ = try await task.value
+    }
+
+    /// A day just read: kept, unless it is stale (read before the calendar last changed: the newer read covers it) or the window has moved away from it.
+    private func keep(_ timeline: DayTimeline, for day: LocalDate, readIn generation: Int) -> Bool {
+        guard generation == dataGeneration else { staleReadsDropped += 1; return false }
+        failedDays.remove(day)
+        guard isWanted(day) else { return false }
+        BrowseProbe.measure(.cacheMerge) { cache.merge([day: timeline], around: selectedDay, policy: keptPolicy, protecting: protectedDays) }
+        BrowseProbe.mark(.dayLanded)
+        return true
+    }
+
+    private func readTimeline(_ day: LocalDate, service: CalendarCommandService) async throws -> DayTimeline {
+        dayReads += 1
+        let direct: @MainActor () async throws -> DayTimeline = { try await service.dayTimeline(for: day) }
+        if let dayReadInterceptor { return try await dayReadInterceptor(day, direct) }
+        return try await direct()
     }
 
     /// Runs one edit of an event's meaning (type, place, people, linked transactions) and shows the result. The day is reloaded

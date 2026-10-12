@@ -33,6 +33,9 @@ struct OnAllApp: App {
                     let created = isDemo ? try AppModel.demo() : try AppModel.live(withSampleLedger: arguments.contains("-ledger-sample"))
                     model = created
                     await created.start()
+                    #if DEBUG
+                    if isDemo { created.dayReadInterceptor = DayReadFaults.interceptor(arguments: arguments) }
+                    #endif
                     if isDemo, let index = arguments.firstIndex(of: "-demo-preview"), arguments.indices.contains(index + 1) {
                         DemoPreview.apply(arguments[index + 1], to: created)
                         await DemoPreview.runScript(arguments[index + 1], on: created)
