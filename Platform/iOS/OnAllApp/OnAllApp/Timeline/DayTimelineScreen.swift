@@ -71,7 +71,7 @@ struct DayTimelineScreen: View {
         Haptics.snap()
         guard column > 0 else {
             withTransaction(noAnimation) { _ = model.moveTo(day); pendingDays = 0 }
-            await model.reload()
+            await model.loadMissing()
             return
         }
         if abs(delta) == 1 {
@@ -82,7 +82,7 @@ struct DayTimelineScreen: View {
                 swipeOffset = 0
                 pendingDays = 0
             }
-            await model.reload()
+            await model.loadMissing()
         } else {
             // Further away: the days really are there, to the side, and the strip of them runs past quickly. The days in between are read
             // when they are not too many (otherwise the ones near either end are, and the run between is empty time).
@@ -101,7 +101,7 @@ struct DayTimelineScreen: View {
                 pendingDays = 0
                 jumpDays = []
             }
-            await model.reload()
+            await model.loadMissing()
         }
     }
 
@@ -128,7 +128,7 @@ struct DayTimelineScreen: View {
                     onEditInfo: { infoEvent = $0.eventKey },
                     onMoveDays: { days in
                         // The days already read are shown in this frame; the one that just came into the strip is read after.
-                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.reload() } }
+                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.loadMissing() } }
                     },
                     swipeOffset: $swipeOffset,
                     pendingDays: $pendingDays

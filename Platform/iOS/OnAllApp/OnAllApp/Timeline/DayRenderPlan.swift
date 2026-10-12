@@ -105,7 +105,7 @@ struct DayRenderPlan {
     static let thinnestDrawn: CGFloat = 2
 
     init(
-        timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: TimelineGeometry, layoutWidth: CGFloat,
+        timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
         metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
     ) {

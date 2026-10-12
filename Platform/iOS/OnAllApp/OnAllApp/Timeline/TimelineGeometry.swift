@@ -57,24 +57,6 @@ struct TimelineGeometry: Equatable {
     /// The nearest minute at a vertical position, clamped to the day.
     func minute(atY y: CGFloat) -> Int { axis.minute(atY: y) }
 
-    /// The width of the day's content column: everything of a day (events, transactions) is laid out in it.
-    func contentWidth(totalWidth: CGFloat) -> CGFloat { max(0, totalWidth - gutterWidth - trailingPadding) }
-
-    /// An expanded block takes the whole column (it opens over its neighbours); otherwise it keeps its stacking insets.
-    /// The top and bottom are exactly where the event's time puts them.
-    func blockFrame(_ block: EventBlock, totalWidth: CGFloat, expanded: Bool = false, insets: CardInsets = .zero) -> CGRect {
-        let available = contentWidth(totalWidth: totalWidth)
-        let used = expanded ? CardInsets.zero : insets
-        let top = y(minute: block.displayStartMinute)
-        let bottom = y(minute: block.displayEndMinute)
-        return CGRect(
-            x: gutterWidth + used.left,
-            y: top,
-            width: max(0, available - used.left - used.right - columnSpacing),
-            height: max(minimumBlockHeight, bottom - top - 1)
-        )
-    }
-
     /// Vertical positions for cards that must not overlap one another: each sits at its own minute unless that would be closer than
     /// `minimumSpacing` to the one above it, then it is pushed down. Result order matches the input order.
     func stackedYPositions(minutes: [Int], minimumSpacing: CGFloat = 22) -> [CGFloat] {

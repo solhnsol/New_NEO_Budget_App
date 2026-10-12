@@ -183,6 +183,8 @@
 
 ### Phase 0 — 준비 (동작 불변)
 
+> **진행 상태**: 항목 1(축 추상화), DST 정책(5), 날 캐시 개선, 소유권 경계 정리는 구현됨 — `phase0-foundations.md`. 항목 2(`DayRenderPlan` 정적/동적 분리), 3(`TimelineEditorTests` 분리), 4(죽은 코드 제거)는 아직 남아 있다.
+
 작업:
 1. `TimeAxisMapping` 프로토콜 도입, `TimelineGeometry`가 따르게 하고 `DayRenderPlan`/`TimelineEditPlanner`/`EditHit` 사용처를 프로토콜로 바꾼다. (`minute(atY:)`는 `Double`을 돌려주되 기존 구현은 Int→Double.)
 2. `DayRenderPlan`을 정적(겹침 분석, 표시 데이터, 제목 폭, 링크 라벨)과 동적(프레임, 프레젠테이션, 히트) 부분으로 분리하고 정적 부분을 날·텍스트 크기·콘텐츠 키로 캐시.

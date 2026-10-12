@@ -39,7 +39,13 @@ final class AppModel {
             return StripDay(day: day, timeline: cache[day])
         }
     }
-    private var cache: [LocalDate: DayTimeline] = [:]
+    /// The days read, kept by `DayCachePolicy` (see `DayCache.swift`): required `D-1 ... D+2`, retained two more each side.
+    private var cache = DayCache()
+    /// How many days have been read from the calendar and the ledger since the app started. A move to a day already kept adds none.
+    private(set) var dayReads = 0
+    /// The days kept, for tests and diagnostics.
+    var cachedDays: Set<LocalDate> { cache.days }
+    private var fullReloadsInFlight = 0
     private(set) var week: [WeekStripDay] = []
     /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.
     private(set) var weekCells: [LocalDate: WeekStripDay] = [:]
@@ -188,7 +194,8 @@ final class AppModel {
         guard let service else { return days.map { StripDay(day: $0, timeline: cache[$0]) } }
         var result: [StripDay] = []
         for day in days {
-            let timeline = if let known = cache[day] { known } else { try? await service.dayTimeline(for: day) }
+            let timeline: DayTimeline?
+            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = try? await service.dayTimeline(for: day) }
             result.append(StripDay(day: day, timeline: timeline))
         }
         return result
@@ -196,7 +203,7 @@ final class AppModel {
 
     /// Keeps days read ahead of a jump, so the move to the day lands on days that are already there.
     func adopt(_ days: [StripDay]) {
-        for entry in days { if let timeline = entry.timeline { cache[entry.day] = timeline } }
+        for entry in days { if let timeline = entry.timeline { cache.insert(timeline) } }
     }
 
     func shift(days: Int) async { await select(selectedDay.adding(days: days)) }
@@ -210,14 +217,18 @@ final class AppModel {
 
     // MARK: Loading
 
+    /// Reads everything again: the days around the selected one, the weeks, the calendars, the life state. For "something changed" (the calendar's
+    /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
         generation += 1
         let mine = generation
+        fullReloadsInFlight += 1
+        defer { fullReloadsInFlight -= 1 }
         do {
             let first = selectedDay
             var loaded: [LocalDate: DayTimeline] = [:]
-            for offset in -1...2 { loaded[first.adding(days: offset)] = try await service.dayTimeline(for: first.adding(days: offset)) }
+            for day in DayCachePolicy.standard.required(around: first) { dayReads += 1; loaded[day] = try await service.dayTimeline(for: day) }
             let loadedWeek = try await service.weekStrip(containing: selectedDay, firstWeekday: 0)
             var cells: [LocalDate: WeekStripDay] = [:]
             for offset in [-7, 0, 7] {
@@ -226,13 +237,52 @@ final class AppModel {
             }
             let loadedCalendars = try await provider.calendars()
             guard mine == generation else { return }
-            cache = loaded
+            cache.replaceAll(with: loaded)
             let shown = visibleTimelines
             if shown.count == 2 { editor?.timelinesDidChange(shown) }
             week = loadedWeek
             weekCells = cells
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
+            phase = .ready
+        } catch CalendarProviderFailure.accessUnavailable {
+            guard mine == generation else { return }
+            phase = .denied
+        } catch {
+            guard mine == generation else { return }
+            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+        }
+    }
+
+    /// After a move to another day: reads only the required days that are not kept yet (and, for a continuous move, `extra` more each side), the weeks
+    /// around the selected day that are not kept, and evicts what the window left behind. Nothing already read is read again, and nothing near the selected
+    /// day is dropped. Calendars and the life state are not read (a move does not change them). If a full `reload` is running it is the fresher read, so this
+    /// becomes that.
+    func loadMissing(extra: Int = 0) async {
+        guard let service else { return }
+        guard fullReloadsInFlight == 0 else { await reload(); return }
+        generation += 1
+        let mine = generation
+        let focus = selectedDay
+        let missing = cache.missing(around: focus, extra: extra)
+        var weeksToRead: [LocalDate] = []
+        for offset in [-7, 0, 7] where weekCells[focus.adding(days: offset)] == nil { weeksToRead.append(focus.adding(days: offset)) }
+        do {
+            var loaded: [LocalDate: DayTimeline] = [:]
+            for day in missing { dayReads += 1; loaded[day] = try await service.dayTimeline(for: day) }
+            var cells: [LocalDate: WeekStripDay] = [:]
+            var loadedWeek: [WeekStripDay]?
+            for day in weeksToRead {
+                let days = try await service.weekStrip(containing: day, firstWeekday: 0)
+                for cell in days { cells[cell.day] = cell }
+                if day == focus { loadedWeek = days }
+            }
+            guard mine == generation else { return }
+            cache.merge(loaded, around: focus)
+            for (day, cell) in cells { weekCells[day] = cell }
+            if let loadedWeek { week = loadedWeek }
+            let shown = visibleTimelines
+            if shown.count == 2 { editor?.timelinesDidChange(shown) }
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == generation else { return }

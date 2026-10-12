@@ -6,12 +6,12 @@ import NEOBudgetCalendar
 struct TimelineEditPlanner {
     let policy: TimelineEditPolicy
     let zone: DisplayTimeZone
-    let geometry: TimelineGeometry
+    let geometry: any TimeAxisMapping
     let day: LocalDate
     let dayStartUnixMilliseconds: Int64
     let dayEndUnixMilliseconds: Int64
 
-    init(policy: TimelineEditPolicy, zone: DisplayTimeZone, geometry: TimelineGeometry, timeline: DayTimeline) {
+    init(policy: TimelineEditPolicy, zone: DisplayTimeZone, geometry: any TimeAxisMapping, timeline: DayTimeline) {
         self.policy = policy
         self.zone = zone
         self.geometry = geometry
@@ -106,7 +106,7 @@ struct TimelineEditPlanner {
 
     /// The frame of a previewed range inside the grid, kept inside the selected day. `slot` comes from the block being edited so a
     /// preview keeps its stacking position; a new event uses the whole column.
-    func previewFrame(_ range: TimedRange, slot: CardSlot, totalWidth: CGFloat, geometry override: TimelineGeometry? = nil) -> CGRect {
+    func previewFrame(_ range: TimedRange, slot: CardSlot, totalWidth: CGFloat, geometry override: (any TimeAxisMapping)? = nil) -> CGRect {
         let geometry = override ?? self.geometry
         let first = max(0, Int((range.startUnixMilliseconds - dayStartUnixMilliseconds) / 60_000))
         let last = min(geometry.totalMinutes, Int((range.endUnixMilliseconds - dayStartUnixMilliseconds + 59_999) / 60_000))
