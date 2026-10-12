@@ -69,6 +69,9 @@ final class AppModel {
     private(set) var catalog = ActivityCatalog()
     /// Created once the command service exists (after the first successful start). Gestures go through it.
     private(set) var editor: TimelineEditor?
+    /// The save path for an edit session's time change (Phase 3A): re-checks the original, then writes through the same command service.
+    /// Created with `editor`. Use `save(_:)` so the days are read again afterwards.
+    private(set) var savePipeline: EventSavePipeline?
 
     let dayZone: DisplayTimeZone
     let isDemo: Bool
@@ -196,6 +199,7 @@ final class AppModel {
             calendars: { [weak self] in self?.calendars ?? [] }
         )
         editor = TimelineEditor(environment: environment)
+        savePipeline = EventSavePipeline(service: service, supportedScopes: provider.supportedRecurrenceScopes, zone: dayZone)
     }
 
     func requestAccess() async {
@@ -431,6 +435,19 @@ final class AppModel {
         let outcome = await service.perform(command)
         await reload()
         return outcome
+    }
+
+    /// Saves an edit session's time change and, if anything may have reached the calendar, reads the days again (as the timeline editor does after
+    /// every write), so what is on screen is what is stored. A scope question or an unchanged proposal reads nothing. `nil` before the service exists.
+    @discardableResult
+    func save(_ request: EventSaveRequest) async -> EventSaveResult? {
+        guard let savePipeline else { return nil }
+        let result = await savePipeline.save(request)
+        switch result {
+        case .unchanged, .needsScope: break
+        case .saved, .refused, .failed: await reload()          // a refusal or failure may mean the calendar changed: show what it holds now
+        }
+        return result
     }
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }

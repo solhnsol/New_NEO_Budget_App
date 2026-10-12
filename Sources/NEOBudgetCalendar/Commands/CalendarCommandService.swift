@@ -54,6 +54,9 @@ public actor CalendarCommandService {
 
     public func lifeSnapshot() throws -> LifeSnapshot { try repository.snapshot() }
 
+    /// The event as the calendar provider reports it now, or `nil` if the key no longer resolves. A plain read; nothing is written.
+    public func event(_ key: CalendarEventKey) async throws -> CalendarEvent? { try await provider.event(key) }
+
     /// The timeline for one day. Fetches the day's events and transactions plus any transaction linked to an
     /// activity that can appear, so spending bought earlier still shows inside its activity.
     public func dayTimeline(for day: LocalDate, visibleCalendarIDs: Set<CalendarID>? = nil) async throws -> DayTimeline {
