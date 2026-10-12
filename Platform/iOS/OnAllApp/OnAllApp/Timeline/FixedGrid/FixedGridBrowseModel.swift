@@ -324,6 +324,18 @@ final class FixedGridBrowseModel {
         self.frozen = nil
     }
 
+    /// The session `id` moves to another event on the same frozen grid (nothing drawn changes): the original keeps the session's start (generation, revision,
+    /// days) and takes the new target as it was in those days when they hold it, else as it is now.
+    func retarget(_ id: Int, target: (day: LocalDate, block: EventBlock)?) {
+        guard let old = frozen, old.id == id else { return }
+        let baseline = old.baseline
+        let original = target.map { target in (target.day, baseline.days[target.day]?.blocks.first { $0.eventKey == target.block.eventKey } ?? target.block) }
+        frozen = Freeze(
+            id: old.id, position: old.position, partition: old.partition, decisions: old.decisions, zoomKey: old.zoomKey,
+            baseline: FixedGridEditBaseline(dataGeneration: baseline.dataGeneration, dataRevision: baseline.dataRevision, days: baseline.days, target: original)
+        )
+    }
+
     /// While a session's end eases in: the decision a window was drawn with during the session, and how far (0 … 1) the new one has come.
     func thawing(window: Int) -> (decision: Decision, weight: Double)? {
         guard let thaw, let decision = thaw.decisions[window] else { return nil }
