@@ -8,6 +8,11 @@ final class PinchZoomModel: ObservableObject {
     /// Which half-viewport band of the scroll is on screen (changes rarely; the content built for it reaches a viewport beyond each side).
     @Published var band = 0
     @Published var isInteracting = false
+    /// While a pinch that ended past 1× or 8× eases back inside: the zoom it comes to rest at. What is planned for the zoom is planned for this, not for the
+    /// frames of the easing. `nil` otherwise.
+    @Published var settlingZoom: CGFloat?
+    /// DEBUG scripts: plays a pinch through the same steps as the recognizer (state, scale since it began, focal y from the top of the viewport).
+    var drivePinch: ((UIGestureRecognizer.State, CGFloat, CGFloat) -> Void)?
     @Published var viewportHeight: CGFloat = 0
     init(zoom: CGFloat = 1) { self.zoom = PinchZoomMath.clamped(zoom) }
     /// Set by the scroll view: change the zoom keeping the time at `focal` (from the top of the viewport) where it is.
@@ -79,16 +84,39 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
     func makeUIView(context: Context) -> Container {
         let container = Container()
-        context.coordinator.attach(to: container, root: AnyView(host()))
+        if ProbeExperiment.stableRoot {
+            let box = ContentBox(build: content)
+            context.coordinator.box = box
+            context.coordinator.attach(to: container, root: AnyView(BoxHost(model: model, box: box)))
+        } else {
+            context.coordinator.attach(to: container, root: AnyView(host()))
+        }
         return container
     }
 
     func updateUIView(_ container: Container, context: Context) {
         context.coordinator.onDateDrag = onDateDrag
-        context.coordinator.hosting?.rootView = AnyView(host())
+        if let box = context.coordinator.box as? ContentBox {
+            box.build = content
+            box.objectWillChange.send()
+        } else {
+            context.coordinator.hosting?.rootView = AnyView(host())
+        }
     }
 
     private func host() -> some View { Host(model: model, build: content) }
+
+    /// The experiment `-probe-h3-stable-root`: the content of the latest update, reached by the one root view through observation instead of a new root view.
+    @MainActor final class ContentBox: ObservableObject {
+        var build: (CGFloat, CGFloat, ClosedRange<CGFloat>) -> Content
+        init(build: @escaping (CGFloat, CGFloat, ClosedRange<CGFloat>) -> Content) { self.build = build }
+    }
+
+    struct BoxHost: View {
+        @ObservedObject var model: PinchZoomModel
+        @ObservedObject var box: ContentBox
+        var body: some View { Host(model: model, build: box.build) }
+    }
 
     struct Host<C: View>: View {
         @ObservedObject var model: PinchZoomModel
@@ -131,6 +159,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         let scroll = UIScrollView()
         var hosting: ProbedHostingController?
         var onDateDrag: (DateDragPhase) -> Void = { _ in }
+        var box: AnyObject?
         private let counter = TouchCounter()
         private var pinch: UIPinchGestureRecognizer!
         private var datePan: DateSwipeRecognizer!
@@ -191,6 +220,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 return true
             }
             model.startPace = { [weak self] in self?.startMeter() }
+            model.drivePinch = { [weak self] state, scale, focal in self?.pinch(state, scale: scale, focal: focal) }
             model.stopPace = { [weak self] in self?.stopMeter() }
         }
 
@@ -243,9 +273,13 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             guard let container else { return }
+            pinch(gesture.state, scale: gesture.scale, focal: gesture.numberOfTouches > 0 ? gesture.location(in: container).y : lastFocal)
+        }
+
+        private func pinch(_ state: UIGestureRecognizer.State, scale: CGFloat, focal: CGFloat) {
+            guard let container else { return }
             let viewport = container.bounds.height
-            let focal = gesture.numberOfTouches > 0 ? gesture.location(in: container).y : lastFocal
-            switch gesture.state {
+            switch state {
             case .began:
                 BrowseProbe.mark(.pinchBegan)
                 stopAnimation()
@@ -262,17 +296,20 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 guard let start = pinchStart else { return }
                 lastFocal = focal
                 model.markUserMoved()
-                let next = PinchZoomMath.step(startZoom: start.zoom, scale: gesture.scale, fraction: start.fraction, focal: focal, viewport: viewport)
+                let next = PinchZoomMath.step(startZoom: start.zoom, scale: scale, fraction: start.fraction, focal: focal, viewport: viewport)
                 BrowseProbe.measure(.pinchStep) { applyContent(zoom: next.zoom, offset: next.offset) }
             case .ended, .cancelled, .failed:
                 guard let start = pinchStart else { return }
                 BrowseProbe.mark(.pinchEnded)
                 pinchStart = nil
+                // Where the zoom comes to rest is known now; it is set before the pinch is said to be over, so whoever plans for the rested zoom plans for it.
+                let target = PinchZoomMath.rest(zoom: model.zoom, fraction: start.fraction, focal: lastFocal, viewport: viewport)
+                let settles = abs(target.zoom - model.zoom) > 0.0005
+                if settles { animate(to: target); model.settlingZoom = target.zoom }
                 model.isInteracting = false
                 model.markUserMoved()
                 stopMeter()
-                let target = PinchZoomMath.rest(zoom: model.zoom, fraction: start.fraction, focal: lastFocal, viewport: viewport)
-                if abs(target.zoom - model.zoom) > 0.0005 { animate(to: target) } else { applyContent(zoom: target.zoom, offset: target.offset) }
+                if !settles { applyContent(zoom: target.zoom, offset: target.offset) }
                 // A finger may still be down: nothing scrolls and no day moves until all are up.
                 if counter.count == 0 { fingersUp() } else { scheduleFallback() }
             default: break
@@ -332,7 +369,10 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             self.link = link
         }
 
-        private func stopAnimation() { link?.invalidate(); link = nil; animation = nil }
+        private func stopAnimation() {
+            link?.invalidate(); link = nil; animation = nil
+            if model.settlingZoom != nil { model.settlingZoom = nil }
+        }
 
         @objc private func tick() {
             guard let animation else { stopAnimation(); return }

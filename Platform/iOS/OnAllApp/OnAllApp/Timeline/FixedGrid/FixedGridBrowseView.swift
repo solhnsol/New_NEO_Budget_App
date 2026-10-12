@@ -1,6 +1,7 @@
 import Combine
 import NEOBudgetCalendar
 import SwiftUI
+import UIKit
 
 /// Browse on the fixed Temporal Grid (`BrowseAxisMode.fixedGrid`). The day is cut into N equal-height cells (hour boundaries) that fit the screen at 1×; what is drawn on
 /// it is the product's own: `DayRenderPlan` (prepared once per day and layout, placed on the grid's axis), the same event cards, titles, transaction lines and overflow cards,
@@ -54,6 +55,11 @@ struct FixedGridBrowseView: View {
         /// Reads of a day on screen that failed and were tried again.
         var retries: [LocalDate: Int] = [:]
         var probePath: String?
+        /// The week strip's pending day as last shown (kept here too, for the experiment that does not show it).
+        var pending = 0
+        var haptic: UISelectionFeedbackGenerator?
+        /// Frames that drew a day from two decisions, frames where those two differed, and the most things crossfaded in one (DEBUG reports).
+        var blendFrames = 0, differingFrames = 0, crossfadedMost = 0
         var probeWrite: Task<Void, Never>?
     }
 
@@ -140,7 +146,10 @@ struct FixedGridBrowseView: View {
             await warmAhead()
         }
         .onReceive(pinch.$viewportHeight.removeDuplicates()) { knownViewport = $0 }
-        .onReceive(pinch.$isInteracting.removeDuplicates().filter { !$0 }) { _ in restedZoomKey = FixedGridBrowseModel.zoomKey(pinch.zoom); writeProbeSoon() }
+        .onReceive(pinch.$isInteracting.removeDuplicates().filter { !$0 }) { _ in
+            restedZoomKey = planner.plannedZoomKey(current: pinch.zoom, settling: pinch.settlingZoom)
+            writeProbeSoon()
+        }
         .onChange(of: model.selectedDay) { _, _ in selectionChangedOutside() }
     }
 
@@ -176,21 +185,37 @@ struct FixedGridBrowseView: View {
         return FixedGridBrowseModel.Inputs(zone: zone, environment: environment, timelineFor: { model.cachedTimeline(for: $0) }, revision: model.dataRevision)
     }
 
-    /// What one frame is drawn from: the shared partition at the position and zoom, and the engine's decisions for the window nearest the position.
+    /// What one frame is drawn from: the shared partition at the position and zoom, which decision each day on screen is drawn from (`FixedGridColumns`), and
+    /// those decisions (the windows around the position, at the zoom the plan is for).
     private struct Frame {
         let shown: TemporalGridPartition
-        let decision: FixedGridBrowseModel.Decision
-        let layoutWindow: Int
+        let columns: [FixedGridColumns.Column]
+        let decisions: [Int: FixedGridBrowseModel.Decision]
+
+        func decision(_ source: FixedGridColumns.Source) -> FixedGridBrowseModel.Decision {
+            decisions[source.window] ?? FixedGridBrowseModel.Decision(layout: nil, titleWidths: [:])
+        }
+        func column(_ epoch: Int) -> FixedGridColumns.Column? { columns.first { $0.epoch == epoch } }
     }
 
     private func frame(zoom: CGFloat, viewport: CGFloat, width: CGFloat) -> Frame {
         let inputs = inputs(viewport: viewport, width: width)
         let bounds = move.bounds
         let shown = planner.shared(position: position, bounds: bounds, inputs: inputs).zoomed(viewportHeight: viewport, zoomScale: zoom)
-        let layoutWindow = min(max(Int(position.rounded()), bounds.lowerBound), bounds.upperBound)
-        let decision = planner.decisionForDrawing(window: layoutWindow, zoomKey: FixedGridBrowseModel.zoomKey(zoom), isInteracting: pinch.isInteracting, inputs: inputs)
+        let days = geometry(width: width).renderedDays(at: position)
+        let columns = ProbeExperiment.legacyColumns
+            ? FixedGridColumns.legacyColumns(days: days, position: position, bounds: bounds)
+            : FixedGridColumns.columns(days: days, position: position, bounds: bounds)
+        let zoomKey = planner.plannedZoomKey(current: zoom, settling: pinch.settlingZoom)
+        // While an ended pinch eases back inside 1 … 8× its frames are not decided: they are drawn with the decision made for where it comes to rest (or the
+        // nearest one made, until that one is) — the planning ahead makes it between frames.
+        let easingBack = pinch.settlingZoom != nil && !ProbeExperiment.legacyZoomKey
+        var decisions: [Int: FixedGridBrowseModel.Decision] = [:]
+        for window in FixedGridColumns.windows(of: columns) {
+            decisions[window] = planner.decisionForDrawing(window: window, zoomKey: zoomKey, isInteracting: pinch.isInteracting || easingBack, inputs: inputs)
+        }
         if planner.isEasing { easeAxis() }
-        return Frame(shown: shown, decision: decision, layoutWindow: layoutWindow)
+        return Frame(shown: shown, columns: columns, decisions: decisions)
     }
 
     private func grid(width: CGFloat) -> some View {
@@ -245,8 +270,8 @@ struct FixedGridBrowseView: View {
                 FixedHourAxis(partition: frame.shown, width: width, gutter: Self.gutter, scale: textScale)
                 ZStack(alignment: .topLeading) {
                     ForEach(Array(days), id: \.self) { epoch in
-                        if let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)) {
-                            dayContent(timeline, epoch: epoch, frame: frame, layoutWidth: layoutWidth, window: window)
+                        if let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) {
+                            dayColumn(timeline, column: column, frame: frame, layoutWidth: layoutWidth, window: window)
                                 .frame(width: layoutWidth, height: height, alignment: .topLeading)
                                 .offset(x: geometry.x(ofDay: Double(epoch), at: position) - Self.gutter)
                         }
@@ -263,37 +288,62 @@ struct FixedGridBrowseView: View {
         )
     }
 
-    private func role(ofEpoch epoch: Int, layoutWindow: Int) -> DayRole? {
-        if epoch == layoutWindow { return .main }
-        if epoch == layoutWindow + 1 { return .secondary }
-        return nil
-    }
-
-    /// Where everything of a day goes, from the day's prepared data and the shared axis. Drawing and touching both use it.
-    private func plan(_ timeline: DayTimeline, epoch: Int, frame: Frame, layoutWidth: CGFloat) -> DayRenderPlan {
-        DayRenderPlan(
-            prepared: preparations.prepared(timeline: timeline, role: role(ofEpoch: epoch, layoutWindow: frame.layoutWindow), layout: frame.decision.layout),
-            geometry: planner.axis(for: timeline.day, partition: frame.shown, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
-            metrics: TextMeasurer.presentationMetrics(), titleWidth: { frame.decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+    /// Where everything of a day goes, from the day's prepared data under one decision and the shared axis. Drawing and touching both use it.
+    private func plan(_ timeline: DayTimeline, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat) -> DayRenderPlan {
+        planner.renderPlan(
+            timeline, source: source, decision: frame.decision(source), partition: frame.shown, zone: zone, layoutWidth: layoutWidth, textScale: textScale,
+            metrics: TextMeasurer.presentationMetrics(), preparations: preparations
         )
     }
 
-    private func dayContent(_ timeline: DayTimeline, epoch: Int, frame: Frame, layoutWidth width: CGFloat, window: ClosedRange<CGFloat>) -> some View {
-        let plan = plan(timeline, epoch: epoch, frame: frame, layoutWidth: width)
+    /// One day: from its one decision, or, for the day passing from one window's decision to the next, what both draw the same way once and what differs
+    /// from both, faded by the position.
+    @ViewBuilder
+    private func dayColumn(_ timeline: DayTimeline, column: FixedGridColumns.Column, frame: Frame, layoutWidth: CGFloat, window: ClosedRange<CGFloat>) -> some View {
+        let leaving = plan(timeline, source: column.from, frame: frame, layoutWidth: layoutWidth)
+        if let to = column.to {
+            let arriving = plan(timeline, source: to, frame: frame, layoutWidth: layoutWidth)
+            let blend = BrowseProbe.measure(.blend) { FixedGridColumns.blend(leaving, arriving) }
+            let _ = countBlend(blend)
+            let w = column.weight
+            ZStack(alignment: .topLeading) {
+                dayContent(timeline, plan: leaving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: false) { blend.leaving.contains($0) ? 1 - w : 0 }
+                dayContent(timeline, plan: arriving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: true) { blend.arriving.contains($0) ? w : 1 }
+            }
+        } else {
+            dayContent(timeline, plan: leaving, frame: frame, layoutWidth: layoutWidth, window: window, drawsNow: true) { _ in 1 }
+        }
+    }
+
+    private func countBlend(_ blend: FixedGridColumns.Blend) {
+        room.blendFrames += 1
+        let count = blend.leaving.count + blend.arriving.count
+        if count > 0 { room.differingFrames += 1; room.crossfadedMost = max(room.crossfadedMost, count) }
+    }
+
+    /// `opacity`: how much of each thing to draw (0: not drawn).
+    private func dayContent(
+        _ timeline: DayTimeline, plan: DayRenderPlan, frame: Frame, layoutWidth width: CGFloat, window: ClosedRange<CGFloat>, drawsNow: Bool,
+        opacity: @escaping (FixedGridColumns.Item) -> Double
+    ) -> some View {
         let axis = planner.axis(for: timeline.day, partition: frame.shown, zone: zone)
         let scale = textScale
         let overlayFrames = plan.lines.filter { $0.reveal > 0 }.map(\.frame) + plan.overflows.map(\.frame)
         let coveringFrames = plan.lines.map(\.frame) + plan.overflows.map(\.frame)
         // Only what reaches the built window (a viewport beyond the screen each side) is made into views; the plan above is for all of it.
         func reaches(_ rect: CGRect) -> Bool { rect.maxY >= window.lowerBound && rect.minY <= window.upperBound }
-        let events = plan.events.filter { reaches($0.drawnFrame) || ($0.header.map(reaches) ?? false) }
+        let events = plan.events.filter { (reaches($0.drawnFrame) || ($0.header.map(reaches) ?? false)) && opacity($0.blendItem) > 0 }
+        let lines = plan.lines.filter { reaches($0.frame) && opacity(.line($0.id)) > 0 }
+        let overflows = plan.overflows.filter { reaches($0.frame) && opacity(.overflow($0.id)) > 0 }
         return ZStack(alignment: .topLeading) {
             ForEach(events, id: \.block.id) { item in
                 FixedBlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, scale: scale, overlays: overlayFrames)
+                    .opacity(opacity(item.blendItem))
             }
             ForEach(events, id: \.block.id) { item in
                 if let header = item.header {
                     EventHeaderView(block: item.block, rect: header, zoneIdentifier: timeline.timeZoneIdentifier)
+                        .opacity(opacity(item.blendItem))
                 } else if item.showsTitleInCard {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: axis.gutterWidth + axis.contentWidth(totalWidth: width),
@@ -301,11 +351,16 @@ struct FixedGridBrowseView: View {
                         maxTitleWidth: item.titleMaxWidth, startFits: item.startTimeFits,
                         startIsCovered: coveringFrames.contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
                     )
+                    .opacity(opacity(item.blendItem))
                 }
             }
-            ForEach(plan.lines.filter { reaches($0.frame) }, id: \.id) { line in TransactionLineView(item: line, scale: scale, edge: axis.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(line.frame) }) }
-            ForEach(plan.overflows.filter { reaches($0.frame) }, id: \.id) { overflow in OverflowCardView(item: overflow, scale: scale, edge: axis.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(overflow.frame) }) }
-            if timeline.day == today { FixedNowLine(timeline: timeline, axis: axis, width: width) }
+            ForEach(lines, id: \.id) { line in
+                TransactionLineView(item: line, scale: scale, edge: axis.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(line.frame) }).opacity(opacity(.line(line.id)))
+            }
+            ForEach(overflows, id: \.id) { overflow in
+                OverflowCardView(item: overflow, scale: scale, edge: axis.gutterWidth, overEvent: plan.events.contains { $0.frame.intersects(overflow.frame) }).opacity(opacity(.overflow(overflow.id)))
+            }
+            if drawsNow, timeline.day == today { FixedNowLine(timeline: timeline, axis: axis, width: width) }
         }
     }
 
@@ -318,9 +373,9 @@ struct FixedGridBrowseView: View {
         let geometry = geometry(width: width)
         let frame = frame(zoom: zoom, viewport: viewport, width: width)
         let epoch = Int((position + Double((point.x - Self.gutter) / geometry.dayWidth)).rounded(.down))
-        guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)) else { return }
+        guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) else { return }
         let local = CGPoint(x: point.x - (geometry.x(ofDay: Double(epoch), at: position) + 0), y: point.y)
-        let plan = plan(timeline, epoch: epoch, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
         switch plan.hit(at: local) {
         case .nothing: break
         case let .event(id): perform(.event(id), in: timeline, plan: plan)
@@ -419,10 +474,13 @@ struct FixedGridBrowseView: View {
         defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
         let pending = FixedGridMove.pending(position: move.position, selected: selectedEpoch)
-        if pendingDays != pending {
+        if room.pending != pending || pendingDays != pending && !ProbeExperiment.stripOff {
             BrowseProbe.mark(.boundary)
-            pendingDays = pending
-            BrowseProbe.measure(.haptics) { Haptics.snap() }
+            room.pending = pending
+            if !ProbeExperiment.stripOff { pendingDays = pending }
+            BrowseProbe.measure(.haptics) {
+                if let haptic = room.haptic { haptic.selectionChanged(); haptic.prepare() } else { Haptics.snap() }
+            }
         }
         prefetch()
         holdAnchor()
@@ -502,6 +560,7 @@ struct FixedGridBrowseView: View {
         rebase(keeping: nil)
         position = move.position
         if pendingDays != 0 { pendingDays = 0 }
+        room.pending = 0
         lastNeeded = nil
         prefetch()
         selectionChangedOutside()
@@ -547,16 +606,41 @@ struct FixedGridBrowseView: View {
         meter.start()
         let started = CFAbsoluteTimeGetCurrent()
         let reads = model.dayReads
+        var passReports: [String] = []
         switch script {
         case "zoom":
-            let steps = 160
+            // One pinch 1 → 8 → 1 through the recognizer's own steps (`drivePinch`): what a person's pinch does, not a slider.
+            let steps = 160, focal = pinch.viewportHeight / 2
+            pinch.drivePinch?(.began, 1, focal)
             for step in 0...steps {
                 let t = Double(step) / Double(steps)
                 let z = 1 + 7 * CGFloat(t < 0.5 ? t * 2 : 2 - t * 2)
                 let begun = CFAbsoluteTimeGetCurrent()
-                pinch.setZoom?(z, pinch.viewportHeight / 2)
+                pinch.drivePinch?(.changed, z, focal)
                 costs.record(apply: (CFAbsoluteTimeGetCurrent() - begun) * 1000)
                 try? await Task.sleep(for: .milliseconds(16))
+            }
+            pinch.drivePinch?(.ended, 1, focal)
+            try? await Task.sleep(for: .milliseconds(600))
+        case "hold":
+            // `-browse-temporal-hold <fraction>`: the days dragged to that fraction of the next day and held there (for screenshots of a move in progress).
+            let fraction = Self.argument("-browse-temporal-hold").flatMap(Double.init) ?? 0.5
+            move.beginDrag()
+            move.drag(to: Double(selectedEpoch) + fraction)
+            applyMove()
+            try? await Task.sleep(for: .seconds(30))
+        case "rubber":
+            // Past 8× and let go (it eases back to 8×), then past 1× from 8× and let go (back to 1×), twice. Each pinch 0.5 s, 8 ms steps.
+            let focal = pinch.viewportHeight * 0.4
+            func pinchTo(_ scale: CGFloat) async {
+                pinch.drivePinch?(.began, 1, focal)
+                for step in 1...60 { pinch.drivePinch?(.changed, 1 + (scale - 1) * CGFloat(step) / 60, focal); try? await Task.sleep(for: .milliseconds(8)) }
+                pinch.drivePinch?(.ended, scale, focal)
+                try? await Task.sleep(for: .milliseconds(900))
+            }
+            for _ in 0..<2 {
+                await pinchTo(10)                      // 1× → stretched past 8×
+                await pinchTo(0.08)                    // 8× → stretched below 1×
             }
         case "days", "days-twice":
             // Rapid taps add up, a reversal in flight, then a longer run. "days-twice" plays it once to build everything, then measures the second time.
@@ -583,7 +667,11 @@ struct FixedGridBrowseView: View {
                 handleDateDrag(.ended(velocityX: velocity), width: width)
             }
             func ramp(to x: CGFloat, steps: Int) -> [CGFloat] { (1...steps).map { x * CGFloat($0) / CGFloat(steps) } }
-            for _ in 0..<2 {
+            for pass in 0..<2 {
+                if pass == 1 {
+                    passReports.append(BrowseProbeRecorder.shared.report(title: "\(script) pass 1"))
+                    BrowseProbeRecorder.shared.reset()
+                }
                 await swipe(ramp(to: -0.4 * day, steps: 40), velocity: 0)                                  // short slow drag: returns
                 try? await Task.sleep(for: .milliseconds(700))
                 await swipe(ramp(to: -0.7 * day, steps: 50), velocity: 0)                                  // past half: next day
@@ -611,10 +699,11 @@ struct FixedGridBrowseView: View {
         step interval: \(costs.summary(costs.intervals))
         display frames: \(costs.summary(meter.intervals)); late (>1.5x median) \(late) of \(meter.intervals.count)
         view build: \(pinch.buildSummary)
-        partitions: background \(planner.backgroundPlans), planned in a frame \(planner.framePlans), engine runs \(planner.continuousLayoutRuns), found \(planner.partitionHits)
+        partitions: background \(planner.backgroundPlans), planned in a frame \(planner.framePlans), engine runs \(planner.continuousLayoutRuns) (asked for by a frame \(planner.drawingEngineRuns)), found \(planner.partitionHits)
         day reads during script: \(model.dayReads - reads), cached \(model.cachedDays.count), selected \(model.selectedDay.daysSinceUnixEpoch - Int(Date().timeIntervalSince1970 / 86400))d from today, position \(String(format: "%.3f", move.position))
         """
-        let report = text + "\n" + "partitions held while a day was read \(planner.heldPartitions), axis transitions \(planner.transitionsBegun); reads dropped as stale \(model.staleReadsDropped), failed now \(model.failedDays.count)\n" + BrowseProbeRecorder.shared.report(title: script)
+        let lastTitle = passReports.isEmpty ? script : "\(script) pass 2"
+        let report = passReports.joined(separator: "\n") + (passReports.isEmpty ? "" : "\n") + text + "\n" + "partitions held while a day was read \(planner.heldPartitions), axis transitions \(planner.transitionsBegun); reads dropped as stale \(model.staleReadsDropped), failed now \(model.failedDays.count)\n" + "crossfade: frames drawing a day from two decisions \(room.blendFrames), where they differed \(room.differingFrames), most things crossfaded at once \(room.crossfadedMost)\n" + BrowseProbeRecorder.shared.report(title: lastTitle)
         print("MEASURE browse-temporal\n" + report)
         if let path = Self.argument("-browse-temporal-log") { try? report.write(toFile: path, atomically: true, encoding: .utf8) }
         #endif
@@ -625,6 +714,8 @@ struct FixedGridBrowseView: View {
     /// `-browse-temporal-probe <path>`: records from the first appearance and writes the report (cumulative) each time the days come to rest or a pinch ends,
     /// so real touches can be measured. DEBUG builds only.
     private func startProbeIfAsked() {
+        // One prepared generator for the snaps (measured in 2B-2: the first `Haptics.snap()` of a launch cost 2–11 ms in the frame that crossed a day's halfway line).
+        if room.haptic == nil { let haptic = UISelectionFeedbackGenerator(); haptic.prepare(); room.haptic = haptic }
         #if DEBUG
         guard let path = Self.argument("-browse-temporal-probe") else { return }
         room.probePath = path

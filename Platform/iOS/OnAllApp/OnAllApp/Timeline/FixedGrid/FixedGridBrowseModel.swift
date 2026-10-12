@@ -151,6 +151,27 @@ final class FixedGridBrowseModel {
     /// The zoom a layout is decided at: a quarter of a unit is the same decision, so a pinch that ends near where it was needs no new run.
     static func zoomKey(_ zoom: CGFloat) -> Int { Int((zoom * 4).rounded()) }
 
+    /// The zoom a frame's decisions are for: where an easing pinch comes to rest while it eases back inside 1 … 8× (its frames pass through other keys, and
+    /// none of them is a zoom anyone will rest at), the zoom itself otherwise. Held to 1 … 8×.
+    func plannedZoomKey(current: CGFloat, settling: CGFloat?) -> Int {
+        Self.zoomKey(ProbeExperiment.legacyZoomKey ? current : PinchZoomMath.clamped(settling ?? current))
+    }
+
+    /// Where everything of a day goes under one decision, on the shared axis: what the screen draws and touches, and what the tests check.
+    func renderPlan(
+        _ timeline: DayTimeline, source: FixedGridColumns.Source, decision: Decision, partition: TemporalGridPartition, zone: DisplayTimeZone,
+        layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations
+    ) -> DayRenderPlan {
+        DayRenderPlan(
+            prepared: preparations.prepared(timeline: timeline, role: source.role, layout: decision.layout),
+            geometry: axis(for: timeline.day, partition: partition, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
+            metrics: metrics, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+        )
+    }
+
+    /// Engine runs a frame asked for (a decision missing when it was drawn), as against those made between frames by the planning ahead.
+    private(set) var drawingEngineRuns = 0
+
     private func days(of window: Int, inputs: Inputs) -> [DayTimeline?] {
         (-1...2).map { inputs.timelineFor(LocalDate(daysSinceUnixEpoch: window + $0)) }
     }
@@ -364,6 +385,8 @@ final class FixedGridBrowseModel {
             let near = decisions.filter { $0.key.window == window }.min { abs($0.key.zoomKey - zoomKey) < abs($1.key.zoomKey - zoomKey) }
             if let near { return near.value.decision }
         }
+        let runs = continuousLayoutRuns
+        defer { drawingEngineRuns += continuousLayoutRuns - runs }
         return decision(window: window, zoomKey: zoomKey, inputs: inputs)
     }
 }

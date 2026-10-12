@@ -40,6 +40,8 @@ enum BrowseProbe {
         case pinchStep
         /// One step of an axis transition after a day arrived.
         case transitionTick
+        /// Comparing the two plans of the day that passes from one window's decision to the next (`FixedGridColumns.blend`).
+        case blend
         /// The screen around the grid (`DayTimelineScreen.body`: header, week strip, summary), the week strip's body and the summary bar's body. Measured to
         /// tell the grid's SwiftUI work from the screen's around it.
         case outerBody, weekStripBody, summaryBody
@@ -86,6 +88,30 @@ enum BrowseProbe {
     static func mark(_ mark: Mark) {
         #if DEBUG
         BrowseProbeRecorder.shared.mark(mark)
+        #endif
+    }
+}
+
+/// Switches for the experiments that separate the causes of late frames (phase 2B-2). DEBUG launch arguments; always off in Release.
+/// - `-probe-h1-strip-off`: the week strip's pending day is not updated while the days move (the haptic still fires at the same moment).
+/// - `-probe-h1-layout-held` (measured on the 2B-1 code, commit 02d4d9f; gone with the per-column decisions of 2B-2): the decisions stayed those of the selected
+///   day's window while the days moved.
+/// - `-probe-h2-prewarm-haptics`: one selection feedback generator, prepared when the grid appears, is used for every snap (measured; the fixed grid now
+///   always does this).
+/// - `-probe-h3-stable-root`: the grid's hosting controller keeps one root view; a new frame's content reaches it through an observed box.
+enum ProbeExperiment {
+    static let stripOff = flag("-probe-h1-strip-off")
+    static let stableRoot = flag("-probe-h3-stable-root")
+    /// Before/after: the 2B-1 rules — decisions from the window nearest the position (`FixedGridColumns.legacyColumns`), and the zoom key of the frames
+    /// and the rested zoom from the zoom as it is when the pinch ends (not where it comes to rest).
+    static let legacyColumns = flag("-probe-legacy-columns")
+    static let legacyZoomKey = flag("-probe-legacy-zoom-key")
+
+    private static func flag(_ name: String) -> Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains(name)
+        #else
+        false
         #endif
     }
 }
@@ -205,6 +231,16 @@ final class BrowseProbeRecorder {
         }
         let markCounts = Dictionary(grouping: marks, by: \.mark).map { "\($0.key.rawValue) \($0.value.count)" }.sorted().joined(separator: ", ")
         lines.append("marks: \(markCounts.isEmpty ? "—" : markCounts)")
+        // The main-thread turn each mark fell in, and the next one (what the change set off is often drawn in the turn after): the cost of that moment, whatever
+        // the display did.
+        for (mark, entries) in Dictionary(grouping: marks, by: \.mark).sorted(by: { $0.key.rawValue < $1.key.rawValue }) {
+            let costs: [Double] = entries.compactMap { entry in
+                guard let index = turns.firstIndex(where: { $0.start <= entry.time && entry.time <= $0.end }) else { return nil }
+                let next = turns.indices.contains(index + 1) && turns[index + 1].start - turns[index].end < 0.017 ? turns[index + 1].duration : 0
+                return Self.ms(turns[index].duration + next)
+            }
+            if !costs.isEmpty { lines.append("  turn at \(mark.rawValue): \(Self.stats(costs))") }
+        }
         var attributedTotal = 0.0, unattributedTotal = 0.0
         var byKind: [BrowseProbe.Kind: Double] = [:]
         var withMark: [String: Int] = [:]
