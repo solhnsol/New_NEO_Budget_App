@@ -48,6 +48,8 @@ struct DayRenderPlan {
         var insideAnchors: [CGFloat] = []
         /// Whether the start time has its place beside the title (the title and the time together fit the card's width).
         var startTimeFits = true
+        /// Where the card writes its inside rows (with the "그 외"/summary row), in the stack `EventBlockView` lays out; `nil` when it writes none.
+        var rowsFrame: CGRect?
     }
 
     struct LineItem {
@@ -62,6 +64,16 @@ struct DayRenderPlan {
         var anchorY: CGFloat? = nil
         /// 0 … 1: how much of the row's text there is room for (it is written from the left as this grows). The dot at the time stays.
         var reveal: CGFloat = 1
+        /// Its dot and leader, at the column's edge on the row's height: drawn wherever the row is, so a touch there is the line's (unless a card is
+        /// drawn there and the line's own row does not reach it).
+        var markFrame: CGRect = .zero
+
+        /// Whether a touch at `point` is this line's. Where no card is drawn: on its row or its dot. Over a card: on its row while any of its text is
+        /// written, else only where its row and its dot meet, so the card under the unwritten text (its rows too) is touched as the card.
+        func touches(_ point: CGPoint, overCard: Bool) -> Bool {
+            guard overCard else { return frame.contains(point) || markFrame.contains(point) }
+            return reveal > 0 ? frame.contains(point) : frame.intersection(markFrame).contains(point)
+        }
     }
 
     struct OverflowItem {
@@ -325,7 +337,8 @@ struct DayRenderPlan {
                     }
                 }(),
                 insideAnchors: (prepared.insideMinutes[id] ?? []).prefix(shown).map { geometry.y(minute: $0) },
-                startTimeFits: place.dx == 0 && place.dy == 0 && !place.overflows && frame.width >= titleRoom
+                startTimeFits: place.dx == 0 && place.dy == 0 && !place.overflows && frame.width >= titleRoom,
+                rowsFrame: Self.rowsFrame(card: drawn, titleOffset: place.dy, hasHeader: false, presentation: presentation, scale: scale)
             ))
         }
 
@@ -353,6 +366,14 @@ struct DayRenderPlan {
         }
         let wideTitleRows = titleRects(wide: true)
         let realTitleRows = titleRects(wide: false)
+        // Where a card writes its inside rows, a line's text gives way as they come in (its dot and touch area stay): the card's rows
+        // span its whole width, so there is no part of the row left to keep to. A card that may get a header writes its rows higher.
+        let insideRowAreas: [(area: CGRect, shown: CGFloat)] = eventItems.compactMap { item in
+            guard let rows = item.rowsFrame else { return nil }
+            let raised = item.placement?.header == nil ? nil
+                : Self.rowsFrame(card: item.drawnFrame, titleOffset: item.title.dy, hasHeader: true, presentation: item.presentation, scale: scale)
+            return (raised.map { rows.union($0) } ?? rows, item.presentation.transactions)
+        }
         var lastCenter: CGFloat?
         var lastText: CGFloat = 0
         for unit in prepared.units {
@@ -370,13 +391,19 @@ struct DayRenderPlan {
             } else if realTitleRows.contains(where: { $0.intersects(frame.insetBy(dx: 0, dy: airInset)) }) {
                 reveal = 0
             }
+            if !unit.isOverflow {
+                for rows in insideRowAreas where rows.area.intersects(frame.insetBy(dx: 0, dy: airInset)) { reveal = min(reveal, 1 - rows.shown) }
+            }
             lastCenter = center
             lastText = text
             let missing = max(0, parameters.minimumTouchHeight - unitHeight)
             let touch = frame.insetBy(dx: 0, dy: -missing / 2)
             if !unit.isOverflow {
                 let line = sourceLines[unit.index]
-                lineItems.append(LineItem(id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: prepared.lineLinkTitles[unit.index], frame: frame, touchFrame: touch, anchorY: center, reveal: reveal))
+                lineItems.append(LineItem(
+                    id: unit.id, display: displays[unit.id], link: line.link, linkedEventTitle: prepared.lineLinkTitles[unit.index], frame: frame, touchFrame: touch,
+                    anchorY: center, reveal: reveal, markFrame: CGRect(x: contentLeft, y: frame.minY, width: LeaderLayout.textStart(scale), height: frame.height)
+                ))
             } else {
                 let overflow = sourceOverflows[unit.index]
                 overflowItems.append(OverflowItem(
@@ -412,6 +439,7 @@ struct DayRenderPlan {
             guard !occupied.contains(where: { $0 != own && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
             eventItems[index].header = rect
             eventItems[index].showsTitleInCard = false
+            eventItems[index].rowsFrame = Self.rowsFrame(card: own, titleOffset: item.title.dy, hasHeader: true, presentation: item.presentation, scale: scale)
             occupied.append(rect)
         }
         events = eventItems
@@ -419,6 +447,21 @@ struct DayRenderPlan {
         overflows = overflowItems
         conflicts = prepared.conflicts
         hitOrder = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
+    }
+
+    /// Where a card of `presentation` writes its inside rows: below the title's room (or the header's thin edge), one row per shown transaction
+    /// and one for the "그 외"/summary row, cut off at the card's bottom like the card's own clip. The same stack as `EventBlockView`.
+    static func rowsFrame(card: CGRect, titleOffset: CGFloat, hasHeader: Bool, presentation: EventPresentation, scale: CGFloat) -> CGRect? {
+        guard presentation.transactions > 0 else { return nil }
+        let extra = presentation.showsSummaryRow || (presentation.hiddenRows > 0 && presentation.shownRows > 0) ? 1 : 0
+        let count = presentation.shownRows + extra
+        guard count > 0 else { return nil }
+        let titleRow = hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset
+        let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
+        let top = card.minY + EventBlockView.verticalPadding + titleRow + EventBlockView.rowSpacing
+        let bottom = min(card.maxY, top + CGFloat(count) * rowHeight + CGFloat(count - 1) * EventBlockView.rowSpacing)
+        guard bottom > top else { return nil }
+        return CGRect(x: card.minX, y: top, width: card.width, height: bottom - top)
     }
 
     /// The linked transactions that happened within the event's own time, whatever the card has room to show.
@@ -439,7 +482,8 @@ struct DayRenderPlan {
         if let overflow = overflows.first(where: { $0.frame.contains(point) }) {
             return covered(by: .overflow(overflow.id), at: point)
         }
-        if let line = lines.first(where: { $0.frame.contains(point) }) { return covered(by: .line(line.id), at: point) }
+        let onCard = events.contains { $0.drawnFrame.contains(point) || ($0.header?.contains(point) ?? false) }
+        if let line = lines.first(where: { $0.touches(point, overCard: onCard) }) { return covered(by: .line(line.id), at: point) }
         for id in hitOrder {
             guard let item = events.first(where: { $0.block.id == id }) else { continue }
             if item.drawnFrame.contains(point) || (item.header?.contains(point) ?? false) { return .event(id) }
@@ -471,7 +515,7 @@ struct DayRenderPlan {
         for row in 0...3 {
             for column in 0...steps {
                 let point = CGPoint(x: frame.minX + 2 + (frame.width - 4) * CGFloat(column) / CGFloat(steps), y: frame.minY + 2 + (max(0, frame.height - 4)) * CGFloat(row) / 3)
-                if !lines.contains(where: { $0.frame.contains(point) }) && !overflows.contains(where: { $0.frame.contains(point) }) { return true }
+                if !lines.contains(where: { $0.touches(point, overCard: true) }) && !overflows.contains(where: { $0.frame.contains(point) }) { return true }
             }
         }
         return false

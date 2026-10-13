@@ -155,6 +155,9 @@ struct EventBlockView: View {
     var startIsCovered = false
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
+    /// The stack's padding and spacing, which `DayRenderPlan.rowsFrame` also places the rows by.
+    static let verticalPadding: CGFloat = 3
+    static let rowSpacing: CGFloat = 1
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? .accentColor
@@ -170,13 +173,13 @@ struct EventBlockView: View {
             topLeadingRadius: hasHeader ? 0 : radius, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: hasHeader ? 0 : radius
         )
         let titleRow = hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: Self.rowSpacing) {
             // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
             Color.clear.frame(height: titleRow)
             ForEach(Array(rows.prefix(shownRows).enumerated()), id: \.element.allocationID) { index, item in
                 // The row's own middle, from the card's top, as the stack below lays it out.
                 let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
-                let middle = 3 + titleRow + CGFloat(index) * (rowHeight + 1) + rowHeight / 2
+                let middle = Self.verticalPadding + titleRow + Self.rowSpacing + CGFloat(index) * (rowHeight + Self.rowSpacing) + rowHeight / 2
                 AllocationRow(item: item, scale: scale, anchorDy: anchors.indices.contains(index) ? anchors[index] - middle : nil)
             }
             if presentation.showsSummaryRow, let total {
@@ -186,7 +189,7 @@ struct EventBlockView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 6).padding(.vertical, 3)
+        .padding(.horizontal, 6).padding(.vertical, Self.verticalPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         // However little height there is, the card is exactly that tall: what is inside is cut off, never what gives the card its size.
         .frame(height: max(0, height), alignment: .top)

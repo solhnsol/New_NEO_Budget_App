@@ -199,23 +199,44 @@ private let longTitle = "아주 긴 일정 제목입니다"
 @Test func aLineCoveringAShortEventStillLetsTheEventBeChosen() throws {
     let wide: CGFloat = 140                                                                   // narrow: a line spans the whole card
     let contentWidth = TimelineGeometry(totalMinutes: 1440).contentWidth(totalWidth: wide)
-    var offeredAChoice = false
+    func offers(_ hit: DayRenderPlan.Hit, _ candidate: DayRenderPlan.Candidate) -> Bool {
+        switch hit {
+        case let .event(id): return candidate == .event(id)
+        case let .line(id): return candidate == .line(id)
+        case let .overflow(id): return candidate == .overflow(id)
+        case let .choose(list): return list.contains(candidate)
+        case .nothing: return false
+        }
+    }
+    var crossed = false
     for minute in 600...615 {                                                                  // some minute puts the line right over the card
         let tl = try timeline([event(0, "가", 600, 615)], [spend("t", minute: minute)])
         let layout = AdaptiveLayoutEngine.layout(AllocationInput(main: AllocationDay(tl), secondary: nil, viewportHeight: 900, contentWidth: contentWidth))
         let plan = DayRenderPlan(timeline: tl, role: .main, layout: layout, geometry: TimelineGeometry(axis: layout.axis), layoutWidth: wide, titleWidth: { _ in 40 })
         let line = try #require(plan.lines.first), card = try #require(plan.events.first)
-        let hit = plan.hit(at: CGPoint(x: line.frame.midX, y: line.frame.midY))
-        if line.frame.minY <= card.frame.minY + 0.5 && line.frame.maxY >= card.frame.maxY - 0.5 {
-            // The card is wholly under the line: the touch must offer both.
+        guard line.frame.intersects(card.drawnFrame) else { continue }
+        crossed = true
+        let middle = CGPoint(x: line.frame.midX, y: line.frame.midY)
+        let hit = plan.hit(at: middle)
+        if line.reveal > 0 && line.frame.minY <= card.frame.minY + 0.5 && line.frame.maxY >= card.frame.maxY - 0.5 {
+            // The card is wholly under the line's written text: the touch must offer both.
             guard case let .choose(candidates) = hit else { Issue.record("a fully covered event was not offered: \(hit)"); return }
             #expect(candidates.contains(.line("t")) && candidates.contains(.event(card.block.id)))
-            offeredAChoice = true
-        } else if case .choose = hit {
-            offeredAChoice = true
+        } else if line.reveal == 0 && card.drawnFrame.contains(middle) {
+            // The line's text is not written over the card: there the card is touched as itself.
+            #expect(hit == .event(card.block.id), "\(minute): \(hit)")
         }
+        // Whatever covers what, both can be chosen: the event somewhere on its card, the line at its dot.
+        let box = card.drawnFrame.insetBy(dx: 1, dy: 1)
+        var samples: [CGPoint] = []
+        for i in 0...8 {
+            for j in 0...4 { samples.append(CGPoint(x: box.minX + box.width * CGFloat(i) / 8, y: box.minY + box.height * CGFloat(j) / 4)) }
+        }
+        #expect(samples.contains { offers(plan.hit(at: $0), .event(card.block.id)) }, "\(minute): the event cannot be chosen")
+        let dot = plan.hit(at: CGPoint(x: line.markFrame.minX + 2, y: line.anchorY ?? line.frame.midY))
+        #expect(offers(dot, .line("t")), "\(minute): the line's dot hits \(dot)")
     }
-    #expect(offeredAChoice)
+    #expect(crossed)
 }
 
 @Test func largerTextScalesTheLinesTheEngineReservedRoomFor() throws {
@@ -425,4 +446,89 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
             #expect(geometry.y(minute: last) - geometry.y(minute: first) < (AllocationParameters().transactionRow + AllocationParameters().lineGap) * CGFloat(minutes.count - 1) + 0.5)
         }
     }
+}
+
+// MARK: Inside rows and transaction lines on the fixed grid
+
+/// The demo's two days (`-demo -browse-temporal`) in the shape the fixed grid sees them: a card holding two inside rows ("스터디") over the stretch where a
+/// line of another event's transaction ("분식", linked to "점심 약속" but after its end) is drawn, with the next day's "팀 회의" at `meetingStart`.
+@MainActor
+private func demoLikeFixedGrid(meetingStart: Int, viewport: CGFloat) throws -> [DayRenderPlan] {
+    func tx(_ id: String, _ hour: Int, _ minute: Int, _ won: Int64) -> AllocationTransaction {
+        AllocationTransaction(id: id, minute: hour * 60 + minute, kind: .spend, currency: "KRW", minorUnits: won)
+    }
+    let d = (try? LocalDate(year: 2026, month: 10, day: 13)) ?? { fatalError("date") }()
+    let days = try [
+        AllocationDay(day: d.adding(days: -1), totalMinutes: 1440, events: [AllocationEvent(id: "movie", title: "영화", startMinute: 20 * 60, endMinute: 22 * 60 + 10, linked: [])], transactions: []),
+        AllocationDay(day: d, totalMinutes: 1440, events: [
+            AllocationEvent(id: "class", title: "알고리즘 수업", startMinute: 9 * 60, endMinute: 10 * 60 + 30, linked: []),
+            AllocationEvent(id: "lunch", title: "점심 약속", startMinute: 12 * 60, endMinute: 13 * 60, linked: [
+                tx("restaurant", 12, 20, 12_000), tx("dessert", 12, 50, 3_000), tx("parking", 12, 55, 2_000), tx("snack", 13, 20, 3_200),
+            ]),
+            AllocationEvent(id: "study", title: "스터디", startMinute: 12 * 60 + 30, endMinute: 14 * 60 + 30, linked: [tx("cafe", 12, 30, 4_800), tx("convenience", 14, 5, 3_500)]),
+            AllocationEvent(id: "workout", title: "저녁 운동", startMinute: 19 * 60, endMinute: 20 * 60 + 30, linked: []),
+        ], transactions: [tx("delivery", 21, 30, 6_200)]),
+        AllocationDay(day: d.adding(days: 1), totalMinutes: 1440, events: [AllocationEvent(id: "team", title: "팀 회의", startMinute: meetingStart, endMinute: 16 * 60, linked: [])], transactions: []),
+        AllocationDay(day: d.adding(days: 2), totalMinutes: 1440, events: [], transactions: []),
+    ].map { try fixtureTimeline($0, zone: zone) }
+    let column: CGFloat = (402 - 60) / 2
+    let model = FixedGridBrowseModel()
+    let window = try #require(model.window(
+        strip: days.map { StripDay(day: $0.day, timeline: $0) }, zone: zone,
+        environment: FixedGridEnvironment(viewportHeight: viewport, contentWidth: column - 6, textScale: 1)
+    ))
+    return [DayRole.main, .secondary].enumerated().map { index, role in
+        DayRenderPlan(
+            prepared: DayRenderPlan.Prepared(timeline: days[index + 1], role: role, layout: window.layout),
+            geometry: model.axis(for: days[index + 1].day, partition: window.partition, zone: zone),
+            layoutWidth: 60 + column, metrics: .standard(), titleWidth: { window.titleWidths[$0] ?? 40 }
+        )
+    }
+}
+
+@MainActor
+@Test func aCardsInsideRowsAreNeverWrittenOverByATransactionLineOnTheFixedGrid() throws {
+    // Regression: moving the next day's "팀 회의" to 13:30 gives 13:00–14:00 more height on the shared partition, so "스터디" has room for its rows
+    // ("카페" at 12:30) while the line of "분식" (13:20) got room for its text too, and the two were written on top of each other.
+    let textInset: CGFloat = 4                                 // a line's text is its frame less this above and below
+    var sawRows = false
+    for meetingStart in [15 * 60, 13 * 60 + 30] {
+        for viewport in [360, 420, 460, 520, 600, 700, 820] as [CGFloat] {
+            let plan = try demoLikeFixedGrid(meetingStart: meetingStart, viewport: viewport)[0]
+            let written = plan.lines.filter { $0.reveal > 0 }
+            for item in plan.events {
+                guard let rows = item.rowsFrame else { continue }
+                sawRows = sawRows || item.block.title == "스터디"
+                // The rows sit inside the card, one below another, each at its own y.
+                #expect(rows.minY >= item.drawnFrame.minY && rows.maxY <= item.drawnFrame.maxY + 0.01)
+                #expect(rows.height + 0.01 >= min(item.drawnFrame.maxY - rows.minY, (InlineAllocationPlan.rowHeight - 2) * CGFloat(item.presentation.shownRows)))
+                for line in written where line.frame.insetBy(dx: 0, dy: textInset).intersects(rows) {
+                    // Only while the rows are still coming in may the line's text be partly there, and never more than they are not.
+                    #expect(line.reveal <= 1 - item.presentation.transactions + 0.001,
+                            "\(meetingStart / 60):\(meetingStart % 60) @\(viewport): line \(line.id) written over \(item.block.title)'s rows")
+                }
+            }
+            // Nothing is lost: the line keeps its time and its touch area, and every inside transaction is still in its card.
+            let label = "\(meetingStart / 60):\(meetingStart % 60) @\(viewport)"
+            let snack = try #require(plan.lines.first { $0.id == "snack" })
+            let study = try #require(plan.events.first { $0.block.title == "스터디" })
+            #expect(snack.touchFrame.height > 0)
+            #expect(study.insideRows.map(\.transactionID.rawValue).sorted() == ["cafe", "convenience"])
+            // Touch follows what is drawn. The dot at the line's time reaches the transaction, and the card it lies across is never what it is
+            // confused with (only something whose touch area the engine says meets the line may be asked about too).
+            let dot = CGPoint(x: snack.markFrame.minX + 2, y: snack.anchorY ?? snack.frame.midY)
+            switch plan.hit(at: dot) {
+            case .line("snack"): break
+            case let .choose(candidates):
+                #expect(candidates.first == .line("snack") && !candidates.contains(.event(study.block.id)), "\(label): the dot of 분식 offers \(candidates)")
+            case let other: Issue.record("\(label): the dot of 분식 hits \(other)")
+            }
+            // Where the line's text is not written, the card under it, its rows included, is touched as the card.
+            let points = [CGPoint(x: study.drawnFrame.midX, y: snack.anchorY ?? snack.frame.midY)] + (study.rowsFrame.map { [CGPoint(x: $0.midX, y: $0.minY + 6)] } ?? [])
+            for point in points where !written.contains(where: { $0.frame.contains(point) }) {
+                #expect(plan.hit(at: point) == .event(study.block.id), "\(label): \(point) on 스터디 hits \(plan.hit(at: point))")
+            }
+        }
+    }
+    #expect(sawRows, "no viewport gave 스터디 room for its rows, so the case was never checked")
 }
