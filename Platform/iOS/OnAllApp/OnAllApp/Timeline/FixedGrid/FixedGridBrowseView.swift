@@ -256,6 +256,15 @@ struct FixedGridBrowseView: View {
             decisions[source.window] ?? FixedGridBrowseModel.Decision(layout: nil, titleWidths: [:])
         }
         func column(_ epoch: Int) -> FixedGridColumns.Column? { columns.first { $0.epoch == epoch } }
+
+        /// What the cards of a day are written from while the days move: the partition of the decision the day is drawn from, at rest; for the day passing from one
+        /// decision to the next, the two blended by the weight, so both plans of the day read the same heights (they stay one card, with no crossfade of what is
+        /// written in it) and the rows come and go with the height they change through.
+        func presentationPartition(_ column: FixedGridColumns.Column) -> TemporalGridPartition? {
+            guard let from = restPartitions[column.from.window] else { return nil }
+            guard let to = column.to, let end = restPartitions[to.window] else { return from }
+            return TemporalGridPartition.interpolated(from: from, to: end, progress: column.weight) ?? from
+        }
     }
 
     private func frame(zoom: CGFloat, viewport: CGFloat, width: CGFloat) -> Frame {
@@ -449,11 +458,11 @@ struct FixedGridBrowseView: View {
     }
 
     /// Where everything of a day goes, from the day's prepared data under one decision and the shared axis. Drawing and touching both use it.
-    private func plan(_ timeline: DayTimeline, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat, decision: FixedGridBrowseModel.Decision? = nil) -> DayRenderPlan {
+    private func plan(_ timeline: DayTimeline, column: FixedGridColumns.Column, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat, decision: FixedGridBrowseModel.Decision? = nil) -> DayRenderPlan {
         planner.renderPlan(
             timeline, source: source, decision: decision ?? frame.decision(source), partition: frame.shown, zone: zone, layoutWidth: layoutWidth, textScale: textScale,
             metrics: TextMeasurer.presentationMetrics(), preparations: preparations,
-            presentationPartition: decision == nil ? frame.restPartitions[source.window] : nil
+            presentationPartition: decision == nil ? frame.presentationPartition(column) : nil
         )
     }
 
@@ -461,9 +470,9 @@ struct FixedGridBrowseView: View {
     /// from both, faded by the position.
     @ViewBuilder
     private func dayColumn(_ timeline: DayTimeline, column: FixedGridColumns.Column, frame: Frame, layoutWidth: CGFloat, window: ClosedRange<CGFloat>) -> some View {
-        let leaving = plan(timeline, source: column.from, frame: frame, layoutWidth: layoutWidth)
+        let leaving = plan(timeline, column: column, source: column.from, frame: frame, layoutWidth: layoutWidth)
         if let to = column.to {
-            let arriving = plan(timeline, source: to, frame: frame, layoutWidth: layoutWidth)
+            let arriving = plan(timeline, column: column, source: to, frame: frame, layoutWidth: layoutWidth)
             let blend = BrowseProbe.measure(.blend) { FixedGridColumns.blend(leaving, arriving) }
             let _ = countBlend(blend)
             let w = column.weight
@@ -473,7 +482,7 @@ struct FixedGridBrowseView: View {
             }
         } else if let thaw = planner.thawing(window: column.from.window) {
             // An edit session has just ended: the decisions it drew with pass to the current ones over the axis's easing, the same way.
-            let during = plan(timeline, source: column.from, frame: frame, layoutWidth: layoutWidth, decision: thaw.decision)
+            let during = plan(timeline, column: column, source: column.from, frame: frame, layoutWidth: layoutWidth, decision: thaw.decision)
             let blend = FixedGridColumns.blend(during, leaving)
             let w = thaw.weight
             ZStack(alignment: .topLeading) {
@@ -560,7 +569,7 @@ struct FixedGridBrowseView: View {
         let epoch = Int((position + Double((point.x - Self.gutter) / geometry.dayWidth)).rounded(.down))
         guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) else { return nil }
         let columnX = geometry.x(ofDay: Double(epoch), at: position)
-        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+        let plan = plan(timeline, column: column, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
         return Touched(epoch: epoch, timeline: timeline, plan: plan, local: CGPoint(x: point.x - columnX, y: point.y), columnX: columnX)
     }
 
@@ -585,7 +594,7 @@ struct FixedGridBrowseView: View {
         let geometry = geometry(width: width)
         let frame = frame(zoom: pinch.zoom, viewport: viewport, width: width)
         guard let column = frame.column(target.epoch) else { return nil }
-        let plan = plan(timeline, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+        let plan = plan(timeline, column: column, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
         // By the block, else by the calendar's key (a reload may rebuild the block ids).
         guard let item = plan.events.first(where: { $0.block.id == target.blockID }) ?? plan.events.first(where: { $0.block.eventKey == target.eventKey }) else { return nil }
         var card = item.frame.offsetBy(dx: geometry.x(ofDay: Double(target.epoch), at: position), dy: 0)
