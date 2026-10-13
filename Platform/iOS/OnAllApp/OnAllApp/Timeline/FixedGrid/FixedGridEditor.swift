@@ -4,8 +4,9 @@ import Observation
 
 /// The parts that edit, joined for the fixed-grid Browse (Phase 3A): it is the `editor` end of `FixedGridEditRouter`. A session's event is held as an
 /// `EditDraft` (the real range, the original fixed); a handle dragged moves one edge of it (`EditDraft.drag`, 15-minute grid); the precision bubble steps an
-/// edge by 15 minutes (`EditDraft.stepStart`/`stepEnd`); a commit saves through `EventSavePipeline` (via `Environment.save`, which reads the days again)
-/// and answers the session with `commitFinished` or `commitFailed`.
+/// edge to a time its wheel turned to (`setRange`; VoiceOver steps it by 15 minutes, `EditDraft.stepStart`/`stepEnd`); a tap on the title renames it
+/// (`title`, typed with the keyboard); a commit saves the time and the title through `EventSavePipeline` (via `Environment.save`, which reads the days
+/// again) and answers the session with `commitFinished` or `commitFailed`.
 ///
 /// What it decides, and the session does not:
 /// - a draft that cannot be made (a multi-day, all-day or read-only event): the session is cancelled at once and a message says why;
@@ -56,6 +57,10 @@ final class FixedGridEditor {
     private(set) var isDragging = false
     private var rangeAtDragStart: TimedRange?
     private var sentDirty = false
+    /// The title as typed (the original's until the person types). A blank one is not saved: the original stays.
+    var title = "" { didSet { reportDirty() } }
+    /// The title is being edited (the keyboard is up).
+    private(set) var isRenaming = false
     private(set) var isSaving = false
     var scopeQuestion: ScopeQuestion?
     private(set) var message: Message?
@@ -98,13 +103,18 @@ final class FixedGridEditor {
         case let .dragHandle(id, phase, handle, _, minute):
             guard id == session else { return }
             drag(phase, Self.edge(handle), minute: minute)
+        case let .rename(id, on):
+            guard id == session else { return }
+            isRenaming = on
+            if !on, newTitle == nil { title = originalTitle }                    // a blank title goes back to the original
         case let .commit(id):
             guard id == session, let original, let draft else { return }
             isSaving = true
-            save(EventSaveRequest(original: original, proposedStart: draft.startDate, proposedEnd: draft.endDate), session: id)
+            save(EventSaveRequest(original: original, proposedStart: draft.startDate, proposedEnd: draft.endDate, proposedTitle: newTitle), session: id)
         case let .discard(id):
             guard id == session else { return }
             draft?.revert()
+            title = originalTitle
         case let .askExit(id, _):
             // The default exit policies never ask; a policy that does is answered as a confirm (the changes kept, as a calendar keeps a drag).
             guard id == session else { return }
@@ -126,6 +136,7 @@ final class FixedGridEditor {
         do {
             draft = try EditDraft(block: block, timeZone: environment.zone, generation: environment.generation())
             original = EventSaveOriginal(block: block)
+            title = block.title
         } catch {
             cancelSoon(id, Self.text(for: error))
         }
@@ -159,19 +170,51 @@ final class FixedGridEditor {
     }
 
     private func reportDirty() {
-        guard let session, let draft, draft.isChanged != sentDirty else { return }
-        sentDirty = draft.isChanged
+        guard let session, draft != nil, isChanged != sentDirty else { return }
+        sentDirty = isChanged
         send(.draftChanged(session: session, isDirty: sentDirty))
     }
 
+    private var originalTitle: String { draft?.original.title ?? "" }
+
+    /// The title to save: the typed one, trimmed, when it is not blank and differs from the original's.
+    var newTitle: String? {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || trimmed == originalTitle ? nil : trimmed
+    }
+
+    /// The title the card shows now: the typed one (the original's while it is blank).
+    var shownTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? originalTitle : title }
+
+    /// Whether anything would be saved: the time or the title.
+    var isChanged: Bool { draft?.isChanged == true || newTitle != nil }
+
     // MARK: The precision bubble
 
-    /// What the bubble shows now: the chosen edge's time and which steps may be taken. `nil` while no edge is chosen or a save is under way.
+    /// What the bubble shows now: the chosen edge's time, the times its wheel offers and which steps may be taken. `nil` while no edge is chosen, a handle is
+    /// dragged (the card shows the time) or a save is under way.
     var bubbleInput: PrecisionBubbleInput? {
-        guard let edge, let draft, !isSaving, let zone = TimeZone(identifier: environment.zone.identifier) else { return nil }
+        guard let edge, let draft, !isSaving, !isDragging, let zone = TimeZone(identifier: environment.zone.identifier) else { return nil }
         return PrecisionBubbleInput(
             edge: edge == .start ? .start : .end, instant: edge == .start ? draft.startDate : draft.endDate, timeZone: zone,
-            canDecrement: !isDragging && draft.canStep(edge, by: -1), canIncrement: !isDragging && draft.canStep(edge, by: 1)
+            canDecrement: !isDragging && draft.canStep(edge, by: -1), canIncrement: !isDragging && draft.canStep(edge, by: 1),
+            choices: Self.choices(for: edge, of: draft)
+        )
+    }
+
+    /// The times an edge may be set to: the 15-minute lines of the draft's day that keep the event inside it and at least the minimum long against the other
+    /// edge, and the edge's original time when it is off the grid.
+    static func choices(for edge: EditDraft.Edge, of draft: EditDraft) -> [Date] {
+        guard let day = draft.days.first else { return [] }
+        let bounds = draft.timeZone.dayBounds(day)
+        let minimum = Int64(EditDraft.minimumDurationMinutes) * 60_000
+        let range = draft.range, original = draft.originalRange
+        let (low, high, keep) = edge == .start
+            ? (bounds.start, range.endUnixMilliseconds - minimum, original.startUnixMilliseconds)
+            : (range.startUnixMilliseconds + minimum, bounds.end, original.endUnixMilliseconds)
+        return PrecisionWheelChoices.make(
+            low: EventSaveTime.date(low), high: EventSaveTime.date(high), dayStart: EventSaveTime.date(bounds.start), keep: [EventSaveTime.date(keep)],
+            stepMinutes: EditDraft.stepMinutes
         )
     }
 
@@ -185,6 +228,22 @@ final class FixedGridEditor {
                 case .start: try draft.stepStart(by: steps)
                 case .end: try draft.stepEnd(by: steps)
                 }
+                environment.stepped()
+            } catch {
+                say(Self.text(for: error), problem: true)
+            }
+            self.draft = draft
+            reportDirty()
+        case let .set(instant):
+            let milliseconds = EventSaveTime.milliseconds(instant)
+            let start = edge == .start ? milliseconds : draft.range.startUnixMilliseconds
+            let end = edge == .end ? milliseconds : draft.range.endUnixMilliseconds
+            guard let range = try? TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: end) else {
+                return say(Self.text(for: EditDraftError.startNotBeforeEnd), problem: true)
+            }
+            guard range != draft.range else { return }
+            do throws(EditDraftError) {
+                try draft.setRange(range)
                 environment.stepped()
             } catch {
                 say(Self.text(for: error), problem: true)
@@ -305,7 +364,7 @@ final class FixedGridEditor {
 
     private func clear() {
         session = nil; target = nil; draft = nil; original = nil; edge = nil; isDragging = false; rangeAtDragStart = nil
-        sentDirty = false; isSaving = false; scopeQuestion = nil
+        sentDirty = false; isSaving = false; scopeQuestion = nil; isRenaming = false; title = ""
     }
 
     private static func edge(_ handle: FixedGridEditInteraction.Handle) -> EditDraft.Edge { handle == .start ? .start : .end }

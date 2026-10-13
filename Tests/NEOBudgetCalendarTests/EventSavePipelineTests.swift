@@ -392,3 +392,44 @@ private func weeklySeries(_ harness: Harness) async -> [CalendarEvent] {
     #expect(await pipeline(harness).save(request(series[1], from: at(week2, 14), to: at(week2, 15), scope: .allInSeries)) == .refused(.targetGone))
     #expect(await stored(harness, series[0].key) == series[0])
 }
+
+// MARK: A new title
+
+@Test func aNewTitleIsOneEditEventWithTheTimeWhenThatChangedToo() {
+    let base = meeting()
+    let target = EventTarget(key: base.key, expectedRevisionToken: "r0")
+    let renamed = EventSaveRequest(original: original(of: base), proposedStart: date(at(today, 10)), proposedEnd: date(at(today, 11)), proposedTitle: "주간 회의")
+    #expect(renamed.edit == .none && renamed.changesAnything)
+    #expect(renamed.command(scope: nil) == .editEvent(EditEventInput(target: target, update: CalendarEventUpdate(title: "주간 회의"))))
+    let both = EventSaveRequest(original: original(of: base), proposedStart: date(at(today, 10)), proposedEnd: date(at(today, 12)), proposedTitle: "주간 회의")
+    #expect(both.command(scope: nil) == .editEvent(EditEventInput(
+        target: target, update: CalendarEventUpdate(title: "주간 회의", time: .timed(timed(at(today, 10), at(today, 12))))
+    )))
+    // The same title as the original's is no change.
+    let same = EventSaveRequest(original: original(of: base), proposedStart: date(at(today, 10)), proposedEnd: date(at(today, 11)), proposedTitle: "회의")
+    #expect(!same.changesAnything && same.command(scope: nil) == nil)
+}
+
+@Test func aRenameIsSavedAndATitleChangedElsewhereIsRefused() async throws {
+    let base = meeting()
+    let harness = Harness.make(events: [base])
+    let result = await pipeline(harness).save(EventSaveRequest(
+        original: original(of: base), proposedStart: date(at(today, 10)), proposedEnd: date(at(today, 12)), proposedTitle: "주간 회의"
+    ))
+    let saved = try #require(receipt(result))
+    #expect(saved.matchesProposal && saved.event.title == "주간 회의")
+    #expect(await stored(harness, base.key)?.title == "주간 회의")
+    // Renamed elsewhere since (the same revision token): the session's original no longer matches.
+    let elsewhere = event("m", title: "다른 이름", from: at(today, 10), to: at(today, 11), revision: "r0")
+    #expect(!original(of: base).matches(elsewhere))
+}
+
+@Test func aRenameOfARecurringEventAsksForTheScopeLikeATimeChange() async {
+    let base = meeting(recurring: true)
+    let harness = Harness.make(events: [base])
+    let result = await pipeline(harness).save(EventSaveRequest(
+        original: original(of: base), proposedStart: date(at(today, 10)), proposedEnd: date(at(today, 11)), proposedTitle: "주간 회의"
+    ))
+    guard case let .needsScope(options) = result else { Issue.record("expected a scope question, got \(result)"); return }
+    #expect(options.contains(.thisOccurrence))
+}

@@ -8,13 +8,15 @@ import Observation
 /// to whoever implements them; nothing here knows their types, and they answer with events (`draftChanged`, `commitFinished`, `commitFailed`).
 ///
 /// One session at a time, on one event:
-/// - **enter** (a long press on an editable event): the grid freezes (`freeze`); no handle is chosen.
-/// - **handles**: a tap chooses a handle (its time bubble) or lets it go; a drag makes it the dragged one and, when it ends, the chosen one. The handle last
-///   touched is the edge the time is kept at when the session ends (`AnchorRequest`).
+/// - **enter** (a tap on an editable event): the grid freezes (`freeze`); no handle is chosen.
+/// - **rename** (a tap on the chosen event's title): the title is edited with the keyboard (`rename(true)`); a chosen handle is let go. A handle touched
+///   or a tap outside ends the renaming first (`rename(false)`), the new title kept; done saves the title with the time.
+/// - **handles**: a tap chooses a handle (its time bubble) or lets it go; a drag makes it the dragged one, and lets it go when it ends (no bubble during or
+///   after a drag: the card shows the time). The handle last touched is the edge the time is kept at when the session ends (`AnchorRequest`).
 /// - **confirm**: with changes, `commit` and wait (still frozen) for `commitFinished` (unfreeze at the edited edge) or `commitFailed` (back to editing, the
 ///   changes kept); without, the session just ends.
 /// - **cancel**: `discard` (when there are changes) and unfreeze at the middle of the screen.
-/// - **a tap outside** the event and its handles (empty grid, a transaction, the day header): first lets a chosen handle go; then ends the session — without
+/// - **a tap outside** the event and its handles (empty grid, a transaction, the day header): first ends a renaming, or lets a chosen handle go; then ends the session — without
 ///   changes as a cancel, with changes as `ExitPolicy.outsideTap` says.
 /// - **another event tapped**: without changes the session moves to it and the grid stays frozen (`retarget`); with changes it is a tap outside.
 /// - **the selected day changes** (the week strip, "오늘"): the days are going to move, so the grid unfreezes at once; changes are committed or discarded as
@@ -84,6 +86,8 @@ struct FixedGridEditInteraction: Equatable {
         var lastEdited: Handle?
         /// Whether the draft differs from the original (said by the draft's owner, `draftChanged`).
         var isDirty = false
+        /// The title is being edited (the keyboard is up).
+        var renaming = false
         var committing = false
         /// The grid has let go already (the days moved on); the session only waits for its commit's answer.
         var released = false
@@ -115,6 +119,10 @@ struct FixedGridEditInteraction: Equatable {
         case handleTap(Handle)
         /// A drag from a handle; `minute`: the elapsed minute of the target's day under the finger, on the frozen axis.
         case handleDrag(GridGestureHooks.Phase, Handle, point: CGPoint, minute: Int?)
+        /// The chosen event's title tapped: edit it.
+        case tapTitle
+        /// The keyboard went away (its return key is a `confirm`).
+        case endRename
         case tapOutside
         /// Another event of the grid tapped while editing (the same event's body lets a chosen handle go).
         case tapEvent(Target)
@@ -136,6 +144,8 @@ struct FixedGridEditInteraction: Equatable {
         case began(session: Int, Target)
         case handle(session: Int, HandleState)
         case dragHandle(session: Int, GridGestureHooks.Phase, Handle, point: CGPoint, minute: Int?)
+        /// The title is being edited (`true`) or no longer is.
+        case rename(session: Int, Bool)
         case commit(session: Int)
         case discard(session: Int)
         case askExit(session: Int, ExitReason)
@@ -166,6 +176,10 @@ struct FixedGridEditInteraction: Equatable {
         case let .enter(target): return enter(target)
         case let .handleTap(handle): return tapHandle(handle)
         case let .handleDrag(phase, handle, point, minute): return drag(phase, handle, point: point, minute: minute)
+        case .tapTitle: return tapTitle()
+        case .endRename:
+            guard var session = active, session.renaming else { return [] }
+            return endRename(&session)
         case .tapOutside: return tapOutside()
         case let .tapEvent(target): return tapEvent(target)
         case .selectedDayChanged: return dayChanged()
@@ -193,10 +207,30 @@ struct FixedGridEditInteraction: Equatable {
 
     private mutating func tapHandle(_ handle: Handle) -> [Command] {
         guard var session = active else { return [] }
+        let renamed = session.renaming ? endRename(&session) : []
         session.handle = session.handle == .selected(handle) ? .none : .selected(handle)
         session.lastEdited = handle
         self.session = session
-        return [.handle(session: session.id, session.handle)]
+        return renamed + [.handle(session: session.id, session.handle)]
+    }
+
+    private mutating func tapTitle() -> [Command] {
+        guard var session = active, !session.renaming else { return [] }
+        var commands: [Command] = []
+        if session.handle != .none {                                               // the keyboard and a time bubble are not up together
+            session.handle = .none
+            commands.append(.handle(session: session.id, .none))
+        }
+        session.renaming = true
+        self.session = session
+        return commands + [.rename(session: session.id, true)]
+    }
+
+    /// Ends the renaming of `session` (kept here) and says so.
+    private mutating func endRename(_ session: inout Session) -> [Command] {
+        session.renaming = false
+        self.session = session
+        return [.rename(session: session.id, false)]
     }
 
     private mutating func drag(_ phase: GridGestureHooks.Phase, _ handle: Handle, point: CGPoint, minute: Int?) -> [Command] {
@@ -204,6 +238,7 @@ struct FixedGridEditInteraction: Equatable {
         var commands: [Command] = []
         switch phase {
         case .began:
+            if session.renaming { commands += endRename(&session) }
             session.handle = .dragging(handle)
             session.lastEdited = handle
             commands.append(.handle(session: session.id, session.handle))
@@ -211,7 +246,7 @@ struct FixedGridEditInteraction: Equatable {
             guard session.handle == .dragging(handle) else { return [] }
         case .ended, .cancelled:
             guard session.handle == .dragging(handle) else { return [] }
-            session.handle = .selected(handle)
+            session.handle = .none                                                 // a drag shows its time on the card; the bubble is a tap's
         }
         commands.append(.dragHandle(session: session.id, phase, handle, point: point, minute: minute))
         if phase == .ended || phase == .cancelled { commands.append(.handle(session: session.id, session.handle)) }
@@ -221,7 +256,8 @@ struct FixedGridEditInteraction: Equatable {
 
     private mutating func tapOutside() -> [Command] {
         guard var session = active else { return [] }
-        if session.handle != .none {                                               // the innermost thing goes first
+        if session.renaming { return endRename(&session) }                         // the innermost thing goes first
+        if session.handle != .none {
             session.handle = .none
             self.session = session
             return [.handle(session: session.id, .none)]
@@ -232,6 +268,7 @@ struct FixedGridEditInteraction: Equatable {
     private mutating func tapEvent(_ target: Target) -> [Command] {
         guard var session = active else { return [] }
         if target.eventKey == session.target.eventKey && target.day == session.target.day {
+            if session.renaming { return endRename(&session) }
             guard session.handle != .none else { return [] }
             session.handle = .none
             self.session = session
@@ -241,6 +278,7 @@ struct FixedGridEditInteraction: Equatable {
         session.target = target
         session.handle = .none
         session.lastEdited = nil
+        session.renaming = false
         self.session = session
         return [.retarget(session: session.id, target), .began(session: session.id, target)]
     }
@@ -278,6 +316,7 @@ struct FixedGridEditInteraction: Equatable {
         session.committing = true
         session.released = true
         session.handle = .none
+        session.renaming = false
         session.asking = nil
         self.session = session
         return [.commit(session: id), .unfreeze(session: id, .middle)]
@@ -293,11 +332,13 @@ struct FixedGridEditInteraction: Equatable {
     private mutating func confirm() -> [Command] {
         guard var session, !session.committing else { return [] }
         guard session.isDirty else { return cancel() }
+        let renamed: [Command] = session.renaming ? [.rename(session: session.id, false)] : []
         session.committing = true
         session.handle = .none
+        session.renaming = false
         session.asking = nil
         self.session = session
-        return [.handle(session: session.id, .none), .commit(session: session.id)]
+        return renamed + [.handle(session: session.id, .none), .commit(session: session.id)]
     }
 
     private mutating func commitFinished(_ id: Int, _ committed: Committed) -> [Command] {

@@ -35,6 +35,10 @@ struct FixedGridBrowseView: View {
     @State private var dragStart: Double?
     @State private var ticking = false
     @State private var caughtTarget: Int?
+    /// The days are running to a day something else picked (the week strip, the header, "오늘"): where from and to. The time is blended between these two only.
+    @State private var flight: (from: Int, to: Int)?
+    /// The selected day this screen moved itself to (a touch taking over a move, a move coming to rest), so the change is not taken for one from outside.
+    @State private var ownEpoch: Int?
     @State private var lastNeeded: ClosedRange<Int>?
     @State private var choice: TouchChoice?
     /// The edit session (`FixedGridEditInteraction`; a long press on an editable event opens one). The screen sends it the grid's touches and the selected
@@ -46,6 +50,9 @@ struct FixedGridBrowseView: View {
     @StateObject private var bubbleTracker = PrecisionAnchorTracker()
     /// The edit bar's height as drawn (the bubble keeps above it).
     @State private var editBarHeight: CGFloat = 0
+    /// How far the keyboard reaches up over the grid (the edit bar rides on it), and where the grid is on screen.
+    @State private var keyboardOverlap: CGFloat = 0
+    @State private var gridFrame: CGRect = .zero
     @State private var noticeEmphasis = false
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -151,6 +158,7 @@ struct FixedGridBrowseView: View {
                 EditingNotice(emphasised: noticeEmphasis)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
+                editSlot
             }
             .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
@@ -181,6 +189,14 @@ struct FixedGridBrowseView: View {
             if let editor, let day = editor.target?.day { editor.dataChanged(generation: model.dataGeneration, timelines: [model.cachedTimeline(for: day)].compactMap { $0 }) }
         }
         .onChange(of: BubbleKey(editor: editor)) { _, _ in followBubble() }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { keyboardChanged($0) }
+        .onChange(of: editBarHeight) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.id) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.target) { _, _ in keepChosenCardVisible() }
+        .onChange(of: editor?.isRenaming) { _, _ in keepChosenCardVisible() }
+        // The grid keeps its size under the keyboard: its partition is planned for the room it has, and a rename must not re-plan the day.
+        .ignoresSafeArea(.keyboard)
     }
 
     /// What moves the precision bubble's handle: the session, the chosen edge, the edited range.
@@ -245,7 +261,7 @@ struct FixedGridBrowseView: View {
     private func frame(zoom: CGFloat, viewport: CGFloat, width: CGFloat) -> Frame {
         let inputs = inputs(viewport: viewport, width: width)
         let bounds = move.bounds
-        let shown = planner.shared(position: position, bounds: bounds, inputs: inputs).zoomed(viewportHeight: viewport, zoomScale: zoom)
+        let shown = planner.shared(position: position, bounds: bounds, inputs: inputs, flight: flight).zoomed(viewportHeight: viewport, zoomScale: zoom)
         let days = geometry(width: width).renderedDays(at: position)
         let columns = ProbeExperiment.legacyColumns
             ? FixedGridColumns.legacyColumns(days: days, position: position, bounds: bounds)
@@ -273,6 +289,7 @@ struct FixedGridBrowseView: View {
             gridContent(width: width, zoom: zoom, viewport: viewport, window: window)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { gridFrame = $0 }
         .overlay(alignment: .topLeading) { loadingMarks(width: width) }
         // Over the scroll view, not in its content: the content's recognizers would take the bubble's touches.
         .overlay {
@@ -299,9 +316,31 @@ struct FixedGridBrowseView: View {
         Task { @MainActor in if editor?.scopeQuestion?.id == id { editor?.answer(nil) } }
     }
 
-    /// While a session is open: what is being edited, its time now, and done / cancel. Messages show above it (and on their own after a session).
+    /// Under the grid, where the day totals used to be: kept empty so the grid does not change size, and holding the edit bar (title, time, cancel / done)
+    /// while a session is open. Renaming moves the bar onto the keyboard instead (`editBar`).
+    private var editSlot: some View {
+        ZStack {
+            if let editor, edit.session != nil, !editor.isRenaming { sessionBar(editor) }
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 68)
+        .animation(.easeOut(duration: 0.18), value: edit.session != nil)
+    }
+
+    private func sessionBar(_ editor: FixedGridEditor) -> some View {
+        EditSessionBar(
+            editor: editor, zone: zone, calendars: model.calendars, isCommitting: edit.session?.committing == true,
+            rename: { edit.send(.tapTitle) }, endRename: { edit.send(.endRename) },
+            cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
+        )
+    }
+
+    /// Over the grid: the messages (shown above the bar, and on their own after a session), and the bar while the title is renamed (it rides on the keyboard).
     private var editBar: some View {
-        VStack(spacing: 8) {
+        let renaming = edit.session != nil && editor?.isRenaming == true
+        let hasContent = editor?.message != nil || renaming
+        return VStack(spacing: 8) {
             if let message = editor?.message {
                 EditMessageView(message: message)
                     .task(id: message.id) {
@@ -310,18 +349,43 @@ struct FixedGridBrowseView: View {
                     }
                     .onTapGesture { editor?.dismissMessage(message.id) }
             }
-            if let editor, edit.session != nil {
-                EditSessionBar(
-                    editor: editor, zone: zone, isCommitting: edit.session?.committing == true,
-                    cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
-                )
-            }
+            if let editor, renaming { sessionBar(editor) }
         }
         .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, hasContent ? 8 + keyboardOverlap : 0)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { editBarHeight = $0 }
         .animation(.easeOut(duration: 0.18), value: edit.session != nil)
         .animation(.easeOut(duration: 0.18), value: editor?.message)
+        .animation(.easeOut(duration: 0.25), value: keyboardOverlap)
+        .animation(.easeOut(duration: 0.18), value: editor?.isRenaming)
+    }
+
+    /// While a session is open the chosen card is kept in the part of the grid the edit bar (and the keyboard under it) leaves: the whole card with its
+    /// handles when it fits, else its top; while renaming, its title. The scroll may go past the end of the day by the bar's height (`bottomInset`), so a
+    /// card at the end of the day can come above the bar even at 1×.
+    private func keepChosenCardVisible() {
+        pinch.bottomInset = edit.session != nil ? editBarHeight : 0                   // kept through a save, so the card does not move while it is answered
+        guard edit.session != nil, edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
+        let viewport = pinch.viewportHeight, offset = pinch.currentOffset?() ?? 0
+        let top: CGFloat = 8, bottom = viewport - editBarHeight - 8
+        guard viewport > 1, bottom - top > 44 else { return }
+        let margin = EditHit.handleRadius
+        let shown = editor?.isRenaming == true ? min(card.height, 44) : card.height
+        let span = (card.minY - margin - offset)...(card.minY + shown + margin - offset)
+        guard span.lowerBound < top || span.upperBound > bottom else { return }
+        var target = offset
+        if span.upperBound - span.lowerBound > bottom - top || span.lowerBound < top { target += span.lowerBound - top }
+        else { target += span.upperBound - bottom }
+        let range = pinch.offsetRange(zoom: pinch.zoom)
+        target = min(max(target, range.lowerBound), range.upperBound)
+        if abs(target - offset) > 0.5 { pinch.scrollTo?(target) }
+    }
+
+    /// How much of the grid the keyboard covers (the grid itself keeps its size: its partition is planned for the room it has).
+    private func keyboardChanged(_ note: Notification) {
+        let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+        let hiding = note.name == UIResponder.keyboardWillHideNotification
+        keyboardOverlap = hiding ? 0 : max(0, gridFrame.maxY - frame.minY)
     }
 
     /// A day on screen that is not kept yet says whether it is being read or could not be read (a kept day with nothing on it is drawn as the empty day it is).
@@ -539,7 +603,7 @@ struct FixedGridBrowseView: View {
 
     /// The event being edited once its time differs from the calendar's (its card is drawn faint; the draft card is drawn where it is going).
     private var editedOriginal: FixedGridEditInteraction.Target? {
-        guard let editor, editor.draft?.isChanged == true else { return nil }
+        guard let editor, editor.isChanged else { return nil }
         return editor.target
     }
 
@@ -557,9 +621,10 @@ struct FixedGridBrowseView: View {
     }
 
     private func handleTap(at point: CGPoint, start: FixedGridGestures.Start) {
-        switch FixedGridGestures.tap(start: start, mode: gestureMode, daysAtRest: move.phase == .resting) {
+        switch FixedGridGestures.tap(start: start, mode: gestureMode, daysAtRest: move.phase == .resting, point: point) {
         case .none: break
         case .select: select(at: point)
+        case .title: edit.send(.tapTitle)
         case let .handle(hit):
             room.handleTaps += 1
             if let handle = FixedGridEditInteraction.Handle(hit) { edit.send(.handleTap(handle)) }      // its time bubble (the editing parts show it)
@@ -575,16 +640,11 @@ struct FixedGridBrowseView: View {
         guard phase == .began else { return }
         switch FixedGridGestures.longPress(start: start, mode: gestureMode) {
         case .none: break
-        case let .notice(future):
-            // A long press on an event edits its time (when it can be); anything else draws attention to what the grid does not do yet.
-            if move.phase == .resting, case let .edit(id)? = future, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) {
-                if let refusal = FixedGridEditor.refusal(for: block, zone: zone) {
-                    editor?.tell(FixedGridEditor.text(for: refusal))
-                } else if let target = editTarget(id, in: found) {
-                    edit.send(.enter(target))
-                    return
-                }
-            }
+        case let .details(id):
+            // An event's details (until a long press zooms onto the event and shows them there).
+            if move.phase == .resting, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) { onSelect(.event(block)) }
+        case .notice:
+            // Anything else draws attention to what the grid does not do yet.
             emphasiseNotice()
         case .createDraft: room.createPresses += 1                                 // future: a draft dragged out from here
         }
@@ -704,7 +764,7 @@ struct FixedGridBrowseView: View {
             let chosen = editor?.edge
             ZStack(alignment: .topLeading) {
                 if let editor, let draft = editor.draft, let block = editor.target.flatMap({ t in model.cachedTimeline(for: t.day)?.blocks.first { $0.eventKey == t.eventKey } }) {
-                    DraftCard(block: block, draft: draft, zone: zone, frame: target.frame, isChanged: draft.isChanged)
+                    DraftCard(block: block, title: editor.shownTitle, draft: draft, zone: zone, frame: target.frame, isChanged: editor.isChanged)
                 }
                 if edit.session?.committing != true {                                   // no handles while the save is answered
                     if target.canResizeStart { handleDot(EditHit.startHandle(of: target.frame), chosen: chosen == .start) }
@@ -756,6 +816,7 @@ struct FixedGridBrowseView: View {
         case .began: "began"
         case .handle: "handle"
         case .dragHandle: "drag"
+        case let .rename(_, on): on ? "rename" : "rename(끝)"
         case .commit: "commit"
         case .discard: "discard"
         case .askExit: "ask"
@@ -780,7 +841,14 @@ struct FixedGridBrowseView: View {
         }
     }
 
+    /// An event tapped opens a session on it (its handles, its time wheel, its title to rename) when it can be edited here; one that cannot opens its details.
+    /// Anything else opens its details.
     private func perform(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
+        if case let .event(id) = candidate, let block = timeline.blocks.first(where: { $0.id == id }), block.isEditable,
+           FixedGridEditor.refusal(for: block, zone: zone) == nil {
+            edit.send(.enter(FixedGridEditInteraction.Target(day: timeline.day, block: block)))
+            return
+        }
         if let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) { onSelect(selection) }
     }
 
@@ -802,12 +870,14 @@ struct FixedGridBrowseView: View {
         case .touchDown:
             guard move.phase == .settling else { return }
             caughtTarget = move.target
+            flight = nil
             move.beginDrag()
             takeOverSelection()
             applyMove()
         case .began:
             BrowseProbe.mark(.dragBegan)
             caughtTarget = nil
+            flight = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
             dragStart = move.position
@@ -846,8 +916,13 @@ struct FixedGridBrowseView: View {
     private func takeOverSelection() {
         let delta = FixedGridMove.takeOver(position: move.position, selected: selectedEpoch)
         guard delta != 0 else { return }
-        onMoveDays(delta)
+        moveSelectedDay(by: delta)
         rebase(keeping: move.position)
+    }
+
+    private func moveSelectedDay(by delta: Int) {
+        ownEpoch = selectedEpoch + delta
+        onMoveDays(delta)
     }
 
     /// The model around the selected day, with the days either side the cache keeps; at `position` (dragging) or at rest on the day.
@@ -865,7 +940,8 @@ struct FixedGridBrowseView: View {
         let probe = BrowseProbe.begin(.applyMove)
         defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
-        let pending = FixedGridMove.pending(position: move.position, selected: selectedEpoch)
+        // A move to a day something else picked: the week strip is on that day already.
+        let pending = flight != nil ? 0 : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
         if room.pending != pending || pendingDays != pending && !ProbeExperiment.stripOff {
             BrowseProbe.mark(.boundary)
             room.pending = pending
@@ -888,7 +964,7 @@ struct FixedGridBrowseView: View {
         if let anchor = room.unfreezeAnchor {
             // A session's end after a save: the edited edge stays at its height through the easing; the person scrolling or the days moving let it go.
             if !userMoved, move.phase == .resting {
-                let shown = planner.shared(position: move.position, bounds: bounds, inputs: inputs)
+                let shown = planner.shared(position: move.position, bounds: bounds, inputs: inputs, flight: flight)
                 if pinch.setOffset?(anchor.offset(on: shown, zoom: pinch.zoom, viewport: viewport).offset) == true {
                     guard !planner.isEasing else { return }
                     room.anchorDrift = anchor.drift(on: shown, zoom: pinch.zoom, viewport: viewport, offset: pinch.currentOffset?() ?? 0)
@@ -900,7 +976,7 @@ struct FixedGridBrowseView: View {
         }
         let result = anchorState.offset(
             forPosition: move.position, currentOffset: pinch.currentOffset?() ?? 0, userMoved: userMoved, zoom: pinch.zoom, viewport: viewport, focal: viewport / 2,
-            partitionAt: { planner.shared(position: $0, bounds: bounds, inputs: inputs) }
+            partitionAt: { planner.shared(position: $0, bounds: bounds, inputs: inputs, flight: flight) }
         )
         // Not applied while the person has the scroll in hand: the anchor is taken again from where they leave it.
         if pinch.setOffset?(result.offset) == false { anchorState.release(at: move.position) }
@@ -961,7 +1037,8 @@ struct FixedGridBrowseView: View {
         BrowseProbe.mark(.rested)
         writeProbeSoon()
         let day = Int(move.position.rounded())
-        if day != selectedEpoch { onMoveDays(day - selectedEpoch) }
+        if day != selectedEpoch { moveSelectedDay(by: day - selectedEpoch) }
+        flight = nil
         rebase(keeping: nil)
         position = move.position
         if pendingDays != 0 { pendingDays = 0 }
@@ -971,20 +1048,37 @@ struct FixedGridBrowseView: View {
         selectionChangedOutside()
     }
 
-    /// The selected day was changed by something else (the week strip, the header's arrows, "오늘"): the days run to it, or jump when it is far.
+    /// The selected day was changed by something else (the week strip, the header's arrows, "오늘"): the days run to it from wherever they are now (resting, in a
+    /// flight, or under a finger), or jump when it is far. A change this screen made itself (`ownEpoch`) is not one.
     private func selectionChangedOutside() {
-        guard move.phase == .resting, Double(selectedEpoch) != move.position else { return }
+        if let own = ownEpoch {
+            ownEpoch = nil
+            if own == selectedEpoch { return }
+        }
+        guard move.phase != .resting || Double(selectedEpoch) != move.position else { return }
         if edit.state.editing != nil { edit.send(.selectedDayChanged(model.selectedDay)) }   // a session is on the days it began on: the grid lets go first
-        let distance = selectedEpoch - Int(move.position.rounded())
-        let from = Int(move.position.rounded())
-        guard abs(distance) <= 3 else { rebase(keeping: nil); position = move.position; anchorState.release(at: move.position); return }
+        caughtTarget = nil
+        dragStart = nil
+        let here = move.position
+        let distance = Double(selectedEpoch) - here
+        guard abs(distance) <= 3 else {
+            flight = nil
+            if pendingDays != 0 { pendingDays = 0 }
+            room.pending = 0
+            rebase(keeping: nil); position = move.position; anchorState.release(at: move.position)
+            return
+        }
+        let from = distance > 0 ? Int(here.rounded(.down)) : Int(here.rounded(.up))
         let low = min(from, selectedEpoch) - 1, high = max(from, selectedEpoch) + 2
-        var next = DayMoveModel(day: from, bounds: low...high, maximumHop: abs(distance))
+        var next = DayMoveModel(day: from, bounds: low...high, maximumHop: max(1, abs(selectedEpoch - from)))
+        if here != Double(from) { next.beginDrag(); next.drag(to: here) }
         next.retarget(to: selectedEpoch)
+        flight = (from, selectedEpoch)
+        if pendingDays != 0 { pendingDays = 0 }
+        room.pending = 0
         move = next
-        startTicker()
+        if next.phase == .resting { commit() } else { startTicker() }
     }
-
 
     // MARK: DEBUG scripts
 
@@ -1229,22 +1323,63 @@ private struct EditProbeLine: View {
     }
 }
 
-/// The edit session's bar: the event, its time as the draft has it (with how it moved), what is known about it elsewhere, and cancel / done.
+/// The edit session's bar: the event, its time as the draft has it (with how it moved), what is known about it elsewhere, and cancel / done. While the
+/// title is renamed it rides on the keyboard: the calendars to choose from above the title being typed (the keyboard's return key is done).
 private struct EditSessionBar: View {
-    let editor: FixedGridEditor
+    @Bindable var editor: FixedGridEditor
     let zone: DisplayTimeZone
+    let calendars: [CalendarDescriptor]
     let isCommitting: Bool
+    let rename: () -> Void
+    let endRename: () -> Void
     let cancel: () -> Void
     let confirm: () -> Void
 
+    @FocusState private var typing: Bool
+
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(detail).font(.caption.monospacedDigit()).foregroundStyle(editor.conflictNote == nil ? Color.secondary : Color.orange).lineLimit(2)
+        VStack(alignment: .leading, spacing: 8) {
+            if editor.isRenaming {
+                CalendarChips(calendars: calendars, current: editor.draft?.calendarID)
+                HStack(spacing: 10) {
+                    TextField("일정 이름", text: $editor.title)
+                        .font(.body.weight(.semibold))
+                        .textFieldStyle(.roundedBorder)
+                        .submitLabel(.done)
+                        .focused($typing)
+                        .onSubmit(confirm)
+                        .accessibilityIdentifier("editTitle")
+                    buttons
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Button(action: rename) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(editor.shownTitle).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                            Text(detail).font(.caption.monospacedDigit()).foregroundStyle(editor.conflictNote == nil ? Color.secondary : Color.orange).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isCommitting)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("이름 바꾸기")
+                    buttons
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .onChange(of: editor.isRenaming, initial: true) { _, renaming in typing = renaming }
+        // The keyboard went away by itself (swiped down, another field): the renaming ends, the title kept.
+        .onChange(of: typing) { _, now in if !now && editor.isRenaming { endRename() } }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 10) {
             Button("취소", action: cancel)
                 .buttonStyle(.bordered)
                 .disabled(isCommitting)
@@ -1256,26 +1391,52 @@ private struct EditSessionBar: View {
             .disabled(isCommitting)
             .accessibilityIdentifier("editConfirm")
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
-
-    private var title: String { editor.draft?.original.title ?? "일정" }
 
     private var detail: String {
         if let note = editor.conflictNote { return note }
         guard let draft = editor.draft else { return "" }
         let range = DraftCard.timeText(draft, zone: zone)
-        guard draft.isChanged else { return range + " · 핸들을 끌거나 눌러 바꿉니다" }
-        let c = draft.comparison
         var moved: [String] = []
-        if c.startChanged { moved.append("시작 " + EditSessionBarText.minutes(c.startDeltaMilliseconds)) }
-        if c.endChanged { moved.append("끝 " + EditSessionBarText.minutes(c.endDeltaMilliseconds)) }
+        if draft.isChanged {
+            let c = draft.comparison
+            if c.startChanged { moved.append("시작 " + EditSessionBarText.minutes(c.startDeltaMilliseconds)) }
+            if c.endChanged { moved.append("끝 " + EditSessionBarText.minutes(c.endDeltaMilliseconds)) }
+        }
+        if editor.newTitle != nil { moved.append("이름 바뀜") }
+        guard !moved.isEmpty else { return range }
         return range + " · " + moved.joined(separator: " · ")
     }
+}
 
+/// The calendars an event can be in, in a row over the keyboard; the event's own is filled. Moving an event to another calendar is not saved yet (its
+/// Activity is keyed by the calendar), so the others are shown and dimmed.
+private struct CalendarChips: View {
+    let calendars: [CalendarDescriptor]
+    let current: CalendarID?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(calendars.filter { $0.isWritable || $0.id == current }, id: \.id) { calendar in
+                    let chosen = calendar.id == current
+                    let color = Color(hex: calendar.colorHex) ?? .accentColor
+                    HStack(spacing: 5) {
+                        Circle().fill(color).frame(width: 8, height: 8)
+                        Text(calendar.title).font(.footnote.weight(chosen ? .semibold : .regular)).lineLimit(1)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(chosen ? color.opacity(0.22) : Color.secondary.opacity(0.1), in: Capsule())
+                    .overlay(Capsule().stroke(chosen ? color : .clear, lineWidth: 1))
+                    .opacity(chosen ? 1 : 0.45)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+                    .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않습니다")
+                }
+            }
+        }
+        .accessibilityLabel("캘린더")
+    }
 }
 
 /// What the editor says after something the person did not see happen (a refusal, a failure, an adjusted time).
@@ -1297,6 +1458,8 @@ private struct EditMessageView: View {
 /// its new time once it differs (the calendar's card is then drawn faint).
 private struct DraftCard: View {
     let block: EventBlock
+    /// The title as typed (a rename shows on the card while it is typed).
+    let title: String
     let draft: EditDraft
     let zone: DisplayTimeZone
     let frame: CGRect
@@ -1311,7 +1474,7 @@ private struct DraftCard: View {
                 shape.fill(color.opacity(0.85))
                 if frame.height >= 18 {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(block.title).font(.caption.weight(.semibold)).lineLimit(frame.height >= 44 ? 2 : 1)
+                        Text(title).font(.caption.weight(.semibold)).lineLimit(frame.height >= 44 ? 2 : 1)
                         if frame.height >= 34 { Text(Self.timeText(draft, zone: zone)).font(.caption2.monospacedDigit()).lineLimit(1) }
                     }
                     .foregroundStyle(.white)
@@ -1391,6 +1554,13 @@ private struct FixedHourAxis: View {
     let width: CGFloat
     let gutter: CGFloat
     let scale: CGFloat
+    private var rail: CGFloat { gutter - 8 }
+
+    /// 1 when the whole hour is a boundary of the grid, down to 0 five minutes away from every boundary.
+    private func gridWeight(hour: Int) -> Double {
+        let nearest = partition.boundaries.map { abs($0 - Double(hour * 60)) }.min() ?? 5
+        return max(0, 1 - nearest / 5)
+    }
 
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
@@ -1400,12 +1570,25 @@ private struct FixedHourAxis: View {
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
                     .offset(x: gutter, y: partition.top(ofSlot: slot))
             }
+            // The time axis: one thin solid line at the gutter's edge, a tick at the real y of every whole hour that has room (the same as the debug grid's).
+            Path { path in path.move(to: CGPoint(x: rail, y: 0)); path.addLine(to: CGPoint(x: rail, y: partition.totalHeight)) }
+                .stroke(Color.secondary.opacity(0.5), lineWidth: 0.8)
             ForEach(states, id: \.hour) { state in
+                if state.tickOpacity > 0.003 {
+                    // An hour that is a boundary of the grid itself (a cell edge) is longer and darker than one that only has room; it fades to the plain
+                    // tick over a few minutes while the boundaries move between days.
+                    let grid = gridWeight(hour: state.hour)
+                    Path { path in
+                        path.move(to: CGPoint(x: rail, y: state.y))
+                        path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity) + 4 * CGFloat(grid), y: state.y))
+                    }
+                    .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
+                }
                 if state.labelOpacity > 0.003 {
                     Text(Formatting.hourLabel(state.hour % 24))
                         .font(.system(size: metrics.labelFontSize).monospacedDigit()).foregroundStyle(.secondary)
                         .lineLimit(1).minimumScaleFactor(0.5)
-                        .frame(width: gutter - 6, height: metrics.labelHeight, alignment: .trailing)
+                        .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
                         .opacity(state.labelOpacity)
                         .offset(y: state.labelCentre - metrics.labelHeight / 2)
                 }

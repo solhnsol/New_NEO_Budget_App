@@ -21,5 +21,5 @@ enum BrowseAxisMode: Equatable {
     static let current = resolve(arguments: ProcessInfo.processInfo.arguments)
 
     /// What the fixed grid does and does not do yet, said to the person using it.
-    static let editingNotice = "고정 격자 보기 · 일정을 길게 눌러 시작·끝 시간을 바꿉니다 · 만들기·옮기기는 아직 지원하지 않습니다"
+    static let editingNotice = "고정 격자 보기 · 일정을 눌러 시간을, 제목을 한 번 더 눌러 이름을 바꿉니다 · 길게 누르면 정보"
 }

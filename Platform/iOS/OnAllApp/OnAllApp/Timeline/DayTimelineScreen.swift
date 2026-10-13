@@ -66,7 +66,9 @@ struct DayTimelineScreen: View {
 
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
-        guard delta != 0, !isChangingDay else { return }
+        guard delta != 0 else { return }
+        // The fixed grid answers every pick, whatever is still loading from the one before (it runs the days on from where they are).
+        if BrowseAxisMode.current != .fixedGrid, isChangingDay { return }
         isChangingDay = true
         defer { isChangingDay = false }
         if BrowseAxisMode.current == .fixedGrid {
@@ -161,8 +163,11 @@ struct DayTimelineScreen: View {
                 )
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
-            Divider()
-            SummaryBar(timelines: timelines)
+            // The fixed grid keeps this place for its edit bar (cancel / done) instead of the day totals.
+            if BrowseAxisMode.current != .fixedGrid {
+                Divider()
+                SummaryBar(timelines: timelines)
+            }
         }
         .background {
             GeometryReader { proxy in
@@ -181,6 +186,8 @@ struct DayTimelineScreen: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
+        // A rename on the fixed grid brings the keyboard up over the grid; the screen keeps its layout (the grid's partition is planned for its room).
+        .ignoresSafeArea(.keyboard)
         .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: zoneIdentifier))
     }
 

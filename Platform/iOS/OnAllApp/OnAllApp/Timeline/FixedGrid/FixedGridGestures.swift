@@ -6,11 +6,12 @@ import NEOBudgetCalendar
 ///
 /// All the grid's recognizers are UIKit ones on the same container, so UIKit arbitrates them: no SwiftUI tap or long-press gesture sits under them.
 ///
-/// | begins on | browse | editing (an event chosen; future) |
+/// | begins on | browse | editing (an event chosen) |
 /// |---|---|---|
 /// | a handle of the chosen event | — | handle pan (drag), handle tap; nothing else |
-/// | an event, line, overflow card | tap: select (at rest), long press, date swipe, scroll, pinch | tap: (future) choose another; scroll, pinch |
-/// | empty grid | long press, date swipe, scroll, pinch | tap: (future) end editing; long press (future: create); scroll, pinch |
+/// | the chosen event's title | — | tap: rename; scroll, pinch |
+/// | an event, line, overflow card | tap: select (at rest: an event opens a session), long press (an event: its details), date swipe, scroll, pinch | tap: choose another; scroll, pinch |
+/// | empty grid | long press, date swipe, scroll, pinch | tap: end editing; long press (future: create); scroll, pinch |
 /// | the hour gutter | date swipe, scroll, pinch | scroll, pinch |
 ///
 /// In editing the days never move (the time partition is frozen for the session) and a drag from a handle is never a scroll or a date swipe. While a pinch
@@ -84,17 +85,30 @@ enum FixedGridGestures {
     /// What a tap means. Taps count only with the days at rest (a finger on moving days stops them instead).
     enum TapMeaning: Equatable {
         case none
+        /// Browse: what was touched (an editable event opens a session on it; the rest opens its details).
         case select(DayRenderPlan.Hit)
-        /// Future: the 15-minute time bubble for that end.
+        /// The time bubble for that end.
         case handle(EditHit)
-        /// Future: another event becomes the chosen one.
+        /// The chosen event's title: rename it (the second step after the tap that chose it).
+        case title
+        /// Another event becomes the chosen one (the chosen one's body lets a handle go).
         case chooseOther(DayRenderPlan.Hit)
-        /// Future: editing ends.
         case endEditing
     }
 
-    static func tap(start: Start, mode: Mode, daysAtRest: Bool) -> TapMeaning {
+    /// The part of a chosen card a tap renames at: its title line across the card (the whole of a card too short for more). Handles still win where they are.
+    static func titleBand(of frame: CGRect) -> CGRect {
+        CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: min(frame.height, titleBandHeight))
+    }
+
+    static let titleBandHeight: CGFloat = 30
+
+    /// `point`: where the tap is, for the chosen card's title (the card is where the draft has it, so the plan's hit there may be another thing or none).
+    static func tap(start: Start, mode: Mode, daysAtRest: Bool, point: CGPoint = CGPoint(x: -1, y: -1)) -> TapMeaning {
         guard daysAtRest else { return .none }
+        if let target = mode.target, !target.frame.isNull, start != .gutter, titleBand(of: target.frame).contains(point) {
+            if case .handle = start {} else { return .title }
+        }
         switch (mode, start) {
         case (.editing, .handle(let hit)): return .handle(hit)
         case (.browse, .content(let hit)): return .select(hit)
@@ -104,21 +118,23 @@ enum FixedGridGestures {
         }
     }
 
-    /// What a long press means. In browse it only draws attention to the line that says editing is not here yet; what it will mean is named.
+    /// What a long press means. On an event in browse it opens the event's details (to become a zoom onto it); elsewhere it only draws attention to the
+    /// line that says what the grid does not do yet, and what it will mean is named.
     enum LongPressMeaning: Equatable {
         case none
-        /// `future`: what it will mean once editing is here (`nil`: nothing planned for it, a transaction).
+        case details(BlockID)
+        /// `future`: what it will mean once it is here (`nil`: nothing planned for it, a transaction).
         case notice(future: Future?)
         /// Future, editing: a new event dragged out on empty grid.
         case createDraft
 
-        enum Future: Equatable { case createDraft, edit(BlockID) }
+        enum Future: Equatable { case createDraft }
     }
 
     static func longPress(start: Start, mode: Mode) -> LongPressMeaning {
         switch (mode, start) {
         case (.browse, .empty): return .notice(future: .createDraft)
-        case (.browse, .content(.event(let id))): return .notice(future: .edit(id))
+        case (.browse, .content(.event(let id))): return .details(id)
         case (.browse, .content): return .notice(future: nil)
         case (.editing, .empty): return .createDraft
         default: return .none

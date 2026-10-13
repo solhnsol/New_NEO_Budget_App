@@ -160,7 +160,6 @@ private func inside(_ frame: CGRect, _ bounds: CGRect = area) -> Bool { bounds.i
     // An end at midnight is the next day's 12:00 AM, so the date says which midnight.
     let midnight = PrecisionBubbleText(PrecisionBubbleInput(edge: .end, instant: afternoon.addingTimeInterval(9 * 3600 + 45 * 60), timeZone: seoul))
     #expect(midnight.date == "10월 14일 (수)" && midnight.time == "오전 12:00")
-    #expect(start.decrementTitle == "−15분" && start.incrementTitle == "+15분")
 }
 
 @MainActor @Test func theVoiceOverHintSaysOnlyWhatCanBeDone() {
@@ -197,12 +196,11 @@ private func inside(_ frame: CGRect, _ bounds: CGRect = area) -> Bool { bounds.i
     #expect(PrecisionEdge(.body) == nil)
 }
 
-@Test func dynamicTypeWidensTheBubbleAndStacksTheStepsAtAccessibilitySizes() {
+@Test func dynamicTypeWidensTheBubble() {
     let sizes: [DynamicTypeSize] = [.xSmall, .large, .xLarge, .xxLarge, .xxxLarge, .accessibility1, .accessibility2, .accessibility3]
     let widths = sizes.map(PrecisionBubbleMetrics.preferredWidth)
     #expect(zip(widths, widths.dropFirst()).allSatisfy { $0 <= $1 })
     #expect(PrecisionBubbleMetrics.width(.accessibility3, available: 300) == 300)        // never wider than the area
-    #expect(!PrecisionBubbleMetrics.stacksSteps(.xxxLarge) && PrecisionBubbleMetrics.stacksSteps(.accessibility1))
     #expect(PrecisionBubbleMetrics.minimumTarget >= 44)
 }
 
@@ -243,4 +241,29 @@ private func inside(_ frame: CGRect, _ bounds: CGRect = area) -> Bool { bounds.i
     tracker.stop()
     #expect(tracker.anchor == nil)
     #expect(PrecisionAnchorTracker.moved(from: nil, to: .zero) && !PrecisionAnchorTracker.moved(from: nil, to: nil))
+}
+
+// MARK: The wheel
+
+@Test func theWheelOffersEveryQuarterHourBetweenTheLimitsAndTheOriginalOffTheGrid() {
+    let dayStart = afternoon.addingTimeInterval(-(14 * 3600 + 15 * 60))                  // 00:00 of the same day
+    func at(_ h: Int, _ m: Int) -> Date { dayStart.addingTimeInterval(TimeInterval(h * 3600 + m * 60)) }
+    let choices = PrecisionWheelChoices.make(low: at(9, 0), high: at(10, 0), dayStart: dayStart, keep: [at(9, 7)])
+    #expect(choices == [at(9, 0), at(9, 7), at(9, 15), at(9, 30), at(9, 45), at(10, 0)])
+    // Limits off the grid start and end on the lines inside them; an original outside the limits is not offered.
+    #expect(PrecisionWheelChoices.make(low: at(9, 5), high: at(9, 50), dayStart: dayStart, keep: [at(11, 7)]) == [at(9, 15), at(9, 30), at(9, 45)])
+    #expect(PrecisionWheelChoices.make(low: at(10, 0), high: at(9, 0), dayStart: dayStart).isEmpty)
+    // The row of a time is its own, else the nearest.
+    #expect(PrecisionWheelChoices.index(of: at(9, 30), in: choices) == 3)
+    #expect(PrecisionWheelChoices.index(of: at(9, 31), in: choices) == 3)
+    #expect(PrecisionWheelChoices.index(of: at(9, 0), in: []) == nil)
+}
+
+@MainActor @Test func theWheelsRowsReadAsTheClockAndAnEndAtMidnightIsMidnight() {
+    #expect(PrecisionBubbleText.wheelLabel(afternoon, edge: .start, timeZone: seoul) == "오후 2:15")
+    let midnight = afternoon.addingTimeInterval(9 * 3600 + 45 * 60)
+    #expect(PrecisionBubbleText.wheelLabel(midnight, edge: .end, timeZone: seoul) == "자정")
+    #expect(PrecisionBubbleText.wheelLabel(midnight, edge: .start, timeZone: seoul) == "오전 12:00")
+    // Without choices the wheel shows the time alone.
+    #expect(PrecisionBubbleInput(edge: .start, instant: afternoon, timeZone: seoul).wheelChoices == [afternoon])
 }

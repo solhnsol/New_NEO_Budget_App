@@ -27,7 +27,6 @@ private func dirty(_ policy: I.ExitPolicy = .init(), handle: I.Handle = .end) ->
     _ = machine.handle(.handleDrag(.began, handle, point: .zero, minute: nil))
     _ = machine.handle(.handleDrag(.ended, handle, point: .zero, minute: nil))
     _ = machine.handle(.draftChanged(session: 1, isDirty: true))
-    _ = machine.handle(.tapOutside)                                                     // lets the chosen handle go first
     return machine
 }
 
@@ -49,10 +48,11 @@ private func gridCommands(_ commands: [I.Command]) -> [I.Command] { commands.fil
     #expect(machine.handle(.handleDrag(.began, .start, point: p, minute: 700)) == [.handle(session: 1, .dragging(.start)), .dragHandle(session: 1, .began, .start, point: p, minute: 700)])
     #expect(machine.handle(.handleDrag(.moved, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .moved, .start, point: p, minute: 705)])
     #expect(machine.handle(.handleDrag(.moved, .end, point: p, minute: 705)).isEmpty)          // not the handle being dragged
-    #expect(machine.handle(.handleDrag(.ended, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .ended, .start, point: p, minute: 705), .handle(session: 1, .selected(.start))])
+    // When it ends the handle is let go (no bubble after a drag); it is still the edge last edited.
+    #expect(machine.handle(.handleDrag(.ended, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .ended, .start, point: p, minute: 705), .handle(session: 1, .none)])
     #expect(machine.session?.lastEdited == .start)
-    // None of it touches the freeze, and a second enter while open is a tap on that event (the same one: lets the handle go).
-    #expect(machine.handle(.enter(lunch)) == [.handle(session: 1, .none)])
+    // None of it touches the freeze, and a second enter while open is a tap on that event (the same one, no handle chosen: nothing).
+    #expect(machine.handle(.enter(lunch)).isEmpty)
     #expect(machine.session?.id == 1)
 }
 
@@ -326,4 +326,38 @@ private func gridCommands(_ commands: [I.Command]) -> [I.Command] { commands.fil
     #expect(grid == [.freeze(session: 1, lunch), .unfreeze(session: 1, .edge(.end, day: day, minute: 800))])
     #expect(editor.first == .began(session: 1, lunch) && editor.contains(.commit(session: 1)) && editor.last == .ended(session: 1, .committed))
     #expect(gridCommands(router.log) == grid && router.session == nil)
+}
+
+// MARK: Renaming
+
+@Test func aTitleTapRenamesAndTheInnermostThingGoesFirst() {
+    var machine = entered()
+    // With a handle chosen, the title tap lets it go and brings the keyboard up.
+    _ = machine.handle(.handleTap(.end))
+    #expect(machine.handle(.tapTitle) == [.handle(session: 1, .none), .rename(session: 1, true)])
+    #expect(machine.session?.renaming == true)
+    #expect(machine.handle(.tapTitle).isEmpty)                                          // already renaming
+    // A tap outside ends the renaming first; the session stays.
+    #expect(machine.handle(.tapOutside) == [.rename(session: 1, false)])
+    #expect(machine.editing != nil && machine.session?.renaming == false)
+    // A handle touched while renaming ends it before choosing the handle.
+    _ = machine.handle(.tapTitle)
+    #expect(machine.handle(.handleTap(.start)) == [.rename(session: 1, false), .handle(session: 1, .selected(.start))])
+    _ = machine.handle(.tapTitle)
+    #expect(machine.handle(.handleDrag(.began, .end, point: .zero, minute: nil)).first == .rename(session: 1, false))
+    _ = machine.handle(.handleDrag(.ended, .end, point: .zero, minute: nil))
+    // The keyboard going away by itself ends it too.
+    _ = machine.handle(.tapTitle)
+    #expect(machine.handle(.endRename) == [.rename(session: 1, false)])
+    #expect(machine.handle(.endRename).isEmpty)
+}
+
+@Test func doneWhileRenamingSavesAndAnUnchangedRenameJustEnds() {
+    var machine = entered()
+    _ = machine.handle(.tapTitle)
+    _ = machine.handle(.draftChanged(session: 1, isDirty: true))                         // the title was typed
+    #expect(machine.handle(.confirm) == [.rename(session: 1, false), .handle(session: 1, .none), .commit(session: 1)])
+    var clean = entered()
+    _ = clean.handle(.tapTitle)
+    #expect(clean.handle(.confirm) == [.unfreeze(session: 1, .middle), .ended(session: 1, .cancelled)])
 }

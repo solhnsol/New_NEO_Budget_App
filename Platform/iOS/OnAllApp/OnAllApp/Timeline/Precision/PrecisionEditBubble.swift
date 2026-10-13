@@ -24,6 +24,11 @@ struct PrecisionBubbleInput: Equatable {
     /// Whether a 15-minute step back / forward may be taken now (the other edge, the session's limits, a save in progress).
     var canDecrement: Bool = true
     var canIncrement: Bool = true
+    /// The times the wheel offers (`PrecisionWheelChoices`), in order; `instant` is one of them. Empty: the wheel shows `instant` alone.
+    var choices: [Date] = []
+
+    /// The wheel's rows: `choices`, or `instant` alone.
+    var wheelChoices: [Date] { choices.isEmpty ? [instant] : choices }
 
     var isInteractive: Bool { canDecrement || canIncrement }
 
@@ -39,8 +44,11 @@ struct PrecisionBubbleInput: Equatable {
 
 /// What a precision bubble reports.
 enum PrecisionBubbleAction: Equatable, Sendable {
+    /// One 15-minute step (VoiceOver's adjustment of the header).
     case decrement15
     case increment15
+    /// The wheel turned to this time (one of the input's `choices`).
+    case set(Date)
     case dismiss
 }
 
@@ -66,15 +74,11 @@ struct PrecisionBubbleText: Equatable {
     let date: String
     /// "오후 2:15".
     let time: String
-    let decrementTitle = "−15분"
-    let incrementTitle = "+15분"
     /// "시작 시각" / "종료 시각".
     let accessibilityLabel: String
     /// "10월 13일 화요일 오후 2:15".
     let accessibilityValue: String
     let accessibilityHint: String
-    let decrementLabel = "15분 앞당기기"
-    let incrementLabel = "15분 늦추기"
     let dismissLabel = "닫기"
 
     @MainActor init(_ input: PrecisionBubbleInput) {
@@ -89,6 +93,12 @@ struct PrecisionBubbleText: Equatable {
         case (true, false): accessibilityHint = "아래로 쓸면 15분 일찍. 더 늦게는 안 됩니다"
         case (false, false): accessibilityHint = "지금은 바꿀 수 없습니다"
         }
+    }
+
+    /// A row of the wheel: "오후 2:15"; an end at midnight is "자정" (the header's date says which day it ends on).
+    @MainActor static func wheelLabel(_ instant: Date, edge: PrecisionEdge, timeZone: TimeZone) -> String {
+        let time = string(instant, timeZone, "a h:mm")
+        return edge == .end && string(instant, timeZone, "HH:mm") == "00:00" ? "자정" : time
     }
 
     @MainActor private static var formatters: [String: DateFormatter] = [:]
@@ -110,51 +120,41 @@ struct PrecisionBubbleText: Equatable {
     }
 }
 
-/// The precision bubble's body: which edge, its date and time, −15 / +15 and close. Placing it next to the handle is `PrecisionBubbleOverlay`'s job; this
-/// draws the body at the width it is given and reports what was pressed.
+/// The precision bubble's body: which edge and its date, a wheel of times in 15-minute steps (the middle row is the edge's time), and close. Placing it next to
+/// the handle is `PrecisionBubbleOverlay`'s job; this draws the body at the width it is given and reports what was chosen.
 ///
-/// - Dynamic Type: text styles throughout; at accessibility sizes the two steps stack and the header wraps (`PrecisionBubbleMetrics`).
-/// - VoiceOver: the time is one adjustable element (swipe up +15, down −15, only where allowed); the steps and close are buttons; the escape gesture closes.
-///   A step taken with a button announces the new time when it arrives (an adjustable element speaks its own new value).
-/// - Holding a step button repeats it (`buttonRepeatBehavior`); each repeat is one action.
+/// - The wheel reports each row as it passes the middle, so the card follows it while it turns; a tap on a row turns to it. While a handle is dragged the
+///   wheel follows the handle and takes no touches.
+/// - Dynamic Type: text styles throughout; the rows grow with the text and the header wraps (`PrecisionBubbleMetrics`).
+/// - VoiceOver: the time is one adjustable element (swipe up +15, down −15, only where allowed); the wheel is hidden from it; close is a button; the
+///   escape gesture closes.
 struct PrecisionEditBubble: View {
     let input: PrecisionBubbleInput
     /// Which way the handle is when it is off screen (`pinnedTop` / `pinnedBottom`); `nil` otherwise.
     var offscreen: PrecisionBubbleLayout.Side? = nil
     let onAction: (PrecisionBubbleAction) -> Void
 
-    @Environment(\.dynamicTypeSize) private var typeSize
-    @State private var announceNext = false
-
     var body: some View {
         let text = PrecisionBubbleText(input)
-        let stacked = PrecisionBubbleMetrics.stacksSteps(typeSize)
-        VStack(alignment: .leading, spacing: 8) {
+        let choices = input.wheelChoices
+        VStack(alignment: .leading, spacing: 4) {
             header(text)
-            Text(text.time)
-                .font(.title2.weight(.semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .accessibilityHidden(true)
-            let steps = Group {
-                stepButton(.decrement, title: text.decrementTitle, label: text.decrementLabel)
-                stepButton(.increment, title: text.incrementTitle, label: text.incrementLabel)
-            }
-            if stacked {
-                VStack(spacing: 6) { steps }
-            } else {
-                HStack(spacing: 8) { steps }
-            }
+            PrecisionTimeWheel(
+                labels: choices.map { PrecisionBubbleText.wheelLabel($0, edge: input.edge, timeZone: input.timeZone) },
+                selected: PrecisionWheelChoices.index(of: input.instant, in: choices) ?? 0,
+                isEnabled: input.isInteractive,
+                onSelect: { row in
+                    guard choices.indices.contains(row), choices[row] != input.instant else { return }
+                    onAction(.set(choices[row]))
+                }
+            )
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 6)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(text.edge) 시각 조정")
         .accessibilityAction(.escape) { send(.dismiss) }
-        .onChange(of: input.instant) {
-            guard announceNext else { return }
-            announceNext = false
-            AccessibilityNotification.Announcement("\(text.edge) \(PrecisionBubbleText(input).time)").post()
-        }
     }
 
     private func header(_ text: PrecisionBubbleText) -> some View {
@@ -178,7 +178,7 @@ struct PrecisionEditBubble: View {
                 .accessibilityAddTraits(input.isInteractive ? [] : .isStaticText)
                 .accessibilityAdjustableAction { direction in
                     guard let control = PrecisionBubbleControl(direction) else { return }
-                    send(control, announce: false)
+                    send(control)
                 }
                 .accessibilitySortPriority(2)
             Button { send(.dismiss) } label: {
@@ -197,40 +197,9 @@ struct PrecisionEditBubble: View {
         }
     }
 
-    private func stepButton(_ control: PrecisionBubbleControl, title: String, label: String) -> some View {
-        Button { send(control) } label: {
-            Text(title)
-                .font(.body.weight(.semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity, minHeight: PrecisionBubbleMetrics.minimumTarget)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(PrecisionStepButtonStyle())
-        .buttonRepeatBehavior(.enabled)
-        .disabled(input.action(for: control) == nil)
-        .accessibilityLabel(label)
-        .accessibilitySortPriority(1)
-    }
-
-    private func send(_ control: PrecisionBubbleControl, announce: Bool = true) {
+    private func send(_ control: PrecisionBubbleControl) {
         guard let action = input.action(for: control) else { return }
-        if action != .dismiss { announceNext = announce }
         onAction(action)
-    }
-}
-
-/// A step button: a tinted 44pt-high plate (the system bordered style pads it past that), dimmed while off.
-private struct PrecisionStepButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .foregroundStyle(isEnabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.tertiary))
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(isEnabled ? AnyShapeStyle(.tint.opacity(configuration.isPressed ? 0.24 : 0.12)) : AnyShapeStyle(.quaternary.opacity(0.5)))
-            )
     }
 }
 
@@ -238,19 +207,16 @@ private struct PrecisionStepButtonStyle: ButtonStyle {
 enum PrecisionBubbleMetrics {
     static let minimumTarget: CGFloat = 44
 
-    /// At accessibility sizes the two steps stack (side by side they would not fit "+15분" at a readable size).
-    static func stacksSteps(_ size: DynamicTypeSize) -> Bool { size.isAccessibilitySize }
-
-    /// The bubble's width before the area limits it: wide enough for "오후 12:45" in title2 and two step buttons.
+    /// The bubble's width before the area limits it: wide enough for the header ("종료 · 10월 13일 (화)" and close) and "오후 12:45" on the wheel.
     static func preferredWidth(_ size: DynamicTypeSize) -> CGFloat {
         switch size {
-        case ...DynamicTypeSize.large: 232
-        case .xLarge: 248
-        case .xxLarge: 264
-        case .xxxLarge: 280
-        case .accessibility1: 300
-        case .accessibility2: 320
-        default: 340
+        case ...DynamicTypeSize.large: 196
+        case .xLarge: 208
+        case .xxLarge: 220
+        case .xxxLarge: 236
+        case .accessibility1: 260
+        case .accessibility2: 284
+        default: 308
         }
     }
 

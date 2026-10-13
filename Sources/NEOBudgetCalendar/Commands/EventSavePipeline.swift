@@ -14,19 +14,22 @@ public struct EventSaveOriginal: Hashable, Sendable {
     public let revisionToken: String?
     public let start: Date
     public let end: Date
+    /// The title as the session began. `nil` when it is not known; a title change is then not compared against the calendar's.
+    public let title: String?
 
-    public init(key: CalendarEventKey, revisionToken: String?, start: Date, end: Date) {
+    public init(key: CalendarEventKey, revisionToken: String?, start: Date, end: Date, title: String? = nil) {
         self.key = key
         self.revisionToken = revisionToken
         self.start = start
         self.end = end
+        self.title = title
     }
 
     /// From a timeline block: its unclipped range, not the minutes drawn on one day.
     public init(block: EventBlock) {
         self.init(
             key: block.eventKey, revisionToken: block.revisionToken,
-            start: EventSaveTime.date(block.startUnixMilliseconds), end: EventSaveTime.date(block.endUnixMilliseconds)
+            start: EventSaveTime.date(block.startUnixMilliseconds), end: EventSaveTime.date(block.endUnixMilliseconds), title: block.title
         )
     }
 
@@ -35,44 +38,59 @@ public struct EventSaveOriginal: Hashable, Sendable {
         guard case let .timed(range) = event.time else { return nil }
         self.init(
             key: event.key, revisionToken: event.revisionToken,
-            start: EventSaveTime.date(range.startUnixMilliseconds), end: EventSaveTime.date(range.endUnixMilliseconds)
+            start: EventSaveTime.date(range.startUnixMilliseconds), end: EventSaveTime.date(range.endUnixMilliseconds), title: event.title
         )
     }
 
     var startMilliseconds: Int64 { EventSaveTime.milliseconds(start) }
     var endMilliseconds: Int64 { EventSaveTime.milliseconds(end) }
 
-    /// Whether `event` is still this original: the same revision (when there is one) and the same real range.
+    /// Whether `event` is still this original: the same revision (when there is one), the same real range and the same title (when it is known).
     public func matches(_ event: CalendarEvent) -> Bool {
         guard case let .timed(range) = event.time else { return false }
         if let revisionToken, revisionToken != event.revisionToken { return false }
+        if let title, title != event.title { return false }
         return range.startUnixMilliseconds == startMilliseconds && range.endUnixMilliseconds == endMilliseconds
     }
 }
 
-/// What an edit session asks to save: the original it was made against and the real range it proposes. A plain value, so it can be built and
-/// tested without a draft and saved again unchanged (a retry).
+/// What an edit session asks to save: the original it was made against, the real range it proposes and, when it was renamed, the new title. A plain
+/// value, so it can be built and tested without a draft and saved again unchanged (a retry).
 public struct EventSaveRequest: Hashable, Sendable {
     public let original: EventSaveOriginal
     public let proposedStart: Date
     public let proposedEnd: Date
+    /// The new title; `nil` keeps the calendar's.
+    public let proposedTitle: String?
     /// How far a change to a recurring event reaches. `nil` until the user chose (`EventSaveResult.needsScope`); ignored for a single event.
     public let scope: RecurrenceScope?
     /// Keeps an end-only change from running past this instant (the timeline editor passes the selected day's end). `nil` for no limit.
     public let endLimit: Date?
 
-    public init(original: EventSaveOriginal, proposedStart: Date, proposedEnd: Date, scope: RecurrenceScope? = nil, endLimit: Date? = nil) {
+    public init(
+        original: EventSaveOriginal, proposedStart: Date, proposedEnd: Date, proposedTitle: String? = nil, scope: RecurrenceScope? = nil, endLimit: Date? = nil
+    ) {
         self.original = original
         self.proposedStart = proposedStart
         self.proposedEnd = proposedEnd
+        self.proposedTitle = proposedTitle
         self.scope = scope
         self.endLimit = endLimit
     }
 
     /// The same request with the scope the user chose.
     public func scoped(_ scope: RecurrenceScope?) -> EventSaveRequest {
-        EventSaveRequest(original: original, proposedStart: proposedStart, proposedEnd: proposedEnd, scope: scope, endLimit: endLimit)
+        EventSaveRequest(original: original, proposedStart: proposedStart, proposedEnd: proposedEnd, proposedTitle: proposedTitle, scope: scope, endLimit: endLimit)
     }
+
+    /// The title to write, when it differs from the original's.
+    public var titleChange: String? {
+        guard let proposedTitle, proposedTitle != original.title else { return nil }
+        return proposedTitle
+    }
+
+    /// Whether there is anything to write: the time or the title.
+    public var changesAnything: Bool { edit != .none || titleChange != nil }
 
     /// Which existing command carries the change, from which edges moved.
     public enum Edit: Hashable, Sendable {
@@ -107,9 +125,18 @@ public struct EventSaveRequest: Hashable, Sendable {
     }
 
     /// The command the timeline editor would send for this change (`TimelineEditPlanner.command`), with the original revision as the expected one.
-    /// `nil` when nothing changed or the proposal is not a range.
+    /// A new title goes in one `editEvent` with the time, when that changed too (the exact proposed range: a draft only proposes grid steps). `nil` when
+    /// nothing changed or the proposal is not a range.
     public func command(scope: RecurrenceScope?) -> CalendarCommand? {
         let target = EventTarget(key: original.key, expectedRevisionToken: original.revisionToken)
+        if let title = titleChange {
+            var time: EventTimeRange?
+            if edit != .none {
+                guard let range = try? TimedRange(startUnixMilliseconds: proposedStartMilliseconds, endUnixMilliseconds: proposedEndMilliseconds) else { return nil }
+                time = .timed(range)
+            }
+            return .editEvent(EditEventInput(target: target, update: CalendarEventUpdate(title: title, time: time), scope: scope))
+        }
         switch edit {
         case .none:
             return nil
@@ -240,7 +267,7 @@ public struct EventSavePipeline: Sendable {
         guard current.isEditable else { return .refused(.notEditable) }
 
         // 2. What to send.
-        guard request.edit != .none else { return .unchanged(current) }
+        guard request.changesAnything else { return .unchanged(current) }
         guard request.proposedStartMilliseconds < request.proposedEndMilliseconds else { return .refused(.invalid(.durationBelowMinimum)) }
         var scope: RecurrenceScope?
         if current.isRecurringInstance {
@@ -320,6 +347,7 @@ public struct EventSavePipeline: Sendable {
             command: command,
             localFailure: localFailure,
             matchesProposal: range.startUnixMilliseconds == request.proposedStartMilliseconds && range.endUnixMilliseconds == request.proposedEndMilliseconds
+                && (request.titleChange == nil || saved.title == request.titleChange)
         ))
     }
 
