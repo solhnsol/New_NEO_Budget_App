@@ -163,12 +163,14 @@ final class FixedGridBrowseModel {
     /// Where everything of a day goes under one decision, on the shared axis: what the screen draws and touches, and what the tests check.
     func renderPlan(
         _ timeline: DayTimeline, source: FixedGridColumns.Source, decision: Decision, partition: TemporalGridPartition, zone: DisplayTimeZone,
-        layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations
+        layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations,
+        presentationPartition: TemporalGridPartition? = nil
     ) -> DayRenderPlan {
         DayRenderPlan(
             prepared: preparations.prepared(timeline: timeline, role: source.role, layout: decision.layout),
             geometry: axis(for: timeline.day, partition: partition, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
-            metrics: metrics, maximumInlineRows: Self.maximumInlineRows, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+            metrics: metrics, maximumInlineRows: Self.maximumInlineRows,
+            presentationGeometry: presentationPartition.map { axis(for: timeline.day, partition: $0, zone: zone) }, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
         )
     }
 

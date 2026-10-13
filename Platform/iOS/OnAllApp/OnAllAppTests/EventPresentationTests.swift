@@ -181,6 +181,22 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     #expect(p(400, 2).hiddenRows == 0)                                                     // nothing left to fold: no row to fade
 }
 
+@Test func whatIsWrittenInACardFollowsThePresentationAxisWhileTheCardIsPlacedOnAnother() throws {
+    let tl = try timeline([event(0, "회의", 600, 660)], [spend("in", minute: 620)], link: ["in": 0])
+    func placed(on placedOn: CGFloat, readFrom readFrom: CGFloat?) -> DayRenderPlan {
+        DayRenderPlan(
+            timeline: tl, role: nil, layout: nil, geometry: TimelineGeometry(totalMinutes: 1440, pointsPerMinute: placedOn), layoutWidth: layoutWidth,
+            presentationGeometry: readFrom.map { TimelineGeometry(totalMinutes: 1440, pointsPerMinute: $0) }, titleWidth: { _ in 40 }
+        )
+    }
+    let squeezed = try #require(placed(on: 0.2, readFrom: 1.5).events.first)                  // placed 12 points tall, written as a card 90 tall is
+    #expect(abs(squeezed.frame.height - 12) < 0.001)                                          // the card itself is exactly where the axis puts it
+    #expect(squeezed.presentation == EventPresentation.make(height: 90, insideCount: 1, metrics: .standard()))
+    let stretched = try #require(placed(on: 1.5, readFrom: 0.2).events.first)                 // placed 90 tall, written as a card 12 tall is: no rows it never has
+    #expect(stretched.presentation == EventPresentation.make(height: 12, insideCount: 1, metrics: .standard()))
+    #expect(placed(on: 0.7, readFrom: nil).events.first?.presentation == placed(on: 0.7, readFrom: 0.7).events.first?.presentation)   // none: as before
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {
