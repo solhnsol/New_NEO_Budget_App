@@ -251,11 +251,11 @@ struct DayRenderPlan {
     init(
         timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
+        metrics: EventPresentation.Metrics? = nil, maximumInlineRows: Int = InlineAllocationPlan.maximumRows, titleWidth: (String) -> CGFloat
     ) {
         self.init(
             prepared: Prepared(timeline: timeline, role: role, layout: layout), geometry: geometry, layoutWidth: layoutWidth, textScale: textScale,
-            expanded: expanded, focused: focused, parameters: parameters, metrics: metrics, titleWidth: titleWidth
+            expanded: expanded, focused: focused, parameters: parameters, metrics: metrics, maximumInlineRows: maximumInlineRows, titleWidth: titleWidth
         )
     }
 
@@ -263,7 +263,7 @@ struct DayRenderPlan {
     init(
         prepared: Prepared, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
+        metrics: EventPresentation.Metrics? = nil, maximumInlineRows: Int = InlineAllocationPlan.maximumRows, titleWidth: (String) -> CGFloat
     ) {
         let scale = max(0.5, textScale)
         let metrics = metrics ?? .standard(scale: scale)
@@ -292,7 +292,7 @@ struct DayRenderPlan {
         // How each event looks, from its height alone.
         var presentations: [BlockID: EventPresentation] = [:]
         for block in blocks {
-            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics)
+            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows)
         }
 
         // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.

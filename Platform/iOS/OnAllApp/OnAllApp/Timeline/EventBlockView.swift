@@ -30,16 +30,18 @@ struct InlineAllocationPlan: Equatable {
         return make(allocationCount: allocationCount, rowCapacity: Int((free / rowHeight).rounded(.down)))
     }
 
-    /// The same decision from the number of rows there is room for, however that was measured.
-    static func make(allocationCount: Int, rowCapacity: Int) -> InlineAllocationPlan {
+    /// The same decision from the number of rows there is room for, however that was measured. `maximumRows` is how many rows (items and the "+N" row) a card
+    /// may ever write: the collapsed block's three by default, more on a grid that lets a tall card show everything it holds.
+    static func make(allocationCount: Int, rowCapacity: Int, maximumRows: Int = InlineAllocationPlan.maximumRows) -> InlineAllocationPlan {
         guard allocationCount > 0 else { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
+        let maximumItems = maximumRows - 1
         let rows = max(0, min(maximumRows, rowCapacity))
         if rows == 0 { return InlineAllocationPlan(shown: 0, hidden: 0, showsSummaryRow: false, showsSummaryChip: true) }
         if rows == 1 {
             if allocationCount == 1 { return InlineAllocationPlan(shown: 1, hidden: 0, showsSummaryRow: false, showsSummaryChip: false) }
             return InlineAllocationPlan(shown: 0, hidden: allocationCount, showsSummaryRow: true, showsSummaryChip: false)
         }
-        // With room for the "+N" row too (three rows) two real transactions are shown; with two rows, one plus "+N".
+        // With room for the "+N" row too (the most rows) the most items are shown; with fewer rows, one fewer item than rows plus "+N".
         let itemRows = rows >= maximumRows ? maximumItems : rows
         if allocationCount <= itemRows && allocationCount <= maximumItems {
             return InlineAllocationPlan(shown: allocationCount, hidden: 0, showsSummaryRow: false, showsSummaryChip: false)
@@ -181,6 +183,7 @@ struct EventBlockView: View {
                 let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
                 let middle = Self.verticalPadding + titleRow + Self.rowSpacing + CGFloat(index) * (rowHeight + Self.rowSpacing) + rowHeight / 2
                 AllocationRow(item: item, scale: scale, anchorDy: anchors.indices.contains(index) ? anchors[index] - middle : nil)
+                    .opacity(index == 0 ? 1 : presentation.rowReveal(index))
             }
             if presentation.showsSummaryRow, let total {
                 MoreRow(label: "거래 \(rows.count)건", total: total, color: .primary, scale: scale)

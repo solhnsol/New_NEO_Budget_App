@@ -143,6 +143,23 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     #expect(p(140, 1).shownRows == 1 && p(140, 1).hiddenRows == 0)
 }
 
+@Test func aTallCardOnAGridThatShowsMoreWritesOneMoreRowAsItGrowsAndEachFadesIn() {
+    func p(_ h: CGFloat, _ n: Int = 5) -> EventPresentation { EventPresentation.make(height: h, insideCount: n, metrics: standard, maximumRows: 12) }
+    let defaults = EventPresentation.make(height: 400, insideCount: 5, metrics: standard)
+    #expect(defaults.shownRows == 2 && defaults.hiddenRows == 3)                         // the collapsed block's three rows are unchanged
+    #expect(p(400).shownRows == 5 && p(400).hiddenRows == 0)                              // room for everything: everything is written
+    var previous = p(0)
+    var h: CGFloat = 0
+    while h <= 400 {
+        let now = p(h)
+        #expect(now.shownRows >= previous.shownRows)                                      // growing never takes a row away
+        #expect(zip(previous.rowReveals, now.rowReveals).allSatisfy { $0 <= $1 + 0.0001 }) // nor fades one out
+        if now.shownRows > previous.shownRows, now.shownRows > 1 { #expect(now.rowReveal(now.shownRows - 1) < 1) } // a new row starts faint, not whole
+        previous = now
+        h += 0.5
+    }
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {
