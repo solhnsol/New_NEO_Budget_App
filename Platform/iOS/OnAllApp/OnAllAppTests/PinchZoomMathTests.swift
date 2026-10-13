@@ -192,3 +192,83 @@ private struct Sequence {
     #expect(abs(PinchZoomMath.rubberBandedOffset(below, range: range, limit: limit) - 431) < 0.001)
     #expect(PinchZoomMath.unbandedOffset(200, range: range, limit: limit) == 200)
 }
+
+// MARK: A pinch step by step (`PinchZoomMath.Pinch`)
+
+@Test func aPinchKeepsTheTimeUnderTheFingersInsideTheGrid() {
+    let viewport: CGFloat = 740
+    var pinch = M.Pinch(zoom: 2, focal: 300, shown: 400, viewport: viewport)
+    let fraction = M.anchorFraction(offset: 400, focal: 300, zoom: 2, viewport: viewport)
+    for (zoom, focal) in [(2.5, 320.0), (3.2, 280.0), (4.0, 350.0)] as [(CGFloat, CGFloat)] {
+        pinch = pinch.step(zoom: zoom, focal: focal, viewport: viewport)
+        #expect(abs(M.anchorFraction(offset: pinch.shown, focal: focal, zoom: zoom, viewport: viewport) - fraction) < 0.000_1)
+    }
+}
+
+@Test func zoomingOutAtAnEndNeverDrawsPastIt() {
+    // Zoomed in at the top, the fingers low on the screen: zooming out keeps the top at the top (the time under the fingers slides) instead of pulling
+    // the grid down off its end.
+    let viewport: CGFloat = 740
+    var pinch = M.Pinch(zoom: 4, focal: 500, shown: 0, viewport: viewport)
+    for zoom in stride(from: 3.8 as CGFloat, through: 1.2, by: -0.2) {
+        pinch = pinch.step(zoom: zoom, focal: 500, viewport: viewport)
+        #expect(pinch.shown == 0)
+    }
+    // At the bottom end the same.
+    let bottom = M.offsetRange(zoom: 4, viewport: viewport).upperBound
+    var low = M.Pinch(zoom: 4, focal: 100, shown: bottom, viewport: viewport)
+    for zoom in stride(from: 3.8 as CGFloat, through: 1.2, by: -0.2) {
+        low = low.step(zoom: zoom, focal: 100, viewport: viewport)
+        #expect(abs(low.shown - M.offsetRange(zoom: zoom, viewport: viewport).upperBound) < 0.001)
+    }
+}
+
+@Test func aPinchInAt1xShrinksAroundTheFingersInsteadOfFollowingThem() {
+    // The whole day fits; the fingers close with their centre drifting up 150 points (the lower finger moves most).
+    let viewport: CGFloat = 740
+    var pinch = M.Pinch(zoom: 1, focal: 400, shown: 0, viewport: viewport)
+    for step in 1...30 {
+        let t = CGFloat(step) / 30
+        pinch = pinch.step(zoom: M.rubberBanded(1 - 0.5 * t), focal: 400 - 150 * t, viewport: viewport)
+    }
+    #expect(pinch.zoom < 1)
+    // The shrunken grid stays about the viewport, its end never pulled further than the limit.
+    let top = -pinch.shown, bottom = -pinch.shown + viewport * pinch.zoom
+    #expect(top > -M.overscrollLimit(viewport: viewport) && bottom < viewport)
+    // The centre's drift moves it much less than the centre (a pull with resistance, never more than the limit).
+    let shrinkOnly = M.Pinch(zoom: 1, focal: 400, shown: 0, viewport: viewport).step(zoom: pinch.zoom, focal: 400, viewport: viewport)
+    let drift = pinch.shown - shrinkOnly.shown
+    #expect(drift > 0 && drift < 150 * M.overscrollSlope && drift < M.overscrollLimit(viewport: viewport))
+}
+
+@Test func aPinchPullsPastAnEndWithResistanceAndTakesOverABounceWhereItIs() {
+    let viewport: CGFloat = 740
+    // A finger pulled the scroll 43 points past the top: the pinch starts there (no jump) and pulling further follows less than the fingers.
+    var pinch = M.Pinch(zoom: 3, focal: 300, shown: -43, viewport: viewport, pulled: true)
+    #expect(abs(pinch.shown - -43) < 0.001)
+    pinch = pinch.step(zoom: 3, focal: 400, viewport: viewport)
+    #expect(pinch.shown < -43 && pinch.shown > -143 && pinch.shown > -M.overscrollLimit(viewport: viewport))
+    // Back the other way: inside the grid it scrolls one to one again.
+    pinch = pinch.step(zoom: 3, focal: 100, viewport: viewport)
+    #expect(pinch.over == 0 && pinch.shown > 0)
+    // A bounce further out than the pinch's own limit is taken over where it is too.
+    #expect(abs(M.Pinch(zoom: 3, focal: 300, shown: -200, viewport: viewport, pulled: true).shown - -200) < 0.001)
+}
+
+@Test func aBounceThePinchTakesOverComesBackToTheEndWhileThePinchGoesOn() {
+    // An easing back from past the bottom, caught by a new pinch: it is drawn where it was, then returns to the end on its own (nothing pulls it),
+    // and zooming meanwhile does not keep it out.
+    let viewport: CGFloat = 460
+    let end = M.offsetRange(zoom: 1.05, viewport: viewport).upperBound
+    var pinch = M.Pinch(zoom: 1.05, focal: 180, shown: end + 27, viewport: viewport)
+    #expect(abs(pinch.shown - (end + 27)) < 0.001 && pinch.over == 0)
+    for _ in 0..<30 { pinch = pinch.step(zoom: max(0.91, pinch.zoom - 0.01), focal: 190, viewport: viewport).settled(after: 1 / 60) }
+    #expect(pinch.returning == 0)
+    #expect(pinch.shown <= 0 && pinch.shown >= M.pinchRange(zoom: pinch.zoom, viewport: viewport).lowerBound - M.overscrollLimit(viewport: viewport))
+}
+
+@Test func aStretchedZoomGoesOnFromWhereItIsDrawn() {
+    for raw in [0.7, 0.95, 1, 4, 8.3, 9.5] as [CGFloat] {
+        #expect(abs(M.rubberBanded(M.unbandedZoom(M.rubberBanded(raw))) - M.rubberBanded(raw)) < 0.000_1)
+    }
+}
