@@ -327,3 +327,59 @@ private func timeline(_ events: [CalendarEvent], on day: LocalDate = date) -> Da
     try d.stepStart(by: -1)
     #expect(d.segment(on: date)?.startMinute == 600)
 }
+
+// MARK: Dragging an edge
+
+@Test func draggingAnEdgeSnapsToTheNearestGridLineAndKeepsTheOtherEdge() throws {
+    var d = try draft(at(date, 10, 0), at(date, 11, 0))
+    do { let moved = d.drag(.start, to: at(date, 9, 37)); #expect(moved) }
+    #expect(d.range == timed(at(date, 9, 30), at(date, 11, 0)))
+    do { let moved = d.drag(.end, to: at(date, 11, 53)); #expect(moved) }
+    #expect(d.range == timed(at(date, 9, 30), at(date, 12, 0)))
+    // Within half a step of where it is: nothing moves.
+    do { let moved = d.drag(.end, to: at(date, 12, 7)); #expect(!moved) }
+    #expect(d.range == timed(at(date, 9, 30), at(date, 12, 0)))
+    // Halfway goes later.
+    do { let moved = d.drag(.end, to: at(date, 12, 7) + 30_000); #expect(moved) }
+    #expect(d.range.endUnixMilliseconds == at(date, 12, 15))
+}
+
+@Test func draggingAnEdgePastALimitHoldsItAtTheLimit() throws {
+    var d = try draft(at(date, 10, 0), at(date, 11, 0))
+    // Past the other edge: the minimum length stays.
+    do { let moved = d.drag(.start, to: at(date, 13, 0)); #expect(moved) }
+    #expect(d.range == timed(at(date, 10, 45), at(date, 11, 0)))
+    do { let moved = d.drag(.end, to: at(date, 8, 0)); #expect(!moved) }
+    #expect(d.range == timed(at(date, 10, 45), at(date, 11, 0)))
+    // Past the day: midnight either side.
+    let bounds = seoul.dayBounds(date)
+    do { let moved = d.drag(.start, to: bounds.start - 3 * 3_600_000); #expect(moved) }
+    #expect(d.range.startUnixMilliseconds == bounds.start)
+    do { let moved = d.drag(.end, to: bounds.end + 3 * 3_600_000); #expect(moved) }
+    #expect(d.range.endUnixMilliseconds == bounds.end)
+    #expect(d.isValid)
+}
+
+@Test func aShortOriginalGrowsToTheMinimumWhenDragged() throws {
+    // 10 minutes long: a start dragged later than allowed lands 15 minutes before the end; the end grows to the minimum.
+    var d = try draft(at(date, 10, 0), at(date, 10, 10))
+    do { let moved = d.drag(.start, to: at(date, 10, 5)); #expect(moved) }
+    #expect(d.range == timed(at(date, 9, 55), at(date, 10, 10)) && d.isValid)
+    // At the very start of the day the start has nowhere allowed to go.
+    let bounds = seoul.dayBounds(date)
+    var f = try draft(bounds.start, bounds.start + 600_000)
+    do { let moved = f.drag(.start, to: bounds.start + 3_600_000); #expect(!moved) }
+    var e = try draft(at(date, 10, 0), at(date, 10, 10))
+    do { let moved = e.drag(.end, to: at(date, 10, 12)); #expect(moved) }
+    #expect(e.range == timed(at(date, 10, 0), at(date, 10, 15)))
+}
+
+@Test func canStepSaysWhetherAStepWouldBeTaken() throws {
+    let d = try draft(at(date, 10, 0), at(date, 10, 15))
+    #expect(d.canStep(.start, by: -1) && !d.canStep(.start, by: 1))
+    #expect(d.canStep(.end, by: 1) && !d.canStep(.end, by: -1))
+    let bounds = seoul.dayBounds(date)
+    let edge = try draft(bounds.start, bounds.end)
+    #expect(!edge.canStep(.start, by: -1) && !edge.canStep(.end, by: 1))
+    #expect(edge.canStep(.start, by: 1) && edge.canStep(.end, by: -1))
+}

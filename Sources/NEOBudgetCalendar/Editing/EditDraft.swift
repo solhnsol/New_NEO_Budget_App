@@ -292,6 +292,54 @@ public struct EditDraft: Hashable, Sendable {
         range = originalRange
     }
 
+    /// One end of the range.
+    public enum Edge: Hashable, Sendable {
+        case start, end
+    }
+
+    /// Moves one edge towards `instant` (a finger dragging that edge): snapped to the nearest grid line, then held inside what the draft allows — the day
+    /// and the minimum length against the other edge, which stays. Never refuses: a finger past a limit leaves the edge at the limit. Returns whether the
+    /// range changed. When no position is allowed (an original shorter than the minimum, its start dragged), nothing changes.
+    @discardableResult
+    public mutating func drag(_ edge: Edge, to instant: Int64) -> Bool {
+        let step = Int64(Self.stepMinutes) * 60_000
+        let minimum = Int64(Self.minimumDurationMinutes) * 60_000
+        let bounds: (start: Int64, end: Int64)
+        switch extent {
+        case let .singleDay(day): bounds = timeZone.dayBounds(day)
+        }
+        let half = instant - bounds.start + step / 2                                     // nearest line; halfway goes later, before midnight too
+        let snapped = bounds.start + (half >= 0 ? half / step : -((-half + step - 1) / step)) * step
+        let start: Int64, end: Int64
+        switch edge {
+        case .start:
+            let high = range.endUnixMilliseconds - minimum
+            guard high >= bounds.start else { return false }
+            start = min(max(snapped, bounds.start), high); end = range.endUnixMilliseconds
+        case .end:
+            let low = range.startUnixMilliseconds + minimum
+            guard low <= bounds.end else { return false }
+            start = range.startUnixMilliseconds; end = min(max(snapped, low), bounds.end)
+        }
+        guard start != range.startUnixMilliseconds || end != range.endUnixMilliseconds, issue(start: start, end: end) == nil else { return false }
+        range = try! TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: end)
+        return true
+    }
+
+    /// Whether one grid step of `edge` by `steps` would be accepted now (a step control is on only when it is). Does not change the draft.
+    public func canStep(_ edge: Edge, by steps: Int) -> Bool {
+        var copy = self
+        do {
+            switch edge {
+            case .start: try copy.stepStart(by: steps)
+            case .end: try copy.stepEnd(by: steps)
+            }
+            return copy.range != range
+        } catch {
+            return false
+        }
+    }
+
     // MARK: Conflicts
 
     /// The original compared with `observation`. Pure; does not change the draft.
