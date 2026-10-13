@@ -251,11 +251,11 @@ struct DayRenderPlan {
     init(
         timeline: DayTimeline, role: DayRole?, layout: AdaptiveLayout?, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
+        metrics: EventPresentation.Metrics? = nil, maximumInlineRows: Int = InlineAllocationPlan.maximumRows, presentationGeometry: (any TimeAxisMapping)? = nil, titleWidth: (String) -> CGFloat
     ) {
         self.init(
             prepared: Prepared(timeline: timeline, role: role, layout: layout), geometry: geometry, layoutWidth: layoutWidth, textScale: textScale,
-            expanded: expanded, focused: focused, parameters: parameters, metrics: metrics, titleWidth: titleWidth
+            expanded: expanded, focused: focused, parameters: parameters, metrics: metrics, maximumInlineRows: maximumInlineRows, presentationGeometry: presentationGeometry, titleWidth: titleWidth
         )
     }
 
@@ -263,7 +263,7 @@ struct DayRenderPlan {
     init(
         prepared: Prepared, geometry: any TimeAxisMapping, layoutWidth: CGFloat,
         textScale: CGFloat = 1, expanded: BlockID? = nil, focused: BlockID? = nil, parameters: AllocationParameters = AllocationParameters(),
-        metrics: EventPresentation.Metrics? = nil, titleWidth: (String) -> CGFloat
+        metrics: EventPresentation.Metrics? = nil, maximumInlineRows: Int = InlineAllocationPlan.maximumRows, presentationGeometry: (any TimeAxisMapping)? = nil, titleWidth: (String) -> CGFloat
     ) {
         let scale = max(0.5, textScale)
         let metrics = metrics ?? .standard(scale: scale)
@@ -289,10 +289,16 @@ struct DayRenderPlan {
             frames[block.id] = frame
         }
 
-        // How each event looks, from its height alone.
+        // How each event looks, from its height alone. `presentationGeometry`: the axis the heights are read from when it is not the one the cards are placed on (the days
+        // moving: cards are placed on the blend of two partitions, but what is written in them is what the decision they come from makes of the cards at rest, so a card
+        // that the blend squeezes or stretches on its way neither loses its rows nor shows rows it never has).
         var presentations: [BlockID: EventPresentation] = [:]
         for block in blocks {
-            presentations[block.id] = EventPresentation.make(height: frames[block.id]?.height ?? 0, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics)
+            var height = frames[block.id]?.height ?? 0
+            if let basis = presentationGeometry, expanded != block.id, block.id != focused {
+                height = max(0, basis.y(bottomOfSpanFrom: block.startMinute, to: block.endMinute) - basis.y(minute: block.startMinute))
+            }
+            presentations[block.id] = EventPresentation.make(height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows)
         }
 
         // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.

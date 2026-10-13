@@ -248,6 +248,9 @@ struct FixedGridBrowseView: View {
         let shown: TemporalGridPartition
         let columns: [FixedGridColumns.Column]
         let decisions: [Int: FixedGridBrowseModel.Decision]
+        /// While the days are between two whole days: each window's own partition at the zoom (what its decision's cards are at rest), which what is written in the
+        /// cards is read from; empty at rest and during an edit session (the shown partition is then the only one).
+        let restPartitions: [Int: TemporalGridPartition]
 
         func decision(_ source: FixedGridColumns.Source) -> FixedGridBrowseModel.Decision {
             decisions[source.window] ?? FixedGridBrowseModel.Decision(layout: nil, titleWidths: [:])
@@ -272,7 +275,13 @@ struct FixedGridBrowseView: View {
             decisions[window] = planner.decisionForDrawing(window: window, zoomKey: zoomKey, isInteracting: pinch.isInteracting || easingBack, inputs: inputs)
         }
         if planner.isEasing { easeAxis() }
-        return Frame(shown: shown, columns: columns, decisions: decisions)
+        var rest: [Int: TemporalGridPartition] = [:]
+        if abs(position - position.rounded()) > 0.0005, planner.frozen == nil {
+            for window in decisions.keys where planner.thawing(window: window) == nil {
+                if let planned = planner.plannedPartition(window: window, inputs: inputs) { rest[window] = planned.zoomed(viewportHeight: viewport, zoomScale: zoom) }
+            }
+        }
+        return Frame(shown: shown, columns: columns, decisions: decisions, restPartitions: rest)
     }
 
     private func grid(width: CGFloat) -> some View {
@@ -443,7 +452,8 @@ struct FixedGridBrowseView: View {
     private func plan(_ timeline: DayTimeline, source: FixedGridColumns.Source, frame: Frame, layoutWidth: CGFloat, decision: FixedGridBrowseModel.Decision? = nil) -> DayRenderPlan {
         planner.renderPlan(
             timeline, source: source, decision: decision ?? frame.decision(source), partition: frame.shown, zone: zone, layoutWidth: layoutWidth, textScale: textScale,
-            metrics: TextMeasurer.presentationMetrics(), preparations: preparations
+            metrics: TextMeasurer.presentationMetrics(), preparations: preparations,
+            presentationPartition: decision == nil ? frame.restPartitions[source.window] : nil
         )
     }
 

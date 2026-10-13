@@ -149,6 +149,9 @@ final class FixedGridBrowseModel {
     private(set) var transitionsBegun = 0
 
     /// The zoom a layout is decided at: a quarter of a unit is the same decision, so a pinch that ends near where it was needs no new run.
+    /// A card on the fixed grid writes every transaction it holds as soon as it is tall enough for the row (the collapsed block's three is for a card that cannot grow).
+    static let maximumInlineRows = 12
+
     static func zoomKey(_ zoom: CGFloat) -> Int { Int((zoom * 4).rounded()) }
 
     /// The zoom a frame's decisions are for: where an easing pinch comes to rest while it eases back inside 1 … 8× (its frames pass through other keys, and
@@ -160,12 +163,14 @@ final class FixedGridBrowseModel {
     /// Where everything of a day goes under one decision, on the shared axis: what the screen draws and touches, and what the tests check.
     func renderPlan(
         _ timeline: DayTimeline, source: FixedGridColumns.Source, decision: Decision, partition: TemporalGridPartition, zone: DisplayTimeZone,
-        layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations
+        layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations,
+        presentationPartition: TemporalGridPartition? = nil
     ) -> DayRenderPlan {
         DayRenderPlan(
             prepared: preparations.prepared(timeline: timeline, role: source.role, layout: decision.layout),
             geometry: axis(for: timeline.day, partition: partition, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
-            metrics: metrics, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+            metrics: metrics, maximumInlineRows: Self.maximumInlineRows,
+            presentationGeometry: presentationPartition.map { axis(for: timeline.day, partition: $0, zone: zone) }, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
         )
     }
 

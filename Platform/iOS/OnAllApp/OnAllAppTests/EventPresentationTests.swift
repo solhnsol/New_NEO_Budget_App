@@ -143,6 +143,60 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     #expect(p(140, 1).shownRows == 1 && p(140, 1).hiddenRows == 0)
 }
 
+@Test func aTallCardOnAGridThatShowsMoreWritesOneMoreRowAsItGrowsAndEachFadesIn() {
+    func p(_ h: CGFloat, _ n: Int = 5) -> EventPresentation { EventPresentation.make(height: h, insideCount: n, metrics: standard, maximumRows: 12) }
+    let defaults = EventPresentation.make(height: 400, insideCount: 5, metrics: standard)
+    #expect(defaults.shownRows == 2 && defaults.hiddenRows == 3)                         // the collapsed block's three rows are unchanged
+    #expect(p(400).shownRows == 5 && p(400).hiddenRows == 0)                              // room for everything: everything is written
+    var previous = p(0)
+    var h: CGFloat = 0
+    while h <= 400 {
+        let now = p(h)
+        #expect(now.shownRows >= previous.shownRows)                                      // growing never takes a row away
+        #expect(zip(previous.rowReveals, now.rowReveals).allSatisfy { $0 <= $1 + 0.0001 }) // nor fades one out
+        if now.shownRows > previous.shownRows, now.shownRows > 1 { #expect(now.rowReveal(now.shownRows - 1) < 1) } // a new row starts faint, not whole
+        previous = now
+        h += 0.5
+    }
+}
+
+@Test func theMoreRowNeverMovesWhileItIsSeenItFadesOutBeforeTheRowThatPushesItAndInAfter() {
+    func p(_ h: CGFloat, _ n: Int = 9) -> EventPresentation { EventPresentation.make(height: h, insideCount: n, metrics: standard, maximumRows: 12) }
+    var previous = p(0)
+    var h: CGFloat = 0.1
+    var moved = 0
+    while h <= 400 {
+        let now = p(h, 9)
+        if now.shownRows > 0, now.hiddenRows > 0, previous.shownRows > 0, previous.hiddenRows > 0 {
+            #expect(abs(now.moreReveal - previous.moreReveal) < 0.05)                      // no pop while it stays
+            if now.shownRows != previous.shownRows {                                       // the slot changes only while it is not there
+                moved += 1
+                #expect(previous.moreReveal < 0.05 && now.moreReveal < 0.05)
+            }
+        }
+        previous = now
+        h += 0.1
+    }
+    #expect(moved >= 3)
+    #expect(p(400, 2).hiddenRows == 0)                                                     // nothing left to fold: no row to fade
+}
+
+@Test func whatIsWrittenInACardFollowsThePresentationAxisWhileTheCardIsPlacedOnAnother() throws {
+    let tl = try timeline([event(0, "회의", 600, 660)], [spend("in", minute: 620)], link: ["in": 0])
+    func placed(on placedOn: CGFloat, readFrom readFrom: CGFloat?) -> DayRenderPlan {
+        DayRenderPlan(
+            timeline: tl, role: nil, layout: nil, geometry: TimelineGeometry(totalMinutes: 1440, pointsPerMinute: placedOn), layoutWidth: layoutWidth,
+            presentationGeometry: readFrom.map { TimelineGeometry(totalMinutes: 1440, pointsPerMinute: $0) }, titleWidth: { _ in 40 }
+        )
+    }
+    let squeezed = try #require(placed(on: 0.2, readFrom: 1.5).events.first)                  // placed 12 points tall, written as a card 90 tall is
+    #expect(abs(squeezed.frame.height - 12) < 0.001)                                          // the card itself is exactly where the axis puts it
+    #expect(squeezed.presentation == EventPresentation.make(height: 90, insideCount: 1, metrics: .standard()))
+    let stretched = try #require(placed(on: 1.5, readFrom: 0.2).events.first)                 // placed 90 tall, written as a card 12 tall is: no rows it never has
+    #expect(stretched.presentation == EventPresentation.make(height: 12, insideCount: 1, metrics: .standard()))
+    #expect(placed(on: 0.7, readFrom: nil).events.first?.presentation == placed(on: 0.7, readFrom: 0.7).events.first?.presentation)   // none: as before
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {
