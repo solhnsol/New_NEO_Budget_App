@@ -52,6 +52,23 @@ enum PinchZoomMath {
     /// The most a pinch draws the scroll past an end: a tenth of the viewport.
     static func overscrollLimit(viewport: CGFloat) -> CGFloat { max(1, viewport * 0.1) }
 
+    /// A fling that reaches an end at `velocity` (points per second, signed): how far past the end it goes (signed, at most `overscrollLimit`, the
+    /// pinch's rubber band applied to the 30 ms the speed would carry it on) and how soon it gets there (`tau`, so it leaves the end at the fling's speed).
+    static func flingBounce(velocity: CGFloat, viewport: CGFloat) -> (peak: CGFloat, tau: CGFloat) {
+        let limit = overscrollLimit(viewport: viewport)
+        let peak = rubberBandedOffset(abs(velocity) * 0.03, range: 0...0, limit: limit)
+        let tau = min(0.15, max(0.05, peak * CGFloat(M_E) / max(1, abs(velocity))))
+        return (velocity < 0 ? -peak : peak, tau)
+    }
+
+    /// How far past the end a fling's bounce is `t` seconds after it reached it: out to `peak` at `tau` and back, critically damped (`p·(t/τ)·e^(1−t/τ)`).
+    /// `nil` once it is back within a quarter point (after about 6τ).
+    static func bounceOffset(at t: CGFloat, peak: CGFloat, tau: CGFloat) -> CGFloat? {
+        let x = max(0, t) / tau
+        let d = peak * x * exp(1 - x)
+        return x > 1 && abs(d) < 0.25 ? nil : d
+    }
+
     /// Where the zoom alone may put the scroll during a pinch: the ends of the grid at 1× and above (zooming never draws past an end; the time under the
     /// fingers slides instead), and below 1× anywhere that keeps the shrunken grid inside the viewport, so it shrinks around the fingers.
     static func pinchRange(zoom: CGFloat, viewport: CGFloat, inset: CGFloat = 0) -> ClosedRange<CGFloat> {

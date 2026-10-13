@@ -272,3 +272,20 @@ private struct Sequence {
         #expect(abs(M.rubberBanded(M.unbandedZoom(M.rubberBanded(raw))) - M.rubberBanded(raw)) < 0.000_1)
     }
 }
+
+@Test func aFlingBouncesAtAnEndNoFurtherThanAPinchPulls() {
+    let viewport: CGFloat = 460, limit = M.overscrollLimit(viewport: viewport)
+    for velocity in [-12_000, -3000, -400, 400, 3000, 12_000] as [CGFloat] {
+        let fling = M.flingBounce(velocity: velocity, viewport: viewport)
+        #expect(abs(fling.peak) < limit && fling.peak.sign == velocity.sign)
+        // Out to the peak and back: never past it, the right side of the end, and over within a second.
+        var t: CGFloat = 0, widest: CGFloat = 0
+        while let d = M.bounceOffset(at: t, peak: fling.peak, tau: fling.tau) {
+            #expect(abs(d) <= abs(fling.peak) + 0.001 && (d == 0 || d.sign == velocity.sign))
+            widest = max(widest, abs(d)); t += 1 / 120
+        }
+        #expect(abs(widest - abs(fling.peak)) < 1 && t < 1)
+    }
+    // A faster fling goes further.
+    #expect(abs(M.flingBounce(velocity: 3000, viewport: viewport).peak) > abs(M.flingBounce(velocity: 600, viewport: viewport).peak))
+}
