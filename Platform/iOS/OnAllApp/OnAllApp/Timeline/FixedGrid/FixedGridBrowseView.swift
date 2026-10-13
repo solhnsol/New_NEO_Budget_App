@@ -158,6 +158,7 @@ struct FixedGridBrowseView: View {
                 EditingNotice(emphasised: noticeEmphasis)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
+                editSlot
             }
             .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
@@ -306,9 +307,31 @@ struct FixedGridBrowseView: View {
         Task { @MainActor in if editor?.scopeQuestion?.id == id { editor?.answer(nil) } }
     }
 
-    /// While a session is open: what is being edited, its time now, and done / cancel. Messages show above it (and on their own after a session).
+    /// Under the grid, where the day totals used to be: kept empty so the grid does not change size, and holding the edit bar (title, time, cancel / done)
+    /// while a session is open. Renaming moves the bar onto the keyboard instead (`editBar`).
+    private var editSlot: some View {
+        ZStack {
+            if let editor, edit.session != nil, !editor.isRenaming { sessionBar(editor) }
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity)
+        .frame(height: 68)
+        .animation(.easeOut(duration: 0.18), value: edit.session != nil)
+    }
+
+    private func sessionBar(_ editor: FixedGridEditor) -> some View {
+        EditSessionBar(
+            editor: editor, zone: zone, calendars: model.calendars, isCommitting: edit.session?.committing == true,
+            rename: { edit.send(.tapTitle) }, endRename: { edit.send(.endRename) },
+            cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
+        )
+    }
+
+    /// Over the grid: the messages (shown above the bar, and on their own after a session), and the bar while the title is renamed (it rides on the keyboard).
     private var editBar: some View {
-        VStack(spacing: 8) {
+        let renaming = edit.session != nil && editor?.isRenaming == true
+        let hasContent = editor?.message != nil || renaming
+        return VStack(spacing: 8) {
             if let message = editor?.message {
                 EditMessageView(message: message)
                     .task(id: message.id) {
@@ -317,16 +340,10 @@ struct FixedGridBrowseView: View {
                     }
                     .onTapGesture { editor?.dismissMessage(message.id) }
             }
-            if let editor, edit.session != nil {
-                EditSessionBar(
-                    editor: editor, zone: zone, calendars: model.calendars, isCommitting: edit.session?.committing == true,
-                    rename: { edit.send(.tapTitle) }, endRename: { edit.send(.endRename) },
-                    cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
-                )
-            }
+            if let editor, renaming { sessionBar(editor) }
         }
         .padding(.horizontal, 12)
-        .padding(.bottom, 8 + keyboardOverlap)
+        .padding(.bottom, hasContent ? 8 + keyboardOverlap : 0)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { editBarHeight = $0 }
         .animation(.easeOut(duration: 0.18), value: edit.session != nil)
         .animation(.easeOut(duration: 0.18), value: editor?.message)
@@ -1377,7 +1394,7 @@ private struct EditSessionBar: View {
             if c.endChanged { moved.append("끝 " + EditSessionBarText.minutes(c.endDeltaMilliseconds)) }
         }
         if editor.newTitle != nil { moved.append("이름 바뀜") }
-        guard !moved.isEmpty else { return range + " · 핸들로 시간을, 제목을 눌러 이름을 바꿉니다" }
+        guard !moved.isEmpty else { return range }
         return range + " · " + moved.joined(separator: " · ")
     }
 }

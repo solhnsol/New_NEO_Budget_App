@@ -163,8 +163,11 @@ struct DayTimelineScreen: View {
                 )
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
-            Divider()
-            SummaryBar(timelines: timelines)
+            // The fixed grid keeps this place for its edit bar (cancel / done) instead of the day totals.
+            if BrowseAxisMode.current != .fixedGrid {
+                Divider()
+                SummaryBar(timelines: timelines)
+            }
         }
         .background {
             GeometryReader { proxy in
