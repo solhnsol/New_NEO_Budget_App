@@ -174,3 +174,21 @@ private struct Sequence {
     #expect(store.planRuns == 0 && store.profileBuilds == 0)
     #expect(total / Double(frames) < 4)         // a 120 Hz frame is 8.3 ms; this is the model's share, in a Debug build
 }
+
+// MARK: The scroll's rubber band during a pinch
+
+@Test func aPinchDrawsTheScrollPastItsEndsWithResistanceAndTheTakeoverStartsWhereTheContentIs() {
+    let range: ClosedRange<CGFloat> = 0...400, limit: CGFloat = 300
+    // Inside the range nothing changes; past an end the content follows less and less, never past the limit.
+    #expect(PinchZoomMath.rubberBandedOffset(120, range: range, limit: limit) == 120)
+    let pulled = PinchZoomMath.rubberBandedOffset(-100, range: range, limit: limit)
+    #expect(pulled < 0 && pulled > -100)
+    #expect(PinchZoomMath.rubberBandedOffset(-10_000, range: range, limit: limit) > -limit)
+    #expect(PinchZoomMath.rubberBandedOffset(500, range: range, limit: limit) < 500)
+    // A scroll bounced 43 points past the top: the free offset the pinch starts from draws exactly there (no jump when the second finger lands).
+    let free = PinchZoomMath.unbandedOffset(-43, range: range, limit: limit)
+    #expect(abs(PinchZoomMath.rubberBandedOffset(free, range: range, limit: limit) - -43) < 0.001)
+    let below = PinchZoomMath.unbandedOffset(431, range: range, limit: limit)
+    #expect(abs(PinchZoomMath.rubberBandedOffset(below, range: range, limit: limit) - 431) < 0.001)
+    #expect(PinchZoomMath.unbandedOffset(200, range: range, limit: limit) == 200)
+}

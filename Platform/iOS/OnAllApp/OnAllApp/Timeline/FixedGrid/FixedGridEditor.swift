@@ -191,10 +191,10 @@ final class FixedGridEditor {
 
     // MARK: The precision bubble
 
-    /// What the bubble shows now: the chosen edge's time, the times its wheel offers and which steps may be taken. `nil` while no edge is chosen or a save is
-    /// under way.
+    /// What the bubble shows now: the chosen edge's time, the times its wheel offers and which steps may be taken. `nil` while no edge is chosen, a handle is
+    /// dragged (the card shows the time) or a save is under way.
     var bubbleInput: PrecisionBubbleInput? {
-        guard let edge, let draft, !isSaving, let zone = TimeZone(identifier: environment.zone.identifier) else { return nil }
+        guard let edge, let draft, !isSaving, !isDragging, let zone = TimeZone(identifier: environment.zone.identifier) else { return nil }
         return PrecisionBubbleInput(
             edge: edge == .start ? .start : .end, instant: edge == .start ? draft.startDate : draft.endDate, timeZone: zone,
             canDecrement: !isDragging && draft.canStep(edge, by: -1), canIncrement: !isDragging && draft.canStep(edge, by: 1),

@@ -28,6 +28,26 @@ enum PinchZoomMath {
         return min(max(offset, limits.lowerBound), limits.upperBound)
     }
 
+    /// How far past an end of `range` the scroll is drawn during a pinch, when the fingers take it there: inside unchanged; beyond, it follows with a slope
+    /// of 1 at the end that falls off towards `limit` (`d·L/(L+d)`), the same feel as the zoom's stretch and the scroll view's own bounce.
+    static func rubberBandedOffset(_ offset: CGFloat, range: ClosedRange<CGFloat>, limit: CGFloat) -> CGFloat {
+        if offset < range.lowerBound { let d = range.lowerBound - offset; return range.lowerBound - d * limit / (limit + d) }
+        if offset > range.upperBound { let d = offset - range.upperBound; return range.upperBound + d * limit / (limit + d) }
+        return offset
+    }
+
+    /// The offset whose rubber band is `shown` (the inverse of `rubberBandedOffset`): a pinch that takes over a scroll past an end starts from the content
+    /// exactly where it is drawn. Beyond 95 % of the limit it is taken as 95 %.
+    static func unbandedOffset(_ shown: CGFloat, range: ClosedRange<CGFloat>, limit: CGFloat) -> CGFloat {
+        func unband(_ r: CGFloat) -> CGFloat { let r = min(r, limit * 0.95); return r * limit / (limit - r) }
+        if shown < range.lowerBound { return range.lowerBound - unband(range.lowerBound - shown) }
+        if shown > range.upperBound { return range.upperBound + unband(shown - range.upperBound) }
+        return shown
+    }
+
+    /// The most a pinch draws the scroll past an end: half the viewport.
+    static func overscrollLimit(viewport: CGFloat) -> CGFloat { max(1, viewport * 0.5) }
+
     /// Where on the grid (0 = 00:00 end, 1 = 24:00 end) the point `focal` (from the top of the viewport) is, at this offset and zoom.
     static func anchorFraction(offset: CGFloat, focal: CGFloat, zoom: CGFloat, viewport: CGFloat) -> CGFloat {
         (offset + focal) / max(0.0001, viewport * zoom)

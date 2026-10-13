@@ -11,8 +11,8 @@ import Observation
 /// - **enter** (a tap on an editable event): the grid freezes (`freeze`); no handle is chosen.
 /// - **rename** (a tap on the chosen event's title): the title is edited with the keyboard (`rename(true)`); a chosen handle is let go. A handle touched
 ///   or a tap outside ends the renaming first (`rename(false)`), the new title kept; done saves the title with the time.
-/// - **handles**: a tap chooses a handle (its time bubble) or lets it go; a drag makes it the dragged one and, when it ends, the chosen one. The handle last
-///   touched is the edge the time is kept at when the session ends (`AnchorRequest`).
+/// - **handles**: a tap chooses a handle (its time bubble) or lets it go; a drag makes it the dragged one, and lets it go when it ends (no bubble during or
+///   after a drag: the card shows the time). The handle last touched is the edge the time is kept at when the session ends (`AnchorRequest`).
 /// - **confirm**: with changes, `commit` and wait (still frozen) for `commitFinished` (unfreeze at the edited edge) or `commitFailed` (back to editing, the
 ///   changes kept); without, the session just ends.
 /// - **cancel**: `discard` (when there are changes) and unfreeze at the middle of the screen.
@@ -246,7 +246,7 @@ struct FixedGridEditInteraction: Equatable {
             guard session.handle == .dragging(handle) else { return [] }
         case .ended, .cancelled:
             guard session.handle == .dragging(handle) else { return [] }
-            session.handle = .selected(handle)
+            session.handle = .none                                                 // a drag shows its time on the card; the bubble is a tap's
         }
         commands.append(.dragHandle(session: session.id, phase, handle, point: point, minute: minute))
         if phase == .ended || phase == .cancelled { commands.append(.handle(session: session.id, session.handle)) }

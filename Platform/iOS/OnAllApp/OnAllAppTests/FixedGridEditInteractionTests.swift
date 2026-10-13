@@ -27,7 +27,6 @@ private func dirty(_ policy: I.ExitPolicy = .init(), handle: I.Handle = .end) ->
     _ = machine.handle(.handleDrag(.began, handle, point: .zero, minute: nil))
     _ = machine.handle(.handleDrag(.ended, handle, point: .zero, minute: nil))
     _ = machine.handle(.draftChanged(session: 1, isDirty: true))
-    _ = machine.handle(.tapOutside)                                                     // lets the chosen handle go first
     return machine
 }
 
@@ -49,10 +48,11 @@ private func gridCommands(_ commands: [I.Command]) -> [I.Command] { commands.fil
     #expect(machine.handle(.handleDrag(.began, .start, point: p, minute: 700)) == [.handle(session: 1, .dragging(.start)), .dragHandle(session: 1, .began, .start, point: p, minute: 700)])
     #expect(machine.handle(.handleDrag(.moved, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .moved, .start, point: p, minute: 705)])
     #expect(machine.handle(.handleDrag(.moved, .end, point: p, minute: 705)).isEmpty)          // not the handle being dragged
-    #expect(machine.handle(.handleDrag(.ended, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .ended, .start, point: p, minute: 705), .handle(session: 1, .selected(.start))])
+    // When it ends the handle is let go (no bubble after a drag); it is still the edge last edited.
+    #expect(machine.handle(.handleDrag(.ended, .start, point: p, minute: 705)) == [.dragHandle(session: 1, .ended, .start, point: p, minute: 705), .handle(session: 1, .none)])
     #expect(machine.session?.lastEdited == .start)
-    // None of it touches the freeze, and a second enter while open is a tap on that event (the same one: lets the handle go).
-    #expect(machine.handle(.enter(lunch)) == [.handle(session: 1, .none)])
+    // None of it touches the freeze, and a second enter while open is a tap on that event (the same one, no handle chosen: nothing).
+    #expect(machine.handle(.enter(lunch)).isEmpty)
     #expect(machine.session?.id == 1)
 }
 

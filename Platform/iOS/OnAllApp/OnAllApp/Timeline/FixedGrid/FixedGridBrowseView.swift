@@ -1529,6 +1529,12 @@ private struct FixedHourAxis: View {
     let scale: CGFloat
     private var rail: CGFloat { gutter - 8 }
 
+    /// 1 when the whole hour is a boundary of the grid, down to 0 five minutes away from every boundary.
+    private func gridWeight(hour: Int) -> Double {
+        let nearest = partition.boundaries.map { abs($0 - Double(hour * 60)) }.min() ?? 5
+        return max(0, 1 - nearest / 5)
+    }
+
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
         let states = HourAxis.layout(partition: partition, metrics: metrics)
@@ -1542,11 +1548,14 @@ private struct FixedHourAxis: View {
                 .stroke(Color.secondary.opacity(0.5), lineWidth: 0.8)
             ForEach(states, id: \.hour) { state in
                 if state.tickOpacity > 0.003 {
+                    // An hour that is a boundary of the grid itself (a cell edge) is longer and darker than one that only has room; it fades to the plain
+                    // tick over a few minutes while the boundaries move between days.
+                    let grid = gridWeight(hour: state.hour)
                     Path { path in
                         path.move(to: CGPoint(x: rail, y: state.y))
-                        path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity), y: state.y))
+                        path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity) + 4 * CGFloat(grid), y: state.y))
                     }
-                    .stroke(Color.secondary.opacity(0.7 * state.tickOpacity), lineWidth: 0.8)
+                    .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
                 }
                 if state.labelOpacity > 0.003 {
                     Text(Formatting.hourLabel(state.hour % 24))

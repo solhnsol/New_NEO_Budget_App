@@ -92,9 +92,11 @@ private final class Fixture {
     f.drag(.end, toMinute: f.minute(at(11, 37)))
     #expect(f.editor.draft?.range == range(at(10), at(11, 30)))
     #expect(f.router.session?.isDirty == true)
-    #expect(f.router.session?.handle == .selected(.end) && f.editor.edge == .end)
+    // A drag lets the handle go when it ends: no bubble during or after it (the card shows the time).
+    #expect(f.router.session?.handle == I.HandleState.none && f.editor.bubbleInput == nil)
 
-    // The bubble is the end's, at its time, both steps allowed; +15 and −15 go through the draft.
+    // A tap on the handle brings the end's bubble, at its time, both steps allowed; +15 and −15 go through the draft.
+    f.router.send(.handleTap(.end))
     let input = try #require(f.editor.bubbleInput)
     #expect(input.edge == .end && input.instant == Date(timeIntervalSince1970: Double(at(11, 30)) / 1_000))
     #expect(input.canDecrement && input.canIncrement)
@@ -104,10 +106,13 @@ private final class Fixture {
     #expect(f.editor.draft?.range == range(at(10), at(11)))
     #expect(f.router.session?.isDirty == false)                                             // back to the original: not dirty
 
-    // The start's bubble at the minimum length: no later step.
-    f.router.send(.handleTap(.start))
-    f.drag(.start, toMinute: f.minute(at(10, 52)))
+    // While a handle is dragged there is no bubble; the start's bubble at the minimum length: no later step.
+    f.router.send(.handleDrag(.began, .start, point: .zero, minute: nil))
+    #expect(f.editor.bubbleInput == nil)
+    f.router.send(.handleDrag(.moved, .start, point: .zero, minute: f.minute(at(10, 52))))
+    f.router.send(.handleDrag(.ended, .start, point: .zero, minute: f.minute(at(10, 52))))
     #expect(f.editor.draft?.range == range(at(10, 45), at(11)))
+    f.router.send(.handleTap(.start))
     #expect(f.editor.bubbleInput?.canIncrement == false && f.editor.bubbleInput?.canDecrement == true)
 
     // Close: the chosen handle lets go, the bubble goes.

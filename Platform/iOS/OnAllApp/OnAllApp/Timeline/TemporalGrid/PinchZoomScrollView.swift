@@ -21,6 +21,17 @@ final class PinchZoomModel: ObservableObject {
     var currentOffset: (() -> CGFloat)?
     /// Returns false when the offset was not applied because the person has the scroll in hand.
     var setOffset: ((CGFloat) -> Bool)?
+    /// How much of the bottom of the viewport something drawn over the grid covers (an edit bar, the keyboard): the scroll may go that much further, so the
+    /// end of the day can be brought above it. Not published: it changes the scroll, not what is drawn.
+    var bottomInset: CGFloat = 0 { didSet { if abs(oldValue - bottomInset) > 0.5 { applyBottomInset?() } } }
+    var applyBottomInset: (() -> Void)?
+    /// Set by the scroll view: eases the scroll to an offset (the zoom stays). Ignored while the person has the scroll in hand.
+    var scrollTo: ((CGFloat) -> Void)?
+    /// The offsets the scroll can rest at now (with `bottomInset`).
+    func offsetRange(zoom: CGFloat) -> ClosedRange<CGFloat> {
+        let base = PinchZoomMath.offsetRange(zoom: zoom, viewport: viewportHeight)
+        return base.lowerBound...(base.upperBound + bottomInset)
+    }
     /// Whether the person scrolled or pinched since the last time this was read. The move reads it to take a new anchor.
     private(set) var userMoved = false
     func markUserMoved() { userMoved = true }
@@ -181,6 +192,12 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         private var pinch: UIPinchGestureRecognizer!
         private var datePan: DateSwipeRecognizer!
         private var pinchStart: (zoom: CGFloat, fraction: CGFloat)?
+        /// The offset the pinch (or its easing back to rest) has drawn the content at. While they run only they move the scroll: anything else that moves it
+        /// (the scroll view putting a cancelled bounce back at its end, or snapping an offset past an end into range) is undone at once, so no frame shows
+        /// the content anywhere but under the fingers or on the way to rest. A finger on the scroll takes it back.
+        private var pinchOffset: CGFloat?
+        /// The scroll is being set here (its own moves are not undone).
+        private var applying = false
         private var lastFocal: CGFloat = 0
         private var datePanning = false
         var hooks: GridGestureHooks?
@@ -260,6 +277,11 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 self.applyContent(zoom: self.model.zoom, offset: offset)
                 return true
             }
+            model.applyBottomInset = { [weak self] in self?.applyBottomInset() }
+            model.scrollTo = { [weak self] offset in
+                guard let self, self.pinchStart == nil, !self.scroll.isDragging, !self.scroll.isDecelerating else { return }
+                self.animate(to: (self.model.zoom, offset))
+            }
             model.startPace = { [weak self] in self?.startMeter() }
             model.drivePinch = { [weak self] state, scale, focal in self?.pinch(state, scale: scale, focal: focal) }
             model.stopPace = { [weak self] in self?.stopMeter() }
@@ -274,17 +296,20 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         }
 
         /// Size the content for `zoom` and scroll to `offset`, in one step, so the content and the scroll position never disagree.
-        private func applyContent(zoom: CGFloat, offset: CGFloat?) {
+        /// `clamps`: false while a pinch draws the scroll past an end (it has rubber-banded the offset itself).
+        private func applyContent(zoom: CGFloat, offset: CGFloat?, clamps: Bool = true) {
             guard let host = hosting?.view, let container else { return }
+            applying = true
+            defer { applying = false; if ownsScroll { pinchOffset = scroll.contentOffset.y } }
             let viewport = container.bounds.height
             let height = viewport * zoom
             let size = CGSize(width: container.bounds.width, height: height)
             if scroll.contentSize != size { scroll.contentSize = size }
             host.frame = CGRect(origin: .zero, size: size)
             if let offset {
-                // During a stretch past the ends the content is shorter than the viewport; the offset then is 0.
+                // During a stretch past the ends the content is shorter than the viewport; the offset then is 0. What covers the bottom adds its height.
                 let limits = PinchZoomMath.offsetRange(zoom: zoom, viewport: viewport)
-                let clamped = min(max(offset, limits.lowerBound), limits.upperBound)
+                let clamped = clamps ? min(max(offset, limits.lowerBound), limits.upperBound + model.bottomInset) : offset
                 if abs(scroll.contentOffset.y - clamped) > 0.0001 { scroll.contentOffset = CGPoint(x: 0, y: clamped) }
             }
             if model.zoom != zoom { model.zoom = zoom }
@@ -292,8 +317,24 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             if model.band != band { model.band = band }
         }
 
+        /// The scroll reaches `bottomInset` further; when it shrinks, an offset past the new end comes back to it.
+        private func applyBottomInset() {
+            guard let container else { return }
+            let inset = model.bottomInset
+            if scroll.contentInset.bottom != inset { scroll.contentInset.bottom = inset }
+            let end = PinchZoomMath.offsetRange(zoom: model.zoom, viewport: container.bounds.height).upperBound + inset
+            if scroll.contentOffset.y > end + 0.5, !scroll.isDragging, pinchStart == nil { scroll.setContentOffset(CGPoint(x: 0, y: end), animated: true) }
+        }
+
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
             guard let container else { return }
+            if ownsScroll, pinchStart == nil, scrollView.isTracking { stopAnimation() }             // the person took the scroll during the easing
+            if !applying, ownsScroll, let kept = pinchOffset, abs(scrollView.contentOffset.y - kept) > 0.5 {
+                applying = true
+                scrollView.contentOffset = CGPoint(x: 0, y: kept)
+                applying = false
+                return
+            }
             if scrollView.isDragging || scrollView.isDecelerating { model.markUserMoved() }
             let band = PinchZoomMath.visibleBand(offset: max(0, scrollView.contentOffset.y), viewport: container.bounds.height)
             if model.band != band { model.band = band }
@@ -312,9 +353,22 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Pinch
 
+        /// Fingers the pinch had at its last step.
+        private var pinchTouches = 0
+
+        /// The focal point is the centre of two fingers. With one lifted the pinch keeps the last centre (the finger left on the glass does not pan or jump the
+        /// grid to where it is); when a second finger comes back the pinch goes on from where it is, from the new centre.
         @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
             guard let container else { return }
-            pinch(gesture.state, scale: gesture.scale, focal: gesture.numberOfTouches > 0 ? gesture.location(in: container).y : lastFocal)
+            let touches = gesture.numberOfTouches
+            let focal = touches >= 2 ? gesture.location(in: container).y : lastFocal
+            if gesture.state == .changed, touches >= 2, pinchTouches < 2, pinchStart != nil, gesture.scale > 0 {
+                let viewport = container.bounds.height
+                pinchStart = (model.zoom / gesture.scale, PinchZoomMath.anchorFraction(offset: unbanded(scroll.contentOffset.y, zoom: model.zoom), focal: focal, zoom: model.zoom, viewport: viewport))
+            }
+            pinchTouches = touches
+            if gesture.state == .changed, touches < 2 { return }                     // one finger: nothing moves until the second is back or all are up
+            pinch(gesture.state, scale: gesture.scale, focal: focal)
         }
 
         private func pinch(_ state: UIGestureRecognizer.State, scale: CGFloat, focal: CGFloat) {
@@ -324,35 +378,58 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             case .began:
                 BrowseProbe.mark(.pinchBegan)
                 stopAnimation()
-                scroll.setContentOffset(scroll.contentOffset, animated: false)       // stops any inertia at once
-                hold(by: .pinch)                                                      // no one-finger gesture until every finger is up (a long press is cancelled)
+                // The pinch starts from the content where it is drawn, a scroll's bounce past an end too (it goes on as the pinch's rubber band).
+                let current = scroll.contentOffset.y
+                pinchStart = (model.zoom, PinchZoomMath.anchorFraction(offset: unbanded(current, zoom: model.zoom), focal: focal, zoom: model.zoom, viewport: viewport))
+                pinchOffset = current
+                hold(by: .pinch)                                                      // no one-finger gesture until every finger is up (a long press, a scroll under way are cancelled)
+                applying = true
+                scroll.setContentOffset(CGPoint(x: 0, y: current), animated: false)  // stops any inertia or bounce-back at once, where it was
+                applying = false
                 if datePanning { datePanning = false; onDateDrag(.cancelled) }
                 model.isInteracting = true
                 startMeter()
                 lastFocal = focal
-                pinchStart = (model.zoom, PinchZoomMath.anchorFraction(offset: scroll.contentOffset.y, focal: focal, zoom: model.zoom, viewport: viewport))
             case .changed:
                 guard let start = pinchStart else { return }
                 lastFocal = focal
                 model.markUserMoved()
-                let next = PinchZoomMath.step(startZoom: start.zoom, scale: scale, fraction: start.fraction, focal: focal, viewport: viewport)
-                BrowseProbe.measure(.pinchStep) { applyContent(zoom: next.zoom, offset: next.offset) }
+                // The zoom stretches past its ends and the scroll past its ends, both following the fingers with resistance; both come back on release.
+                let zoom = PinchZoomMath.rubberBanded(start.zoom * scale)
+                let free = PinchZoomMath.offset(keepingFraction: start.fraction, atFocal: focal, zoom: zoom, viewport: viewport)
+                let shown = PinchZoomMath.rubberBandedOffset(free, range: offsetRange(zoom: zoom), limit: PinchZoomMath.overscrollLimit(viewport: viewport))
+                BrowseProbe.measure(.pinchStep) { applyContent(zoom: zoom, offset: shown, clamps: false) }
             case .ended, .cancelled, .failed:
                 guard let start = pinchStart else { return }
                 BrowseProbe.mark(.pinchEnded)
-                pinchStart = nil
+                pinchStart = nil                                                      // `pinchOffset` stays: the easing to rest goes on from it
                 // Where the zoom comes to rest is known now; it is set before the pinch is said to be over, so whoever plans for the rested zoom plans for it.
-                let target = PinchZoomMath.rest(zoom: model.zoom, fraction: start.fraction, focal: lastFocal, viewport: viewport)
-                let settles = abs(target.zoom - model.zoom) > 0.0005
-                if settles { animate(to: target); model.settlingZoom = target.zoom }
+                // The scroll comes back inside its ends with it (the easing starts from where the content is drawn).
+                let zoomTarget = PinchZoomMath.clamped(model.zoom)
+                let rested = PinchZoomMath.offset(keepingFraction: start.fraction, atFocal: lastFocal, zoom: zoomTarget, viewport: viewport)
+                let range = offsetRange(zoom: zoomTarget)
+                let target = (zoom: zoomTarget, offset: min(max(rested, range.lowerBound), range.upperBound))
+                let settles = abs(target.zoom - model.zoom) > 0.0005 || abs(target.offset - scroll.contentOffset.y) > 0.5
+                if settles { animate(to: target); if abs(target.zoom - model.zoom) > 0.0005 { model.settlingZoom = target.zoom } }
                 model.isInteracting = false
                 model.markUserMoved()
                 stopMeter()
-                if !settles { applyContent(zoom: target.zoom, offset: target.offset) }
+                if !settles { pinchOffset = nil; applyContent(zoom: target.zoom, offset: target.offset) }
                 // A finger may still be down: nothing scrolls and no day moves until all are up.
                 if counter.count == 0 { fingersUp() } else { scheduleFallback() }
             default: break
             }
+        }
+
+        /// The offsets the scroll rests at for `zoom` (with what covers the bottom).
+        private func offsetRange(zoom: CGFloat) -> ClosedRange<CGFloat> {
+            let base = PinchZoomMath.offsetRange(zoom: zoom, viewport: container?.bounds.height ?? 0)
+            return base.lowerBound...(base.upperBound + model.bottomInset)
+        }
+
+        /// The free offset whose rubber band is drawn at `shown`.
+        private func unbanded(_ shown: CGFloat, zoom: CGFloat) -> CGFloat {
+            PinchZoomMath.unbandedOffset(shown, range: offsetRange(zoom: zoom), limit: PinchZoomMath.overscrollLimit(viewport: container?.bounds.height ?? 0))
         }
 
         private func fingersUp() {
@@ -481,8 +558,12 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             self.link = link
         }
 
+        /// A pinch or its easing back is drawing the scroll.
+        private var ownsScroll: Bool { pinchStart != nil || animation != nil }
+
         private func stopAnimation() {
             link?.invalidate(); link = nil; animation = nil
+            if pinchStart == nil { pinchOffset = nil }
             if model.settlingZoom != nil { model.settlingZoom = nil }
         }
 
@@ -492,7 +573,7 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             let eased = 1 - pow(1 - t, 3)
             let zoom = animation.start.0 + (animation.end.0 - animation.start.0) * CGFloat(eased)
             let offset = animation.start.1 + (animation.end.1 - animation.start.1) * CGFloat(eased)
-            applyContent(zoom: zoom, offset: offset)
+            applyContent(zoom: zoom, offset: offset, clamps: false)                // from past an end to inside it: every step between is drawn
             if t >= 1 { stopAnimation() }
         }
 
@@ -548,8 +629,11 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            // The scroll view's own pan is switched off while a pinch or a day move runs; nothing else runs together.
-            return gestureRecognizer === counter || other === counter
+            if gestureRecognizer === counter || other === counter { return true }
+            // A second finger on a one-finger scroll or day swipe makes it a pinch: the pinch may begin while they run, and switches them off when it does
+            // (`hold(by: .pinch)`). Nothing else runs together.
+            let oneFinger: [UIGestureRecognizer] = [scroll.panGestureRecognizer, datePan]
+            return (gestureRecognizer === pinch && oneFinger.contains { $0 === other }) || (other === pinch && oneFinger.contains { $0 === gestureRecognizer })
         }
     }
 }
