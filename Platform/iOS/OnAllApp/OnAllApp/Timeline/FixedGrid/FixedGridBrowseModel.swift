@@ -353,10 +353,22 @@ final class FixedGridBrowseModel {
     /// The shared time partition at a position: the blend of the two planned windows around it (`ContinuousDayAxis`).
     /// Only the windows it used keep what they showed: a window the days have left is not on screen, so a later plan for it has nothing to ease from.
     /// During an edit session it is the frozen partition, whatever the data does; at a session's end it eases from that to this.
-    func shared(position: Double, bounds: ClosedRange<Int>, inputs: Inputs) -> TemporalGridPartition {
+    ///
+    /// `flight` is a move over several days (the week strip, the header, "오늘"): the time is the blend of the start's and the end's partitions only, by how far the
+    /// position has gone, so the days in between never show their own.
+    func shared(position: Double, bounds: ClosedRange<Int>, inputs: Inputs, flight: (from: Int, to: Int)? = nil) -> TemporalGridPartition {
         if let frozen { return frozenPartition(frozen, inputs: inputs) }
         var used: Set<Int> = []
-        var result = ContinuousDayAxis.partition(at: position, bounds: bounds) { used.insert($0); return partition(window: $0, inputs: inputs) }
+        var result: TemporalGridPartition
+        if let flight, flight.from != flight.to {
+            used = [flight.from, flight.to]
+            let progress = min(max((position - Double(flight.from)) / Double(flight.to - flight.from), 0), 1)
+            let start = partition(window: flight.from, inputs: inputs)
+            let end = partition(window: flight.to, inputs: inputs)
+            result = progress <= 0 ? start : progress >= 1 ? end : TemporalGridPartition.interpolated(from: start, to: end, progress: progress) ?? end
+        } else {
+            result = ContinuousDayAxis.partition(at: position, bounds: bounds) { used.insert($0); return partition(window: $0, inputs: inputs) }
+        }
         if shown.count > used.count { shown = shown.filter { used.contains($0.key) } }
         if let thaw {
             let t = (clock() - thaw.began) / Self.transitionDuration

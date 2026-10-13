@@ -42,6 +42,11 @@ struct WeekStripView: View {
     /// While a finger is dragging the strip, the strip follows it directly (no animation); on release it eases to the page it settles on.
     @State private var dragging = false
     @State private var stripWidth: CGFloat = 0
+    /// A swipe on the strip itself is changing the week: the capsule does not follow the days, it fades out and comes back on the new day.
+    @State private var swipedWeek = false
+    /// A day tapped while (or just after) the strip is dragged is the drag's touch, not a pick.
+    @State private var tapsBlockedUntil = Date.distantPast
+    @State private var capsuleOpacity = 1.0
 
     private struct Ghost: Identifiable { let id = UUID(); let day: Int; let isToday: Bool }
 
@@ -92,6 +97,7 @@ struct WeekStripView: View {
                     .onChanged { value in
                         guard abs(value.translation.width) > abs(value.translation.height) else { return }
                         dragging = true
+                        tapsBlockedUntil = Date().addingTimeInterval(0.4)
                         // The strip is held and dragged: the neighbouring weeks come into view with the finger.
                         let cell = max(1, stripWidth / 7)
                         viewOffset = Double(pageStart) - Double(max(-stripWidth, min(stripWidth, value.translation.width)) / cell)
@@ -99,11 +105,17 @@ struct WeekStripView: View {
                     .onEnded { value in
                         guard dragging else { return }
                         dragging = false
+                        tapsBlockedUntil = Date().addingTimeInterval(0.3)
                         let width = max(1, stripWidth)
                         let flick = abs(value.velocity.width) > 500 && (value.velocity.width < 0) == (value.translation.width < 0)
                         let far = abs(value.translation.width) > width * 0.3
                         if far || flick, abs(value.translation.width) > 8 {
                             // The page changes with the day the strip's selection moves to (see `move`).
+                            swipedWeek = true
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(600))
+                                swipedWeek = false
+                            }
                             onPage(value.translation.width < 0 ? 1 : -1)
                         } else {
                             viewOffset = Double(pageStart)
@@ -151,10 +163,28 @@ struct WeekStripView: View {
         }
         ballID = UUID()
         ball = target
+        if swipedWeek {
+            swipedWeek = false
+            fadeCapsule(to: target)
+            return
+        }
         leading = Double(target)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(45))
             trailing = Double(target)
+        }
+    }
+
+    /// The capsule goes out where it was, is put on the new day while it cannot be seen, and comes back once the week has paged.
+    private func fadeCapsule(to target: Int) {
+        withAnimation(.easeOut(duration: 0.12)) { capsuleOpacity = 0 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(130))
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { leading = Double(position); trailing = Double(position) }
+            try? await Task.sleep(for: .milliseconds(200))
+            withAnimation(.easeIn(duration: 0.2)) { capsuleOpacity = 1 }
         }
     }
 
@@ -169,6 +199,7 @@ struct WeekStripView: View {
                         let start = (CGFloat(lead) - CGFloat(offset) + 0.5) * cell
                         let end = (CGFloat(trail) - CGFloat(offset) + 2) * cell - 4
                         Capsule().fill(Color(.systemFill))
+                            .opacity(capsuleOpacity)
                             .frame(width: max(Self.ball, end - start), height: Self.ball)
                             .offset(x: start, y: (Self.numberRow - Self.ball) / 2)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -204,7 +235,7 @@ struct WeekStripView: View {
         let role = role(of: day)
         return VStack(spacing: 0) {
             ZStack {
-                Button { onSelect(day) } label: {
+                Button { if Date() >= tapsBlockedUntil { onSelect(day) } } label: {
                     Text("\(day.day)")
                         .font(.callout.monospacedDigit().weight(role == .none ? .regular : .bold))
                         .foregroundStyle(numberColor(role, day))

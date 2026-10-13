@@ -66,7 +66,9 @@ struct DayTimelineScreen: View {
 
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
-        guard delta != 0, !isChangingDay else { return }
+        guard delta != 0 else { return }
+        // The fixed grid answers every pick, whatever is still loading from the one before (it runs the days on from where they are).
+        if BrowseAxisMode.current != .fixedGrid, isChangingDay { return }
         isChangingDay = true
         defer { isChangingDay = false }
         if BrowseAxisMode.current == .fixedGrid {

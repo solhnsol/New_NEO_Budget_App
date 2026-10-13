@@ -35,6 +35,10 @@ struct FixedGridBrowseView: View {
     @State private var dragStart: Double?
     @State private var ticking = false
     @State private var caughtTarget: Int?
+    /// The days are running to a day something else picked (the week strip, the header, "오늘"): where from and to. The time is blended between these two only.
+    @State private var flight: (from: Int, to: Int)?
+    /// The selected day this screen moved itself to (a touch taking over a move, a move coming to rest), so the change is not taken for one from outside.
+    @State private var ownEpoch: Int?
     @State private var lastNeeded: ClosedRange<Int>?
     @State private var choice: TouchChoice?
     /// The edit session (`FixedGridEditInteraction`; a long press on an editable event opens one). The screen sends it the grid's touches and the selected
@@ -186,8 +190,10 @@ struct FixedGridBrowseView: View {
         .onChange(of: BubbleKey(editor: editor)) { _, _ in followBubble() }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { keyboardChanged($0) }
-        .onChange(of: keyboardOverlap) { _, _ in keepCardAboveKeyboard() }
-        .onChange(of: editBarHeight) { _, _ in keepCardAboveKeyboard() }
+        .onChange(of: editBarHeight) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.id) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.target) { _, _ in keepChosenCardVisible() }
+        .onChange(of: editor?.isRenaming) { _, _ in keepChosenCardVisible() }
         // The grid keeps its size under the keyboard: its partition is planned for the room it has, and a rename must not re-plan the day.
         .ignoresSafeArea(.keyboard)
     }
@@ -251,7 +257,7 @@ struct FixedGridBrowseView: View {
     private func frame(zoom: CGFloat, viewport: CGFloat, width: CGFloat) -> Frame {
         let inputs = inputs(viewport: viewport, width: width)
         let bounds = move.bounds
-        let shown = planner.shared(position: position, bounds: bounds, inputs: inputs).zoomed(viewportHeight: viewport, zoomScale: zoom)
+        let shown = planner.shared(position: position, bounds: bounds, inputs: inputs, flight: flight).zoomed(viewportHeight: viewport, zoomScale: zoom)
         let days = geometry(width: width).renderedDays(at: position)
         let columns = ProbeExperiment.legacyColumns
             ? FixedGridColumns.legacyColumns(days: days, position: position, bounds: bounds)
@@ -328,16 +334,25 @@ struct FixedGridBrowseView: View {
         .animation(.easeOut(duration: 0.18), value: editor?.isRenaming)
     }
 
-    /// While a title is renamed, the chosen card is scrolled (when the zoom leaves room to) so its title shows above the keyboard and the bar on it.
-    private func keepCardAboveKeyboard() {
-        guard editor?.isRenaming == true, keyboardOverlap > 0, let card = gestureMode.target?.frame, !card.isNull else { return }
+    /// While a session is open the chosen card is kept in the part of the grid the edit bar (and the keyboard under it) leaves: the whole card with its
+    /// handles when it fits, else its top; while renaming, its title. The scroll may go past the end of the day by the bar's height (`bottomInset`), so a
+    /// card at the end of the day can come above the bar even at 1×.
+    private func keepChosenCardVisible() {
+        pinch.bottomInset = edit.session != nil ? editBarHeight : 0                   // kept through a save, so the card does not move while it is answered
+        guard edit.session != nil, edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
         let viewport = pinch.viewportHeight, offset = pinch.currentOffset?() ?? 0
-        let visibleBottom = viewport - keyboardOverlap - editBarHeight - 8
-        let top = card.minY - offset
-        guard top < 8 || top + min(card.height, 44) > visibleBottom else { return }
-        let shown = min(card.height, visibleBottom * 0.6)
-        _ = pinch.setOffset?(PinchZoomMath.clampedOffset(card.minY - max(8, (visibleBottom - shown) / 2), zoom: pinch.zoom, viewport: viewport))
-        followBubble()
+        let top: CGFloat = 8, bottom = viewport - editBarHeight - 8
+        guard viewport > 1, bottom - top > 44 else { return }
+        let margin = EditHit.handleRadius
+        let shown = editor?.isRenaming == true ? min(card.height, 44) : card.height
+        let span = (card.minY - margin - offset)...(card.minY + shown + margin - offset)
+        guard span.lowerBound < top || span.upperBound > bottom else { return }
+        var target = offset
+        if span.upperBound - span.lowerBound > bottom - top || span.lowerBound < top { target += span.lowerBound - top }
+        else { target += span.upperBound - bottom }
+        let range = pinch.offsetRange(zoom: pinch.zoom)
+        target = min(max(target, range.lowerBound), range.upperBound)
+        if abs(target - offset) > 0.5 { pinch.scrollTo?(target) }
     }
 
     /// How much of the grid the keyboard covers (the grid itself keeps its size: its partition is planned for the room it has).
@@ -828,12 +843,14 @@ struct FixedGridBrowseView: View {
         case .touchDown:
             guard move.phase == .settling else { return }
             caughtTarget = move.target
+            flight = nil
             move.beginDrag()
             takeOverSelection()
             applyMove()
         case .began:
             BrowseProbe.mark(.dragBegan)
             caughtTarget = nil
+            flight = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
             dragStart = move.position
@@ -872,8 +889,13 @@ struct FixedGridBrowseView: View {
     private func takeOverSelection() {
         let delta = FixedGridMove.takeOver(position: move.position, selected: selectedEpoch)
         guard delta != 0 else { return }
-        onMoveDays(delta)
+        moveSelectedDay(by: delta)
         rebase(keeping: move.position)
+    }
+
+    private func moveSelectedDay(by delta: Int) {
+        ownEpoch = selectedEpoch + delta
+        onMoveDays(delta)
     }
 
     /// The model around the selected day, with the days either side the cache keeps; at `position` (dragging) or at rest on the day.
@@ -891,7 +913,8 @@ struct FixedGridBrowseView: View {
         let probe = BrowseProbe.begin(.applyMove)
         defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
-        let pending = FixedGridMove.pending(position: move.position, selected: selectedEpoch)
+        // A move to a day something else picked: the week strip is on that day already.
+        let pending = flight != nil ? 0 : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
         if room.pending != pending || pendingDays != pending && !ProbeExperiment.stripOff {
             BrowseProbe.mark(.boundary)
             room.pending = pending
@@ -914,7 +937,7 @@ struct FixedGridBrowseView: View {
         if let anchor = room.unfreezeAnchor {
             // A session's end after a save: the edited edge stays at its height through the easing; the person scrolling or the days moving let it go.
             if !userMoved, move.phase == .resting {
-                let shown = planner.shared(position: move.position, bounds: bounds, inputs: inputs)
+                let shown = planner.shared(position: move.position, bounds: bounds, inputs: inputs, flight: flight)
                 if pinch.setOffset?(anchor.offset(on: shown, zoom: pinch.zoom, viewport: viewport).offset) == true {
                     guard !planner.isEasing else { return }
                     room.anchorDrift = anchor.drift(on: shown, zoom: pinch.zoom, viewport: viewport, offset: pinch.currentOffset?() ?? 0)
@@ -926,7 +949,7 @@ struct FixedGridBrowseView: View {
         }
         let result = anchorState.offset(
             forPosition: move.position, currentOffset: pinch.currentOffset?() ?? 0, userMoved: userMoved, zoom: pinch.zoom, viewport: viewport, focal: viewport / 2,
-            partitionAt: { planner.shared(position: $0, bounds: bounds, inputs: inputs) }
+            partitionAt: { planner.shared(position: $0, bounds: bounds, inputs: inputs, flight: flight) }
         )
         // Not applied while the person has the scroll in hand: the anchor is taken again from where they leave it.
         if pinch.setOffset?(result.offset) == false { anchorState.release(at: move.position) }
@@ -987,7 +1010,8 @@ struct FixedGridBrowseView: View {
         BrowseProbe.mark(.rested)
         writeProbeSoon()
         let day = Int(move.position.rounded())
-        if day != selectedEpoch { onMoveDays(day - selectedEpoch) }
+        if day != selectedEpoch { moveSelectedDay(by: day - selectedEpoch) }
+        flight = nil
         rebase(keeping: nil)
         position = move.position
         if pendingDays != 0 { pendingDays = 0 }
@@ -997,20 +1021,37 @@ struct FixedGridBrowseView: View {
         selectionChangedOutside()
     }
 
-    /// The selected day was changed by something else (the week strip, the header's arrows, "오늘"): the days run to it, or jump when it is far.
+    /// The selected day was changed by something else (the week strip, the header's arrows, "오늘"): the days run to it from wherever they are now (resting, in a
+    /// flight, or under a finger), or jump when it is far. A change this screen made itself (`ownEpoch`) is not one.
     private func selectionChangedOutside() {
-        guard move.phase == .resting, Double(selectedEpoch) != move.position else { return }
+        if let own = ownEpoch {
+            ownEpoch = nil
+            if own == selectedEpoch { return }
+        }
+        guard move.phase != .resting || Double(selectedEpoch) != move.position else { return }
         if edit.state.editing != nil { edit.send(.selectedDayChanged(model.selectedDay)) }   // a session is on the days it began on: the grid lets go first
-        let distance = selectedEpoch - Int(move.position.rounded())
-        let from = Int(move.position.rounded())
-        guard abs(distance) <= 3 else { rebase(keeping: nil); position = move.position; anchorState.release(at: move.position); return }
+        caughtTarget = nil
+        dragStart = nil
+        let here = move.position
+        let distance = Double(selectedEpoch) - here
+        guard abs(distance) <= 3 else {
+            flight = nil
+            if pendingDays != 0 { pendingDays = 0 }
+            room.pending = 0
+            rebase(keeping: nil); position = move.position; anchorState.release(at: move.position)
+            return
+        }
+        let from = distance > 0 ? Int(here.rounded(.down)) : Int(here.rounded(.up))
         let low = min(from, selectedEpoch) - 1, high = max(from, selectedEpoch) + 2
-        var next = DayMoveModel(day: from, bounds: low...high, maximumHop: abs(distance))
+        var next = DayMoveModel(day: from, bounds: low...high, maximumHop: max(1, abs(selectedEpoch - from)))
+        if here != Double(from) { next.beginDrag(); next.drag(to: here) }
         next.retarget(to: selectedEpoch)
+        flight = (from, selectedEpoch)
+        if pendingDays != 0 { pendingDays = 0 }
+        room.pending = 0
         move = next
-        startTicker()
+        if next.phase == .resting { commit() } else { startTicker() }
     }
-
 
     // MARK: DEBUG scripts
 
@@ -1486,6 +1527,7 @@ private struct FixedHourAxis: View {
     let width: CGFloat
     let gutter: CGFloat
     let scale: CGFloat
+    private var rail: CGFloat { gutter - 8 }
 
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
@@ -1495,12 +1537,22 @@ private struct FixedHourAxis: View {
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
                     .offset(x: gutter, y: partition.top(ofSlot: slot))
             }
+            // The time axis: one thin solid line at the gutter's edge, a tick at the real y of every whole hour that has room (the same as the debug grid's).
+            Path { path in path.move(to: CGPoint(x: rail, y: 0)); path.addLine(to: CGPoint(x: rail, y: partition.totalHeight)) }
+                .stroke(Color.secondary.opacity(0.5), lineWidth: 0.8)
             ForEach(states, id: \.hour) { state in
+                if state.tickOpacity > 0.003 {
+                    Path { path in
+                        path.move(to: CGPoint(x: rail, y: state.y))
+                        path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity), y: state.y))
+                    }
+                    .stroke(Color.secondary.opacity(0.7 * state.tickOpacity), lineWidth: 0.8)
+                }
                 if state.labelOpacity > 0.003 {
                     Text(Formatting.hourLabel(state.hour % 24))
                         .font(.system(size: metrics.labelFontSize).monospacedDigit()).foregroundStyle(.secondary)
                         .lineLimit(1).minimumScaleFactor(0.5)
-                        .frame(width: gutter - 6, height: metrics.labelHeight, alignment: .trailing)
+                        .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
                         .opacity(state.labelOpacity)
                         .offset(y: state.labelCentre - metrics.labelHeight / 2)
                 }
