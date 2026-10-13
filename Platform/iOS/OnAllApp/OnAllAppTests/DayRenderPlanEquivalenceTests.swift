@@ -147,10 +147,10 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
 @Test func theDayLayoutProducesThePlansItAlwaysDid() throws {
     // busy, overlapping: retaken when touches began to follow what a line draws (`LineItem.touches`): its unwritten text no longer takes the card under it, and
     // its dot takes a touch where no card is drawn. Only hit results changed; every frame, row and reveal is the same.
-    // Retaken again when `EventPresentation` gained `rowReveals` (each transaction row fades in at the height it first appears at): the digest writes the whole
+    // Retaken again when `EventPresentation` gained `rowReveals` and `moreReveal` (each transaction row fades in at the height it first appears at; the "그 외 N건" row fades out and in around a slot change): the digest writes the whole
     // presentation, so every digest with an event moved, and nothing else did (the default three rows, every frame, hit and reveal are the same).
     let expected: [String: String] = [
-        "busy": "b8a02382fd42a344", "dense": "cf840194e69eee64", "overlapping": "b192ac3f48f7255d", "longAndShort": "8122f9d209d89b12", "empty": "6913f3cb5b16accc",
+        "busy": "108715aefb52dae8", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
     ]
     for day in try days() {
         let list = combinations(of: day)

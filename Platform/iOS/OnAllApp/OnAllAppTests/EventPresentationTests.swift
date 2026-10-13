@@ -160,6 +160,27 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     }
 }
 
+@Test func theMoreRowNeverMovesWhileItIsSeenItFadesOutBeforeTheRowThatPushesItAndInAfter() {
+    func p(_ h: CGFloat, _ n: Int = 9) -> EventPresentation { EventPresentation.make(height: h, insideCount: n, metrics: standard, maximumRows: 12) }
+    var previous = p(0)
+    var h: CGFloat = 0.1
+    var moved = 0
+    while h <= 400 {
+        let now = p(h, 9)
+        if now.shownRows > 0, now.hiddenRows > 0, previous.shownRows > 0, previous.hiddenRows > 0 {
+            #expect(abs(now.moreReveal - previous.moreReveal) < 0.05)                      // no pop while it stays
+            if now.shownRows != previous.shownRows {                                       // the slot changes only while it is not there
+                moved += 1
+                #expect(previous.moreReveal < 0.05 && now.moreReveal < 0.05)
+            }
+        }
+        previous = now
+        h += 0.1
+    }
+    #expect(moved >= 3)
+    #expect(p(400, 2).hiddenRows == 0)                                                     // nothing left to fold: no row to fade
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {

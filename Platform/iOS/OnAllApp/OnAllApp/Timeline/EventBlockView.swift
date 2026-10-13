@@ -188,7 +188,7 @@ struct EventBlockView: View {
             if presentation.showsSummaryRow, let total {
                 MoreRow(label: "거래 \(rows.count)건", total: total, color: .primary, scale: scale)
             } else if hiddenRows > 0 && shownRows > 0 {
-                MoreRow(label: "그 외 \(hiddenRows)건", total: nil, color: .secondary, scale: scale)
+                MoreRow(label: "그 외 \(hiddenRows)건", total: nil, color: .secondary, scale: scale).opacity(presentation.moreReveal)
             }
             Spacer(minLength: 0)
         }
