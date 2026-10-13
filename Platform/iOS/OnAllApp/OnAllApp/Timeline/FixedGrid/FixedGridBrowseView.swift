@@ -46,6 +46,9 @@ struct FixedGridBrowseView: View {
     @StateObject private var bubbleTracker = PrecisionAnchorTracker()
     /// The edit bar's height as drawn (the bubble keeps above it).
     @State private var editBarHeight: CGFloat = 0
+    /// How far the keyboard reaches up over the grid (the edit bar rides on it), and where the grid is on screen.
+    @State private var keyboardOverlap: CGFloat = 0
+    @State private var gridFrame: CGRect = .zero
     @State private var noticeEmphasis = false
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -181,6 +184,12 @@ struct FixedGridBrowseView: View {
             if let editor, let day = editor.target?.day { editor.dataChanged(generation: model.dataGeneration, timelines: [model.cachedTimeline(for: day)].compactMap { $0 }) }
         }
         .onChange(of: BubbleKey(editor: editor)) { _, _ in followBubble() }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { keyboardChanged($0) }
+        .onChange(of: keyboardOverlap) { _, _ in keepCardAboveKeyboard() }
+        .onChange(of: editBarHeight) { _, _ in keepCardAboveKeyboard() }
+        // The grid keeps its size under the keyboard: its partition is planned for the room it has, and a rename must not re-plan the day.
+        .ignoresSafeArea(.keyboard)
     }
 
     /// What moves the precision bubble's handle: the session, the chosen edge, the edited range.
@@ -264,6 +273,7 @@ struct FixedGridBrowseView: View {
             gridContent(width: width, zoom: zoom, viewport: viewport, window: window)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { gridFrame = $0 }
         .overlay(alignment: .topLeading) { loadingMarks(width: width) }
         // Over the scroll view, not in its content: the content's recognizers would take the bubble's touches.
         .overlay {
@@ -303,16 +313,38 @@ struct FixedGridBrowseView: View {
             }
             if let editor, edit.session != nil {
                 EditSessionBar(
-                    editor: editor, zone: zone, isCommitting: edit.session?.committing == true,
+                    editor: editor, zone: zone, calendars: model.calendars, isCommitting: edit.session?.committing == true,
+                    rename: { edit.send(.tapTitle) }, endRename: { edit.send(.endRename) },
                     cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
                 )
             }
         }
         .padding(.horizontal, 12)
-        .padding(.bottom, 8)
+        .padding(.bottom, 8 + keyboardOverlap)
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { editBarHeight = $0 }
         .animation(.easeOut(duration: 0.18), value: edit.session != nil)
         .animation(.easeOut(duration: 0.18), value: editor?.message)
+        .animation(.easeOut(duration: 0.25), value: keyboardOverlap)
+        .animation(.easeOut(duration: 0.18), value: editor?.isRenaming)
+    }
+
+    /// While a title is renamed, the chosen card is scrolled (when the zoom leaves room to) so its title shows above the keyboard and the bar on it.
+    private func keepCardAboveKeyboard() {
+        guard editor?.isRenaming == true, keyboardOverlap > 0, let card = gestureMode.target?.frame, !card.isNull else { return }
+        let viewport = pinch.viewportHeight, offset = pinch.currentOffset?() ?? 0
+        let visibleBottom = viewport - keyboardOverlap - editBarHeight - 8
+        let top = card.minY - offset
+        guard top < 8 || top + min(card.height, 44) > visibleBottom else { return }
+        let shown = min(card.height, visibleBottom * 0.6)
+        _ = pinch.setOffset?(PinchZoomMath.clampedOffset(card.minY - max(8, (visibleBottom - shown) / 2), zoom: pinch.zoom, viewport: viewport))
+        followBubble()
+    }
+
+    /// How much of the grid the keyboard covers (the grid itself keeps its size: its partition is planned for the room it has).
+    private func keyboardChanged(_ note: Notification) {
+        let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+        let hiding = note.name == UIResponder.keyboardWillHideNotification
+        keyboardOverlap = hiding ? 0 : max(0, gridFrame.maxY - frame.minY)
     }
 
     /// A day on screen that is not kept yet says whether it is being read or could not be read (a kept day with nothing on it is drawn as the empty day it is).
@@ -529,7 +561,7 @@ struct FixedGridBrowseView: View {
 
     /// The event being edited once its time differs from the calendar's (its card is drawn faint; the draft card is drawn where it is going).
     private var editedOriginal: FixedGridEditInteraction.Target? {
-        guard let editor, editor.draft?.isChanged == true else { return nil }
+        guard let editor, editor.isChanged else { return nil }
         return editor.target
     }
 
@@ -547,9 +579,10 @@ struct FixedGridBrowseView: View {
     }
 
     private func handleTap(at point: CGPoint, start: FixedGridGestures.Start) {
-        switch FixedGridGestures.tap(start: start, mode: gestureMode, daysAtRest: move.phase == .resting) {
+        switch FixedGridGestures.tap(start: start, mode: gestureMode, daysAtRest: move.phase == .resting, point: point) {
         case .none: break
         case .select: select(at: point)
+        case .title: edit.send(.tapTitle)
         case let .handle(hit):
             room.handleTaps += 1
             if let handle = FixedGridEditInteraction.Handle(hit) { edit.send(.handleTap(handle)) }      // its time bubble (the editing parts show it)
@@ -565,16 +598,11 @@ struct FixedGridBrowseView: View {
         guard phase == .began else { return }
         switch FixedGridGestures.longPress(start: start, mode: gestureMode) {
         case .none: break
-        case let .notice(future):
-            // A long press on an event edits its time (when it can be); anything else draws attention to what the grid does not do yet.
-            if move.phase == .resting, case let .edit(id)? = future, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) {
-                if let refusal = FixedGridEditor.refusal(for: block, zone: zone) {
-                    editor?.tell(FixedGridEditor.text(for: refusal))
-                } else if let target = editTarget(id, in: found) {
-                    edit.send(.enter(target))
-                    return
-                }
-            }
+        case let .details(id):
+            // An event's details (until a long press zooms onto the event and shows them there).
+            if move.phase == .resting, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) { onSelect(.event(block)) }
+        case .notice:
+            // Anything else draws attention to what the grid does not do yet.
             emphasiseNotice()
         case .createDraft: room.createPresses += 1                                 // future: a draft dragged out from here
         }
@@ -694,7 +722,7 @@ struct FixedGridBrowseView: View {
             let chosen = editor?.edge
             ZStack(alignment: .topLeading) {
                 if let editor, let draft = editor.draft, let block = editor.target.flatMap({ t in model.cachedTimeline(for: t.day)?.blocks.first { $0.eventKey == t.eventKey } }) {
-                    DraftCard(block: block, draft: draft, zone: zone, frame: target.frame, isChanged: draft.isChanged)
+                    DraftCard(block: block, title: editor.shownTitle, draft: draft, zone: zone, frame: target.frame, isChanged: editor.isChanged)
                 }
                 if edit.session?.committing != true {                                   // no handles while the save is answered
                     if target.canResizeStart { handleDot(EditHit.startHandle(of: target.frame), chosen: chosen == .start) }
@@ -746,6 +774,7 @@ struct FixedGridBrowseView: View {
         case .began: "began"
         case .handle: "handle"
         case .dragHandle: "drag"
+        case let .rename(_, on): on ? "rename" : "rename(끝)"
         case .commit: "commit"
         case .discard: "discard"
         case .askExit: "ask"
@@ -770,7 +799,14 @@ struct FixedGridBrowseView: View {
         }
     }
 
+    /// An event tapped opens a session on it (its handles, its time wheel, its title to rename) when it can be edited here; one that cannot opens its details.
+    /// Anything else opens its details.
     private func perform(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
+        if case let .event(id) = candidate, let block = timeline.blocks.first(where: { $0.id == id }), block.isEditable,
+           FixedGridEditor.refusal(for: block, zone: zone) == nil {
+            edit.send(.enter(FixedGridEditInteraction.Target(day: timeline.day, block: block)))
+            return
+        }
         if let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) { onSelect(selection) }
     }
 
@@ -1219,22 +1255,63 @@ private struct EditProbeLine: View {
     }
 }
 
-/// The edit session's bar: the event, its time as the draft has it (with how it moved), what is known about it elsewhere, and cancel / done.
+/// The edit session's bar: the event, its time as the draft has it (with how it moved), what is known about it elsewhere, and cancel / done. While the
+/// title is renamed it rides on the keyboard: the calendars to choose from above the title being typed (the keyboard's return key is done).
 private struct EditSessionBar: View {
-    let editor: FixedGridEditor
+    @Bindable var editor: FixedGridEditor
     let zone: DisplayTimeZone
+    let calendars: [CalendarDescriptor]
     let isCommitting: Bool
+    let rename: () -> Void
+    let endRename: () -> Void
     let cancel: () -> Void
     let confirm: () -> Void
 
+    @FocusState private var typing: Bool
+
     var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.subheadline.weight(.semibold)).lineLimit(1)
-                Text(detail).font(.caption.monospacedDigit()).foregroundStyle(editor.conflictNote == nil ? Color.secondary : Color.orange).lineLimit(2)
+        VStack(alignment: .leading, spacing: 8) {
+            if editor.isRenaming {
+                CalendarChips(calendars: calendars, current: editor.draft?.calendarID)
+                HStack(spacing: 10) {
+                    TextField("일정 이름", text: $editor.title)
+                        .font(.body.weight(.semibold))
+                        .textFieldStyle(.roundedBorder)
+                        .submitLabel(.done)
+                        .focused($typing)
+                        .onSubmit(confirm)
+                        .accessibilityIdentifier("editTitle")
+                    buttons
+                }
+            } else {
+                HStack(spacing: 10) {
+                    Button(action: rename) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(editor.shownTitle).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).lineLimit(1)
+                            Text(detail).font(.caption.monospacedDigit()).foregroundStyle(editor.conflictNote == nil ? Color.secondary : Color.orange).lineLimit(2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isCommitting)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityHint("이름 바꾸기")
+                    buttons
+                }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .combine)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
+        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .onChange(of: editor.isRenaming, initial: true) { _, renaming in typing = renaming }
+        // The keyboard went away by itself (swiped down, another field): the renaming ends, the title kept.
+        .onChange(of: typing) { _, now in if !now && editor.isRenaming { endRename() } }
+    }
+
+    private var buttons: some View {
+        HStack(spacing: 10) {
             Button("취소", action: cancel)
                 .buttonStyle(.bordered)
                 .disabled(isCommitting)
@@ -1246,26 +1323,52 @@ private struct EditSessionBar: View {
             .disabled(isCommitting)
             .accessibilityIdentifier("editConfirm")
         }
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
-        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
     }
-
-    private var title: String { editor.draft?.original.title ?? "일정" }
 
     private var detail: String {
         if let note = editor.conflictNote { return note }
         guard let draft = editor.draft else { return "" }
         let range = DraftCard.timeText(draft, zone: zone)
-        guard draft.isChanged else { return range + " · 핸들을 끌거나 눌러 바꿉니다" }
-        let c = draft.comparison
         var moved: [String] = []
-        if c.startChanged { moved.append("시작 " + EditSessionBarText.minutes(c.startDeltaMilliseconds)) }
-        if c.endChanged { moved.append("끝 " + EditSessionBarText.minutes(c.endDeltaMilliseconds)) }
+        if draft.isChanged {
+            let c = draft.comparison
+            if c.startChanged { moved.append("시작 " + EditSessionBarText.minutes(c.startDeltaMilliseconds)) }
+            if c.endChanged { moved.append("끝 " + EditSessionBarText.minutes(c.endDeltaMilliseconds)) }
+        }
+        if editor.newTitle != nil { moved.append("이름 바뀜") }
+        guard !moved.isEmpty else { return range + " · 핸들로 시간을, 제목을 눌러 이름을 바꿉니다" }
         return range + " · " + moved.joined(separator: " · ")
     }
+}
 
+/// The calendars an event can be in, in a row over the keyboard; the event's own is filled. Moving an event to another calendar is not saved yet (its
+/// Activity is keyed by the calendar), so the others are shown and dimmed.
+private struct CalendarChips: View {
+    let calendars: [CalendarDescriptor]
+    let current: CalendarID?
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(calendars.filter { $0.isWritable || $0.id == current }, id: \.id) { calendar in
+                    let chosen = calendar.id == current
+                    let color = Color(hex: calendar.colorHex) ?? .accentColor
+                    HStack(spacing: 5) {
+                        Circle().fill(color).frame(width: 8, height: 8)
+                        Text(calendar.title).font(.footnote.weight(chosen ? .semibold : .regular)).lineLimit(1)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(chosen ? color.opacity(0.22) : Color.secondary.opacity(0.1), in: Capsule())
+                    .overlay(Capsule().stroke(chosen ? color : .clear, lineWidth: 1))
+                    .opacity(chosen ? 1 : 0.45)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+                    .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않습니다")
+                }
+            }
+        }
+        .accessibilityLabel("캘린더")
+    }
 }
 
 /// What the editor says after something the person did not see happen (a refusal, a failure, an adjusted time).
@@ -1287,6 +1390,8 @@ private struct EditMessageView: View {
 /// its new time once it differs (the calendar's card is then drawn faint).
 private struct DraftCard: View {
     let block: EventBlock
+    /// The title as typed (a rename shows on the card while it is typed).
+    let title: String
     let draft: EditDraft
     let zone: DisplayTimeZone
     let frame: CGRect
@@ -1301,7 +1406,7 @@ private struct DraftCard: View {
                 shape.fill(color.opacity(0.85))
                 if frame.height >= 18 {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(block.title).font(.caption.weight(.semibold)).lineLimit(frame.height >= 44 ? 2 : 1)
+                        Text(title).font(.caption.weight(.semibold)).lineLimit(frame.height >= 44 ? 2 : 1)
                         if frame.height >= 34 { Text(Self.timeText(draft, zone: zone)).font(.caption2.monospacedDigit()).lineLimit(1) }
                     }
                     .foregroundStyle(.white)

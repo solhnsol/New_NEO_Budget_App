@@ -68,7 +68,7 @@ private let editing = G.Mode.editing(target)
     #expect(G.tap(start: .content(event), mode: editing, daysAtRest: true) == .chooseOther(event))
     #expect(G.tap(start: .empty, mode: editing, daysAtRest: true) == .endEditing)
     #expect(G.longPress(start: .empty, mode: .browse) == .notice(future: .createDraft))
-    #expect(G.longPress(start: .content(event), mode: .browse) == .notice(future: .edit(BlockID(rawValue: "x"))))
+    #expect(G.longPress(start: .content(event), mode: .browse) == .details(BlockID(rawValue: "x")))
     #expect(G.longPress(start: .content(.line("t")), mode: .browse) == .notice(future: nil))
     #expect(G.longPress(start: .empty, mode: editing) == .createDraft)
     #expect(G.longPress(start: .content(event), mode: editing) == .none)
@@ -245,4 +245,18 @@ private func largestStep(_ a: TemporalGridPartition, _ b: TemporalGridPartition)
     #expect(model.shared(position: Double(selected), bounds: bounds, inputs: inputs()) == drawn)
     let changes = baseline.changes(dataGeneration: app.dataGeneration, dataRevision: app.dataRevision) { app.cachedTimeline(for: $0) }
     #expect(changes.reloaded && !changes.isClean)
+}
+
+@Test func theSecondTapOnTheChosenEventsTitleRenamesIt() {
+    // The chosen card is at (100, 200) 150 × 120: its title band is its top 30 points.
+    let title = CGPoint(x: 140, y: 212)
+    #expect(G.tap(start: .content(.event(target.blockID)), mode: editing, daysAtRest: true, point: title) == .title)
+    // The draft moved the card away from where the plan has the event: its title still renames (the plan sees empty grid there).
+    #expect(G.tap(start: .empty, mode: editing, daysAtRest: true, point: title) == .title)
+    // Lower on the card is its body; a handle in the band is still the handle; browse has no title step.
+    #expect(G.tap(start: .content(.event(target.blockID)), mode: editing, daysAtRest: true, point: CGPoint(x: 140, y: 260)) == .chooseOther(.event(target.blockID)))
+    #expect(G.tap(start: .handle(.resizeStart), mode: editing, daysAtRest: true, point: CGPoint(x: 240, y: 202)) == .handle(.resizeStart))
+    #expect(G.tap(start: .content(.event(target.blockID)), mode: .browse, daysAtRest: true, point: title) == .select(.event(target.blockID)))
+    // A card shorter than the band is all title.
+    #expect(G.titleBand(of: CGRect(x: 0, y: 0, width: 80, height: 12)).height == 12)
 }

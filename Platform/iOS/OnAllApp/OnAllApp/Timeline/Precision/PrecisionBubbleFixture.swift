@@ -172,7 +172,10 @@ final class PrecisionBubbleFixtureState: ObservableObject {
         let (low, high) = edge == .start ? (0, endMinute - Self.step) : (startMinute + Self.step, 24 * 60)
         return PrecisionBubbleInput(
             edge: edge, instant: dayStart.addingTimeInterval(TimeInterval(minute * 60)), timeZone: zone,
-            canDecrement: minute - Self.step >= low, canIncrement: minute + Self.step <= high
+            canDecrement: minute - Self.step >= low, canIncrement: minute + Self.step <= high,
+            choices: PrecisionWheelChoices.make(
+                low: dayStart.addingTimeInterval(TimeInterval(low * 60)), high: dayStart.addingTimeInterval(TimeInterval(high * 60)), dayStart: dayStart
+            )
         )
     }
 
@@ -186,6 +189,9 @@ final class PrecisionBubbleFixtureState: ObservableObject {
             if edge == .start { startMinute -= Self.step } else { endMinute -= Self.step }
         case .increment15 where input.canIncrement:
             if edge == .start { startMinute += Self.step } else { endMinute += Self.step }
+        case let .set(instant):
+            let minute = Int(instant.timeIntervalSince(dayStart) / 60)
+            if edge == .start { startMinute = minute } else { endMinute = minute }
         default: break
         }
     }

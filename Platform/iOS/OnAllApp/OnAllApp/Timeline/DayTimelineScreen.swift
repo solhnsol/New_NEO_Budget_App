@@ -181,6 +181,8 @@ struct DayTimelineScreen: View {
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
+        // A rename on the fixed grid brings the keyboard up over the grid; the screen keeps its layout (the grid's partition is planned for its room).
+        .ignoresSafeArea(.keyboard)
         .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: zoneIdentifier))
     }
 

@@ -260,3 +260,63 @@ private final class Fixture {
     #expect(EditSessionBarText.minutes(-90 * 60_000) == "−1시간 30분")
     #expect(EditSessionBarText.minutes(120 * 60_000) == "+2시간")
 }
+
+// MARK: The wheel, the title
+
+@MainActor
+@Test func theWheelOffersTheEdgesTimesInsideTheDayAndSetsTheOneTurnedTo() async throws {
+    let f = try await Fixture()
+    f.router.send(.enter(f.target("회의")))
+    f.router.send(.handleTap(.end))
+    let end = try #require(f.editor.bubbleInput)
+    // The end: from 15 minutes after the start (10:15) to midnight, every quarter hour.
+    #expect(end.choices.first == EventSaveTime.date(at(10, 15)) && end.choices.last == EventSaveTime.date(zone.dayBounds(day).end))
+    let quarterHours: Int = (1440 - 615) / 15 + 1                                            // 10:15 … 24:00
+    #expect(end.choices.count == quarterHours)
+    f.editor.bubble(.set(EventSaveTime.date(at(12, 45))))
+    #expect(f.editor.draft?.range == range(at(10), at(12, 45)) && f.router.session?.isDirty == true)
+    // The start's wheel now ends 15 minutes before the new end.
+    f.router.send(.handleTap(.start))
+    let start = try #require(f.editor.bubbleInput)
+    #expect(start.choices.first == EventSaveTime.date(zone.dayBounds(day).start) && start.choices.last == EventSaveTime.date(at(12, 30)))
+    f.editor.bubble(.set(EventSaveTime.date(at(9, 30))))
+    #expect(f.editor.draft?.range == range(at(9, 30), at(12, 45)))
+}
+
+@MainActor
+@Test func aRenameIsSavedWithTheTimeAndABlankTitleKeepsTheOriginal() async throws {
+    let f = try await Fixture()
+    f.router.send(.enter(f.target("회의")))
+    f.router.send(.tapTitle)
+    #expect(f.editor.isRenaming && f.editor.title == "회의")
+    // Typing makes the session dirty; the card shows what is typed.
+    f.editor.title = "  주간 회의 "
+    #expect(f.router.session?.isDirty == true)
+    #expect(f.editor.newTitle == "주간 회의")
+    #expect(f.editor.shownTitle == "  주간 회의 ")
+    // A blank title is no change, and when the keyboard goes the original comes back.
+    f.editor.title = "   "
+    #expect(f.router.session?.isDirty == false && f.editor.shownTitle == "회의")
+    f.router.send(.endRename)
+    #expect(!f.editor.isRenaming && f.editor.title == "회의")
+    // Renamed and moved, done saves both in one write.
+    f.router.send(.tapTitle)
+    f.editor.title = "주간 회의"
+    f.drag(.end, toMinute: f.minute(at(11, 30)))
+    #expect(!f.editor.isRenaming)                                                          // the handle ended the renaming, the title kept
+    f.router.send(.confirm)
+    await f.settle { f.router.session == nil }
+    let stored = try #require(await f.provider.storedEvent(CalendarEventKey(calendarID: work, eventID: CalendarEventID(rawValue: "one"))))
+    #expect(stored.title == "주간 회의" && stored.time == .timed(range(at(10), at(11, 30))))
+}
+
+@MainActor
+@Test func cancelDropsATypedTitle() async throws {
+    let f = try await Fixture()
+    f.router.send(.enter(f.target("회의")))
+    f.router.send(.tapTitle)
+    f.editor.title = "다른 이름"
+    f.router.send(.cancel)
+    #expect(f.router.session == nil && f.editor.draft == nil)
+    #expect(await f.stored("회의")?.title == "회의")
+}

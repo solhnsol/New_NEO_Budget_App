@@ -66,7 +66,9 @@ struct PrecisionBubbleOverlay: View {
                 .frame(width: width)
                 .fixedSize(horizontal: false, vertical: true)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height = $0 }
-                .offset(x: frame.minX, y: frame.minY)
+                // Placed by layout, not `offset`: the wheel is a UIKit view, and its touches are where its frame is laid out.
+                .padding(.leading, frame.minX)
+                .padding(.top, frame.minY)
         }
         // Follows the handle frame by frame: no implicit animation of where it is.
         .transaction { $0.animation = nil }
