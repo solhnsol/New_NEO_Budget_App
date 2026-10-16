@@ -74,9 +74,17 @@ private struct InboxRow: View {
                     .font(.caption).foregroundStyle(Theme.textTertiary).monospacedDigit()
             }
             Text(IntakeText.preview(notification)).font(.footnote).foregroundStyle(Theme.textSecondary).lineLimit(3)
-            Text(IntakeText.status(item.status))
-                .font(.caption.weight(.medium))
-                .foregroundStyle(IntakeText.isSettled(item.status) ? Theme.textTertiary : Theme.caution)
+            HStack(spacing: Theme.Space.xs) {
+                Text(IntakeText.status(item.status))
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(IntakeText.isSettled(item.status) ? Theme.textTertiary : Theme.caution)
+                // Only these rows open something when tapped; say so where the eye already is.
+                if IntakeText.asksForAccount(item.status) {
+                    Spacer(minLength: Theme.Space.s)
+                    Text("계좌 정하기").font(.caption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+                }
+            }
         }
         .padding(.vertical, 2)
     }

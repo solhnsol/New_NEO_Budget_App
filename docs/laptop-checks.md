@@ -38,6 +38,7 @@ tools/dev/check.sh full
 | `claude/project-thread-2bhmma` (UI 점검) | 강조색이 한 가지 파랑(#3182F6)이다: 고정 그리드의 편집 테두리·핸들, 주간 달력의 오늘·선택 표시가 탭 바·버튼과 같은 파랑. 다크 모드도. | `tools/dev/check.sh ui -demo` |
 | `claude/project-thread-2bhmma` (UI 점검) | 가계부 거래 상세의 "분류"가 `food` 대신 "식비"처럼 한국어. 환불이 더 큰 날의 날짜 줄 합계가 파란 "+N원". | `tools/dev/check.sh ui -demo -demo-txn` → 가계부 탭 |
 | `claude/project-thread-2bhmma` (UI 점검) | "무엇을, 어디서, 누구와"에서 새 장소 이름을 치고 키보드의 완료를 누르면 바로 추가된다. 저장 실패·편집 불가 안내가 해요체이고 빨강/파랑이 디자인 토큰 색이다. | 데모 일정 상세 → 무엇을, 어디서, 누구와 |
+| `claude/project-thread-2bhmma` (UI 점검) | 캘린더 머리의 ‹ › 화살표가 손가락으로 누르기 쉽고(44pt), 머리 높이는 전과 거의 같다. 정산 시트에서 금액 칸을 누르면 키보드 위에 "완료"가 있어 키보드를 내릴 수 있고, 목록을 끌어도 내려간다. 받은 알림에서 "어느 계좌인지 모름"인 줄에만 파란 "계좌 정하기 ›"가 보인다. | `tools/dev/check.sh ui` → 캘린더 머리, 정산하기; 받은 알림은 `-live` |
 
 ## 확인 완료 (2026-10-16, 노트북)
 

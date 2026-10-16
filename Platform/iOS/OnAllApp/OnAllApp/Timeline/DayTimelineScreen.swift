@@ -234,13 +234,21 @@ private struct DayHeader: View {
             Spacer()
             Button("오늘") { goTo(model.today) }
                 .buttonStyle(.bordered).disabled(model.isToday)
-            Button { goTo(model.selectedDay.adding(days: -1)) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("이전 날")
-            Button { goTo(model.selectedDay.adding(days: 1)) } label: { Image(systemName: "chevron.right") }
-                .accessibilityLabel("다음 날")
+            // The arrows get a full 44pt square to hit (the bare symbol was about half that); the header keeps its height.
+            HStack(spacing: 0) {
+                Button { goTo(model.selectedDay.adding(days: -1)) } label: { arrow("chevron.left") }
+                    .accessibilityLabel("이전 날")
+                Button { goTo(model.selectedDay.adding(days: 1)) } label: { arrow("chevron.right") }
+                    .accessibilityLabel("다음 날")
+            }
+            .padding(.trailing, -10)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 4)
+    }
+
+    private func arrow(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

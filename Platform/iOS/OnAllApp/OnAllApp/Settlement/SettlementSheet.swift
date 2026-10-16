@@ -15,6 +15,8 @@ struct SettlementSheet: View {
     @State private var failure: String?
     @State private var isSaving = false
     @State private var isConfirmingRedo = false
+    /// The share being typed; the number pad has no return key, so the keyboard bar's 완료 clears it.
+    @FocusState private var typingShare: PersonID?
 
     var body: some View {
         NavigationStack {
@@ -27,7 +29,13 @@ struct SettlementSheet: View {
             }
             .navigationTitle((block?.title).map { $0 + " 정산" } ?? "정산")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("완료") { typingShare = nil }.fontWeight(.semibold)
+                }
+            }
         }
         .task(id: model.dataGeneration) { life = await model.lifeState() }
     }
@@ -127,6 +135,7 @@ struct SettlementSheet: View {
             }
         }
         .onAllGroupedScreen()
+        .scrollDismissesKeyboard(.interactively)
         .primaryActionBar(isShown: !isLocked && plan != nil, isEnabled: !(plan?.others.isEmpty ?? true) && !isOverTotal && !isSaving) {
             if let plan, !isOverTotal { Task { await request(plan) } }
         } label: {
@@ -156,6 +165,7 @@ struct SettlementSheet: View {
                         set: { fixedText[share.personID] = $0.isEmpty ? nil : $0 }
                     ))
                     .keyboardType(.numberPad)
+                    .focused($typingShare, equals: share.personID)
                     .multilineTextAlignment(.trailing)
                     .font(Theme.Typo.amount)
                     .frame(maxWidth: 140)
