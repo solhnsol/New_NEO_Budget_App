@@ -89,9 +89,9 @@ struct PrecisionBubbleText: Equatable {
         accessibilityValue = Self.string(input.instant, input.timeZone, "M월 d일 EEEE a h:mm")
         switch (input.canDecrement, input.canIncrement) {
         case (true, true): accessibilityHint = "위로 쓸면 15분 늦게, 아래로 쓸면 15분 일찍"
-        case (false, true): accessibilityHint = "위로 쓸면 15분 늦게. 더 일찍은 안 됩니다"
-        case (true, false): accessibilityHint = "아래로 쓸면 15분 일찍. 더 늦게는 안 됩니다"
-        case (false, false): accessibilityHint = "지금은 바꿀 수 없습니다"
+        case (false, true): accessibilityHint = "위로 쓸면 15분 늦게. 더 일찍은 안 돼요"
+        case (true, false): accessibilityHint = "아래로 쓸면 15분 일찍. 더 늦게는 안 돼요"
+        case (false, false): accessibilityHint = "지금은 바꿀 수 없어요"
         }
     }
 

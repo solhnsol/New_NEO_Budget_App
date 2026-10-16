@@ -167,7 +167,7 @@ struct HeadcountRow: View {
                     .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
             Spacer(minLength: Theme.Space.s)
-            CountStepper(value: value, range: least...50, accessibilityName: "총 인원", change: change)
+            CountStepper(value: value, range: least...max(least, 50), accessibilityName: "총 인원", change: change)
                 .disabled(isLocked)
         }
         .padding(.vertical, Theme.Space.xs)

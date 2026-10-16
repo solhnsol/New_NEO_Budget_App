@@ -19,37 +19,37 @@ struct EditFeedback: Equatable, Identifiable {
         case .applied:
             return nil
         case .partiallyApplied:
-            return EditFeedback(message: "일정은 저장됐지만 연결 정보를 갱신하지 못했습니다.", tone: .notice, canRetry: false)
+            return EditFeedback(message: "일정은 저장했지만 연결된 정보를 고치지 못했어요", tone: .notice, canRetry: false)
         case .conflict:
-            return EditFeedback(message: "다른 곳에서 일정이 바뀌어 저장하지 않았습니다. 최신 내용으로 새로 고쳤어요.", tone: .error, canRetry: false)
+            return EditFeedback(message: "다른 곳에서 일정이 바뀌어 저장하지 않았어요. 최신 내용으로 새로 고쳤어요", tone: .error, canRetry: false)
         case let .rejected(reason):
             return EditFeedback(message: message(for: reason), tone: .error, canRetry: false)
         case let .providerFailure(failure):
             switch failure {
             case .calendarNotWritable:
-                return EditFeedback(message: "읽기 전용 캘린더라 변경할 수 없습니다.", tone: .error, canRetry: false)
+                return EditFeedback(message: "읽기 전용 캘린더라 바꿀 수 없어요", tone: .error, canRetry: false)
             case .accessUnavailable:
-                return EditFeedback(message: "캘린더 접근이 꺼져 있어 저장하지 못했습니다.", tone: .error, canRetry: false)
+                return EditFeedback(message: "캘린더 접근이 꺼져 있어 저장하지 못했어요", tone: .error, canRetry: false)
             case .eventMissing:
-                return EditFeedback(message: "일정이 삭제되어 저장하지 못했습니다.", tone: .error, canRetry: false)
+                return EditFeedback(message: "일정이 지워져서 저장하지 못했어요", tone: .error, canRetry: false)
             case .calendarMissing:
-                return EditFeedback(message: "캘린더를 찾을 수 없어 저장하지 못했습니다.", tone: .error, canRetry: false)
+                return EditFeedback(message: "캘린더를 찾을 수 없어 저장하지 못했어요", tone: .error, canRetry: false)
             case let .saveFailed(retryable, _):
-                return EditFeedback(message: "저장하지 못했습니다. 변경 전 상태로 되돌렸어요.", tone: .error, canRetry: retryable)
+                return EditFeedback(message: "저장하지 못해서 바꾸기 전으로 되돌렸어요", tone: .error, canRetry: retryable)
             case .unsupported:
-                return EditFeedback(message: "이 일정에는 지원하지 않는 변경입니다.", tone: .error, canRetry: false)
+                return EditFeedback(message: "이 일정은 이렇게 바꿀 수 없어요", tone: .error, canRetry: false)
             }
         }
     }
 
     private static func message(for reason: CommandRejection) -> String {
         switch reason {
-        case .eventNotEditable: return "읽기 전용 일정이라 변경할 수 없습니다."
-        case .eventNotFound: return "일정을 찾을 수 없습니다. 이미 삭제됐을 수 있어요."
-        case .dateChangeRequiresThisOccurrence: return "날짜가 바뀌는 변경은 이 일정에만 적용할 수 있습니다."
-        case .durationBelowMinimum: return "일정은 최소 15분이어야 합니다."
-        case .recurrenceScopeRequired, .recurrenceScopeUnsupported: return "반복 일정의 적용 범위를 지원하지 않습니다."
-        default: return "변경할 수 없습니다."
+        case .eventNotEditable: return "읽기 전용 일정이라 바꿀 수 없어요"
+        case .eventNotFound: return "일정을 찾을 수 없어요. 이미 지워졌을 수 있어요"
+        case .dateChangeRequiresThisOccurrence: return "날짜를 바꾸는 건 이 일정에만 적용할 수 있어요"
+        case .durationBelowMinimum: return "일정은 15분보다 짧게 만들 수 없어요"
+        case .recurrenceScopeRequired, .recurrenceScopeUnsupported: return "반복 일정은 이렇게 바꿀 수 없어요"
+        default: return "바꿀 수 없어요"
         }
     }
 }
@@ -679,7 +679,7 @@ final class TimelineEditor {
         if preview.kind == .create {
             guard environment.calendars().contains(where: \.isWritable) else {
                 rollback()
-                feedback = EditFeedback(message: "일정을 만들 수 있는 캘린더가 없습니다.", tone: .error, canRetry: false)
+                feedback = EditFeedback(message: "일정을 만들 수 있는 캘린더가 없어요.", tone: .error, canRetry: false)
                 return
             }
             mode = .namingEvent

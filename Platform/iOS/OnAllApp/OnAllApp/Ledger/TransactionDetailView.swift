@@ -31,7 +31,7 @@ struct TransactionDetailView: View {
                     + (transaction.timePrecision == .approximate ? " (알림 기준)" : ""))
                 if let category = entry.categoryID {
                     LabeledContent {
-                        Label(category.rawValue, systemImage: CategoryIcon.symbol(for: category) ?? "tag").foregroundStyle(Theme.textPrimary)
+                        Label(CategoryIcon.name(for: category) ?? category.rawValue, systemImage: CategoryIcon.symbol(for: category) ?? "tag").foregroundStyle(Theme.textPrimary)
                     } label: {
                         Text("분류").foregroundStyle(Theme.textSecondary)
                     }

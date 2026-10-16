@@ -18,13 +18,14 @@ struct IntakeInboxView: View {
                 Section {
                     ForEach(questions) { question in
                         Button { answering = question } label: { AccountQuestionRow(question: question) }
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(Theme.textPrimary)
                     }
                 } header: {
                     Text("이 계좌가 맞나요?")
                 } footer: {
                     Text("알림에 처음 나온 계좌와 카드예요. 답해 주시면 이전 알림까지 다시 계산해요.")
                 }
+                .onAllCardRow()
             }
             Section {
                 if let items, items.isEmpty {
@@ -40,6 +41,7 @@ struct IntakeInboxView: View {
             } footer: {
                 Text("단축어의 'OnAll 알림 기록하기' 동작으로 들어온 알림이에요. '어느 계좌인지 모름'인 알림을 누르면 계좌를 정할 수 있어요.")
             }
+            .onAllCardRow()
         }
         .onAllGroupedScreen()
         .navigationTitle("받은 알림")
@@ -66,12 +68,12 @@ private struct InboxRow: View {
         let time = notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .firstTextBaseline) {
-                Text(notification.source.displayName ?? "알 수 없는 앱").font(.subheadline.weight(.semibold))
+                Text(notification.source.displayName ?? "알 수 없는 앱").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Text(Formatting.shortDate(time, zoneIdentifier: zoneIdentifier) + " " + Formatting.time(time, zoneIdentifier: zoneIdentifier))
-                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                    .font(.caption).foregroundStyle(Theme.textTertiary).monospacedDigit()
             }
-            Text(IntakeText.preview(notification)).font(.footnote).lineLimit(3)
+            Text(IntakeText.preview(notification)).font(.footnote).foregroundStyle(Theme.textSecondary).lineLimit(3)
             Text(IntakeText.status(item.status))
                 .font(.caption.weight(.medium))
                 .foregroundStyle(IntakeText.isSettled(item.status) ? Theme.textTertiary : Theme.caution)
@@ -88,7 +90,7 @@ private struct AccountQuestionRow: View {
         VStack(alignment: .leading, spacing: 3) {
             Text("\(IntakeText.institution(candidate.key.institution)) \(IntakeText.kind(candidate.kind)) \(IntakeText.identifier(candidate.key.identifier))")
                 .font(.subheadline.weight(.semibold))
-            Text("알림 \(candidate.occurrenceCount)건").font(.caption).foregroundStyle(.secondary)
+            Text("알림 \(candidate.occurrenceCount)건").font(.caption).foregroundStyle(Theme.textTertiary)
         }
     }
 }
@@ -118,7 +120,7 @@ private struct AccountAnswerSheet: View {
                     LabeledContent("알림에 나온 번호", value: IntakeText.identifier(candidate.key.identifier))
                     LabeledContent("알림", value: "\(candidate.occurrenceCount)건")
                     if let example = question.example {
-                        Text(IntakeText.preview(example)).font(.footnote).foregroundStyle(.secondary)
+                        Text(IntakeText.preview(example)).font(.footnote).foregroundStyle(Theme.textSecondary)
                     }
                 }
                 Section {
@@ -145,6 +147,7 @@ private struct AccountAnswerSheet: View {
                     Button("내 계좌가 아니에요", role: .destructive) { submit(.notMine) }
                 }
             }
+            .onAllGroupedScreen()
             .navigationTitle("이 계좌가 맞나요?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
@@ -199,6 +202,7 @@ private struct RuleAnswerSheet: View {
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
+            .onAllGroupedScreen()
             .navigationTitle("어느 계좌인가요?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }

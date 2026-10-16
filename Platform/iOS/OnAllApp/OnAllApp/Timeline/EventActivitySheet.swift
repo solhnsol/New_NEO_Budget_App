@@ -12,11 +12,8 @@ struct EventActivitySheet: View {
     @State private var newArea = ""
     @State private var failure: String?
 
-    /// The event and the day it is on, among the days on screen.
-    private var located: (block: EventBlock, timeline: DayTimeline)? {
-        for day in model.visibleTimelines { if let block = day.blocks.first(where: { $0.eventKey == eventKey }) { return (block, day) } }
-        return nil
-    }
+    /// The event and the day it is on (`AppModel.locate`).
+    private var located: (block: EventBlock, timeline: DayTimeline)? { model.locate(eventKey) }
     private var block: EventBlock? { located?.block }
 
     var body: some View {
@@ -130,14 +127,17 @@ struct EventActivitySheet: View {
     }
 
     private func addRow(_ label: String, text: Binding<String>, add: @escaping (String) async -> Void) -> some View {
-        HStack {
-            TextField(label, text: text).submitLabel(.done)
-            Button("추가") {
-                guard let name = ActivityEditing.cleanName(text.wrappedValue) else { return }
-                text.wrappedValue = ""
-                Task { await add(name) }
-            }
-            .disabled(ActivityEditing.cleanName(text.wrappedValue) == nil)
+        // Return on the keyboard adds, the same as the button.
+        let submit: () -> Void = {
+            guard let name = ActivityEditing.cleanName(text.wrappedValue) else { return }
+            text.wrappedValue = ""
+            Task { await add(name) }
+        }
+        return HStack {
+            TextField(label, text: text).submitLabel(.done).onSubmit(submit)
+            Button("추가", action: submit)
+                .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
+                .disabled(ActivityEditing.cleanName(text.wrappedValue) == nil)
         }
     }
 
