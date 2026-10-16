@@ -467,6 +467,22 @@ final class AppModel {
         return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
     }
 
+    /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
+    func unclassifiedDeposits(since: Int64) async -> [LedgerDeposit] {
+        guard let service, let life = try? await service.lifeSnapshot().state else { return [] }
+        return ((try? await ledger.unclassifiedDeposits(life: life)) ?? []).filter { $0.occurredAtUnixMilliseconds >= since }
+    }
+
+    /// Puts a deposit on a purchase as a settlement (`DepositMerge`), then shows the result.
+    func merge(_ plan: DepositMerge.Plan) async -> Bool {
+        guard let service else { return false }
+        let applied = await DepositMerge.apply(
+            plan, provenance: ActivityEditing.provenance(now: nowMilliseconds), newID: { ActivityEditing.newID(prefix: $0) }
+        ) { await service.perform($0) }
+        await reload()
+        return applied
+    }
+
     /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
     func lifeState() async -> LifeState? {
         try? await service?.lifeSnapshot().state

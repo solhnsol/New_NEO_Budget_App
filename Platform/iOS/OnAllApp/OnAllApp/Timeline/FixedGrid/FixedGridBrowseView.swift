@@ -1811,7 +1811,7 @@ private struct CarriedTransactionCard: View {
                 Text(title ?? "거래").font(.caption.weight(.semibold)).lineLimit(1)
                 Text((flow == .refund ? "+" : "") + Formatting.money(amount.minorUnits, currency: amount.currency)).font(.caption.monospacedDigit())
             }
-            Text(into.map { "→ " + $0 } ?? "일정 위에 놓으세요").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            Text(into.map { "→ " + $0 } ?? "일정 위에 놓아 주세요").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
