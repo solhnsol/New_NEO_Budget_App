@@ -108,7 +108,6 @@ extension ButtonStyle where Self == PrimaryButtonStyle {
 
 extension ButtonStyle where Self == SecondaryButtonStyle {
     static var onAllSecondary: SecondaryButtonStyle { SecondaryButtonStyle() }
-    static func onAllSecondary(tint: Color) -> SecondaryButtonStyle { SecondaryButtonStyle(tint: tint) }
 }
 
 extension View {
