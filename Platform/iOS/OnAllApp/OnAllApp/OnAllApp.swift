@@ -30,7 +30,7 @@ struct OnAllApp: App {
             .task {
                 guard model == nil else { return }
                 let arguments = ProcessInfo.processInfo.arguments
-                let isDemo = arguments.contains("-demo")
+                let isDemo = arguments.contains("-demo") || DemoFull.isOn   // until real data is connected, a plain launch opens the full demo (`-live` for the device)
                 do {
                     let created = isDemo ? try AppModel.demo() : try AppModel.live(withSampleLedger: arguments.contains("-ledger-sample"))
                     model = created

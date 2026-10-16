@@ -90,6 +90,14 @@ enum SampleLedger {
             try candidate("txn-ext", .purchase, .outflow, 3_500, instant(16, 30), merchant: "편의점 비"),
             try candidate("txn-late", .purchase, .outflow, 7_700, instant(20, 5), merchant: "야식"),
         ] + (try (0..<5).map { try candidate("txn-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(18, $0 * 2), merchant: "상점 \($0)") })
+        if DemoFull.isOn {
+            let now = Int64(Date().timeIntervalSince1970 * 1_000)
+            let full = try DemoFull.spends(today: today, zone: zone, now: now).map { spend in
+                try candidate(spend.raw, spend.kind, spend.direction, spend.won, zone.instant(of: spend.day, minuteOfDay: spend.minute),
+                              merchant: spend.merchant, card: spend.card)
+            }
+            return try AppLedger(configuration: configuration, promoting: full)
+        }
         return try AppLedger(configuration: configuration, promoting: transBurst + (ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnCandidates.prefix(11))
             : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnCandidates : candidates))
     }
