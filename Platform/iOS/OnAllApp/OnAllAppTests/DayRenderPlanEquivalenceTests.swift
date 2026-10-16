@@ -149,8 +149,10 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
     // its dot takes a touch where no card is drawn. Only hit results changed; every frame, row and reveal is the same.
     // Retaken again when `EventPresentation` gained `rowReveals` and `moreReveal` (each transaction row fades in at the height it first appears at; the "그 외 N건" row fades out and in around a slot change): the digest writes the whole
     // presentation, so every digest with an event moved, and nothing else did (the default three rows, every frame, hit and reveal are the same).
+    // busy: retaken when a card's rows began to stop where an event inside it begins (`rowRoom`): its 9:00 card, which holds the 9:10 one, writes fewer rows
+    // above it. A title moved down its card also takes its rows' room with it, and moves beside a title rather than onto a card inside its own; no day here has either.
     let expected: [String: String] = [
-        "busy": "108715aefb52dae8", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
+        "busy": "6a2f785d77b8ca81", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
     ]
     for day in try days() {
         let list = combinations(of: day)

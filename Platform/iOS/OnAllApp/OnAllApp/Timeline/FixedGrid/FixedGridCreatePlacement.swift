@@ -2,8 +2,8 @@ import CoreGraphics
 import NEOBudgetCalendar
 
 /// A new event picked up by a long press on empty grid and carried by the finger, the way the system calendar does it: the card (an hour long) is under the
-/// finger from the moment the press is recognised and follows it, its start on the 15-minute lines, and the column under the finger is its day. Where it would
-/// land is outlined and its start is written on the hour axis. When the finger lifts, an edit session opens on it (`FixedGridEditInteraction.Target.new`):
+/// finger from the moment the press is recognised and stays in the hand, following it freely; where it would land (its start on the 15-minute lines, the
+/// column under the finger its day) is outlined and that start is written on the hour axis. This is where it would land. When the finger lifts, an edit session opens on it (`FixedGridEditInteraction.Target.new`):
 /// it is named, its calendar chosen and its length changed there, and it is created in the calendar on done. Pure, so it is tested.
 struct FixedGridCreatePlacement: Equatable {
     /// How long a new event is when it is picked up (the length is changed by its handles afterwards).
