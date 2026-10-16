@@ -32,6 +32,15 @@ struct LedgerScreen: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 240)
                 }
+                if !model.isDemo {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        NavigationLink {
+                            IntakeInboxView(model: model)
+                        } label: {
+                            Label("받은 알림", systemImage: "tray")
+                        }
+                    }
+                }
             }
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.

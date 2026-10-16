@@ -3,6 +3,7 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import NEOBudgetEventKit
 import NEOBudgetInMemoryCalendar
+import NEOBudgetInMemoryStorage
 import Observation
 
 /// One day of the strip around the two visible days. `timeline` is `nil` until it has been read.
@@ -122,14 +123,14 @@ final class AppModel {
         selectedDay = dayZone.localDate(of: Self.nowMilliseconds())
     }
 
-    /// The device calendar and the app ledger. The ledger is empty until ingestion and durable storage exist, unless
-    /// `withSampleLedger` seeds the synthetic day (launch argument `-ledger-sample`) to check real calendar data
-    /// against ledger-derived transactions.
+    /// The device calendar and the real ledger (the notifications the Shortcut delivered), unless `withSampleLedger`
+    /// seeds the synthetic day (launch argument `-ledger-sample`) to check real calendar data against ledger-derived
+    /// transactions.
     static func live(withSampleLedger: Bool = false) throws -> AppModel {
         let zone = try DisplayTimeZone(identifier: TimeZone.current.identifier)
         let provider = try EventKitCalendarProvider(dayZoneIdentifier: zone.identifier)
         let today = zone.localDate(of: nowMilliseconds())
-        let ledger = withSampleLedger ? try SampleLedger.make(today: today, zone: zone) : try AppLedger()
+        let ledger = withSampleLedger ? try SampleLedger.make(today: today, zone: zone) : try LiveLedger.shared()
         return AppModel(provider: provider, eventKit: provider, dayZone: zone, ledger: ledger, isDemo: false, prepare: nil)
     }
 
@@ -147,6 +148,7 @@ final class AppModel {
 
     func start() async {
         if let prepare { await prepare() }
+        observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
             case .notDetermined:
@@ -469,6 +471,57 @@ final class AppModel {
     /// Every account's and card's movements, unnetted (the ledger tab's statement view). `nil` when the ledger could not be read.
     func ledgerStatements() async -> [LedgerStatements.Statement]? {
         try? await ledger.statements()
+    }
+
+    // MARK: Received notifications
+
+    /// Received notifications, newest first, with where each ended up. Empty in the demo.
+    func inbox() async -> [InboxItem] { await ledger.inbox() }
+
+    /// Accounts and cards the notifications mention that the user has not answered for yet.
+    func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
+
+    func registeredAccounts() async -> [AccountProfile] { await ledger.registeredAccounts() }
+
+    /// Applies the user's answer about an account and replays the ledger with it. `false` if it could not be applied.
+    @discardableResult
+    func answer(_ question: AccountQuestion, with answer: AccountAnswer) async -> Bool {
+        do {
+            switch answer {
+            case let .newAccount(name, kind): try await ledger.confirmAsNew(question.id, displayName: name, kind: kind)
+            case let .existing(binding): try await ledger.link(question.id, to: binding)
+            case .notMine: try await ledger.dismiss(question.id)
+            }
+        } catch {
+            return false
+        }
+        await ledgerDidChange()
+        return true
+    }
+
+    func ruleQuestion(for notificationID: String) async -> RuleQuestion? { await ledger.ruleQuestion(for: notificationID) }
+
+    /// Messages like the question's belong to `binding`, or to a new account. `false` if it could not be applied (for
+    /// one, when another account at the same institution could have sent the same message).
+    @discardableResult
+    func answer(_ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?) async -> Bool {
+        do {
+            try await ledger.answer(question, binding: binding, newAccount: newAccount)
+        } catch {
+            return false
+        }
+        await ledgerDidChange()
+        return true
+    }
+
+    /// The ledger changed (a notification arrived, an account was answered): the timeline and the ledger tab read it again.
+    func ledgerDidChange() async {
+        if service != nil { await reload() } else { dataGeneration += 1 }
+    }
+
+    private func observeLedger() {
+        guard !isDemo else { return }
+        LiveLedger.didReceive = { [weak self] in await self?.ledgerDidChange() }
     }
 
     private func observeChanges() {

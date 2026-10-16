@@ -18,6 +18,9 @@ tools/dev/check.sh full
 | `claude/project-thread-3pg436` | 스터디를 품는 새 일정(예: 12:30–15:45)을 저장해도 "스터디" 제목이 바깥 카드의 "거래 N건" 줄과 겹치지 않는다. | 위 실행에서 만들고 완료 |
 | `claude/project-thread-3pg436` | **직접 확인:** 손을 떼면 키보드가 바로 올라오고 이름을 쳐서 저장된다. 끄는 도중 점선 미리보기와 시간축 시작 시각이 손가락을 따라 움직인다. | Hans가 시뮬레이터나 실기기에서 직접 |
 | `claude/project-thread-5mrles` | 고정 그리드에서 거래 줄을 길게 누르면 거래가 손가락을 따라오고, 일정 카드 위에서는 카드 테두리가 굵어지며 "→ 일정 이름"이 보인다. 놓으면 그 일정 카드 안으로 들어간다. 빈 곳에 놓으면 아무것도 바뀌지 않는다. (길게 눌러 일정 만들기 브랜치를 합친 위에서) `FixedGridTransactionCarryTests` 통과. | `tools/dev/check.sh ui -demo -browse-temporal` → 카드 밖 거래 줄 길게 누르기 → 다른 일정 위에 놓기 |
+| `claude/project-thread-hstee5` | 단축어 연결 코드가 Xcode에서 빌드되고 앱 테스트가 통과한다 (`RecordNotificationIntent`, 받은 알림 화면은 클라우드에서 컴파일하지 못했다). | `tools/dev/check.sh full` |
+| `claude/project-thread-hstee5` | **실기기:** 단축어 앱 동작 목록에 "OnAll · 알림 기록하기"가 보인다. 기존 자동화의 서버 전송 단계를 이 동작으로 바꾸고 결제 알림을 받으면, 가계부 탭 오른쪽 위 "받은 알림"에 제목·본문이 나뉘어 보인다(한 덩어리로 보이면 사전이 JSON으로 넘어오지 않은 것). | Hans가 폰에서 직접 |
+| `claude/project-thread-hstee5` | **실기기:** "이 계좌가 맞나요?"에서 계좌를 등록·연결하면 앞서 받은 알림까지 "가계부에 반영됨"으로 바뀌고, 소비 목록과 캘린더 거래 줄에 앱을 다시 켜지 않아도 나타난다. 앱을 껐다 켜도 남아 있다. 잠긴 화면에서 온 알림도 기록된다. | Hans가 폰에서 직접 |
 
 ## 확인 완료 (2026-10-16, 노트북)
 
