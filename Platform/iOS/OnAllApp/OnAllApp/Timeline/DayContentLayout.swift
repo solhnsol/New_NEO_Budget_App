@@ -115,7 +115,7 @@ struct DayContentLayout {
         var result: [BlockID: TitlePlacement] = [:]
         var placed: [(rect: CGRect, bottom: CGFloat)] = []
         let row = rowHeight
-        for id in order {
+        for (index, id) in order.enumerated() {
             let trueTop = top(id)
             let trueBottom = max(bottom(id), trueTop + minimumHeight)
             let baseX = left(id)
@@ -128,7 +128,16 @@ struct DayContentLayout {
                     guard let under = placed.first(where: { ($0.bottom > trueTop || titlesOnly) && $0.rect.intersects(rect) }) else { break }
                     let lower = under.rect.maxY - trueTop
                     let after = under.rect.maxX + Self.titleGap - baseX
-                    if lower <= limit {
+                    // A title moved down must not land on a card that begins inside this one and is drawn over it: it would read as that card's
+                    // title. It goes beside the title it would have covered instead, where its own card has the room.
+                    let lowered = CGRect(x: rect.minX, y: trueTop + lower, width: wanted, height: row)
+                    let landsInFront = order[(index + 1)...].contains { other in
+                        let otherTop = top(other)
+                        guard otherTop > trueTop else { return false }
+                        let card = CGRect(x: left(other), y: otherTop, width: max(0, right(other) - left(other)), height: max(0, bottom(other) - otherTop))
+                        return card.intersects(lowered)
+                    }
+                    if lower <= limit, !(landsInFront && baseX + after + Self.minimumTitleWidth <= right(id)) {
                         place.dy = lower
                     } else if baseX + after + Self.minimumTitleWidth <= right(id) {
                         place.dx = after

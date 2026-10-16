@@ -294,6 +294,7 @@ struct DayRenderPlan {
         // that the blend squeezes or stretches on its way neither loses its rows nor shows rows it never has).
         // A card's rows stop where an event that begins inside it is drawn over it (its title is written there): the rows go first, as they do for a lower card.
         var presentations: [BlockID: EventPresentation] = [:]
+        var presentationInputs: [BlockID: (height: CGFloat, rowRoom: CGFloat?)] = [:]
         for block in blocks {
             var height = frames[block.id]?.height ?? 0
             let axis: any TimeAxisMapping
@@ -311,6 +312,7 @@ struct DayRenderPlan {
                 }
                 rowRoom = inner.map { axis.y(minute: $0.startMinute) - axis.y(minute: block.startMinute) }.min()
             }
+            presentationInputs[block.id] = (height, rowRoom)
             presentations[block.id] = EventPresentation.make(
                 height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows, rowRoom: rowRoom
             )
@@ -329,6 +331,14 @@ struct DayRenderPlan {
             minimumHeight: 1, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
             titlesOnly: true
         )
+        // A title moved down its card takes its rows down with it: they still stop above the end time's line (and where an inner event begins).
+        for block in blocks {
+            guard let dy = places[block.id]?.dy, dy > 0, block.id != expanded, block.id != focused, let input = presentationInputs[block.id] else { continue }
+            presentations[block.id] = EventPresentation.make(
+                height: input.height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows,
+                rowRoom: max(0, min(input.rowRoom ?? input.height, input.height) - dy)
+            )
+        }
 
         // Events, back to front.
         let ordered = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder

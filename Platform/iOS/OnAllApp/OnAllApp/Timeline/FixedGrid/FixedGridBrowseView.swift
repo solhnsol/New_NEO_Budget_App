@@ -44,6 +44,10 @@ struct FixedGridBrowseView: View {
     @State private var choice: TouchChoice?
     /// A new event carried by the finger after a long press on empty grid (until it lifts).
     @State private var placing: FixedGridCreatePlacement?
+    /// Where the finger carrying a new event is, and how far the card's left edge is from it: the card is in the hand, wherever the finger is; only the
+    /// outline where it would be put down keeps to the 15-minute lines.
+    @State private var carriedFinger: CGPoint?
+    @State private var carriedGrabX: CGFloat = 0
     /// The edit session (`FixedGridEditInteraction`; a long press on an editable event opens one). The screen sends it the grid's touches and the selected
     /// day, and carries out its grid commands (freeze, retarget, unfreeze); the rest go to the parts that edit (`editor`).
     @State private var edit = FixedGridEditRouter()
@@ -154,7 +158,7 @@ struct FixedGridBrowseView: View {
         defer { BrowseProbe.end(probe) }
         _ = (position, planningVersion, model.dataRevision, axisTick)   // this screen re-evaluates when the days move, planning ahead lands, the kept days change or the axis eases
         _ = (editor?.draft?.range, editor?.edge)                         // … and when the edited time or the chosen handle changes (the grid draws the draft card)
-        _ = placing                                                      // … and while a new event is carried by the finger
+        _ = (placing, carriedFinger)                                     // … and while a new event is carried by the finger
         return GeometryReader { outer in
             VStack(spacing: 0) {
                 headerStrip(width: outer.size.width)
@@ -693,7 +697,10 @@ struct FixedGridBrowseView: View {
         guard let fingerMinute = minute(atY: point.y, day: day) else { return }
         let viewport = pinch.viewportHeight
         let axis = planner.axis(for: day, partition: frame(zoom: pinch.zoom, viewport: viewport, width: room.width).shown, zone: zone)
-        placing = FixedGridCreatePlacement(day: day, fingerMinute: fingerMinute, dayMinutes: found.timeline.totalMinutes) { axis.y(minute: $0) - point.y }
+        let placement = FixedGridCreatePlacement(day: day, fingerMinute: fingerMinute, dayMinutes: found.timeline.totalMinutes) { axis.y(minute: $0) - point.y }
+        placing = placement
+        carriedFinger = point
+        carriedGrabX = newCardFrame(day: day, startMinute: placement.startMinute, endMinute: placement.endMinute, axis: axis).minX - point.x
         Haptics.pickUp()
     }
 
@@ -704,6 +711,7 @@ struct FixedGridBrowseView: View {
         switch phase {
         case .began: break
         case .moved, .ended:
+            carriedFinger = point
             if let epoch = epoch(atX: point.x), let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)),
                let minute = minute(atY: point.y + placement.grabOffset, day: timeline.day),
                placement.move(to: timeline.day, minute: minute, dayMinutes: timeline.totalMinutes) {
@@ -711,10 +719,12 @@ struct FixedGridBrowseView: View {
             }
             guard phase == .ended else { placing = placement; return }
             placing = nil
+            carriedFinger = nil
             edit.send(.enter(placement.target))
             if edit.session?.target.isNew == true { edit.send(.tapTitle) }
         case .cancelled:
             placing = nil
+            carriedFinger = nil
         }
     }
 
@@ -874,7 +884,8 @@ struct FixedGridBrowseView: View {
         return handle == .start ? axis.y(minute: segment.startMinute) : axis.y(endMinute: segment.endMinute)
     }
 
-    /// The new event a long press carries: outlined where it would be put down, and its start written on the hour axis over the hours there.
+    /// The new event a long press carries: the card in the hand, following the finger freely; where it would be put down only outlined (on the 15-minute
+    /// lines), with that start written on the hour axis.
     @ViewBuilder
     private func placementPreview(partition: TemporalGridPartition) -> some View {
         if let placing {
@@ -883,9 +894,12 @@ struct FixedGridBrowseView: View {
             let start = zone.dayBounds(placing.day).start + Int64(placing.startMinute) * 60_000
             let end = start + Int64(placing.durationMinutes) * 60_000
             let calendar = model.calendars.first(where: \.isWritable)
+            let finger = carriedFinger ?? CGPoint(x: card.minX - carriedGrabX, y: card.minY - placing.grabOffset)
+            let carried = CGRect(x: finger.x + carriedGrabX, y: finger.y + placing.grabOffset, width: card.width, height: card.height)
             ZStack(alignment: .topLeading) {
-                PlacementCard(colorHex: calendar?.colorHex, frame: card, time: DraftCard.clock(EventSaveTime.date(start), zone: zone) + " – " + DraftCard.clock(EventSaveTime.date(end), zone: zone))
+                DropOutline(colorHex: calendar?.colorHex, frame: card)
                 GutterTimeMark(text: DraftCard.clock(EventSaveTime.date(start), zone: zone), y: card.minY, gutter: Self.gutter, lineTo: card.minX)
+                CarriedCard(colorHex: calendar?.colorHex, frame: carried, time: DraftCard.clock(EventSaveTime.date(start), zone: zone) + " – " + DraftCard.clock(EventSaveTime.date(end), zone: zone))
             }
             .allowsHitTesting(false)
         }
@@ -1658,8 +1672,25 @@ private struct DraftCard: View {
     }
 }
 
-/// The new event a long press carries, where it would be put down: a dashed outline over a light fill of the calendar's colour, with its time.
-private struct PlacementCard: View {
+/// Where the carried new event would be put down: a dashed outline in the calendar's colour, nothing written in it.
+private struct DropOutline: View {
+    let colorHex: String?
+    let frame: CGRect
+
+    var body: some View {
+        let color = Color(hex: colorHex) ?? .accentColor
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .strokeBorder(color, style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))
+            .background(color.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .frame(width: frame.width, height: frame.height)
+            .offset(x: frame.minX, y: frame.minY)
+            .animation(.easeOut(duration: 0.12), value: frame)
+            .accessibilityHidden(true)
+    }
+}
+
+/// The new event a long press carries, in the hand: a lifted card of the calendar's colour with its name and the time it would be put down at.
+private struct CarriedCard: View {
     let colorHex: String?
     let frame: CGRect
     let time: String
@@ -1668,19 +1699,21 @@ private struct PlacementCard: View {
         let color = Color(hex: colorHex) ?? .accentColor
         let shape = RoundedRectangle(cornerRadius: 6, style: .continuous)
         ZStack(alignment: .topLeading) {
-            shape.fill(color.opacity(0.28))
-            shape.strokeBorder(color, style: StrokeStyle(lineWidth: 2, dash: [5, 3]))
+            shape.fill(Color(uiColor: .systemBackground))
+            shape.fill(color.opacity(0.3))
+            Rectangle().fill(color).frame(width: 3)
             if frame.height >= 18 {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(FixedGridEditor.newTitle).font(.caption.weight(.semibold)).lineLimit(1)
                     if frame.height >= 34 { Text(time).font(.caption2.monospacedDigit()).lineLimit(1) }
                 }
                 .foregroundStyle(.primary)
-                .padding(.horizontal, 5).padding(.vertical, 3)
+                .padding(.leading, 8).padding(.trailing, 5).padding(.vertical, 3)
             }
         }
         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
-        .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+        .clipShape(shape)
+        .shadow(color: .black.opacity(0.22), radius: 8, y: 4)
         .offset(x: frame.minX, y: frame.minY)
         .accessibilityHidden(true)
     }
