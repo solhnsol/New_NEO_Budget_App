@@ -67,6 +67,11 @@ struct DayRenderPlan {
         /// Its dot and leader, at the column's edge on the row's height: drawn wherever the row is, so a touch there is the line's (unless a card is
         /// drawn there and the line's own row does not reach it).
         var markFrame: CGRect = .zero
+        /// The colour of the event this transaction is linked to (its chip is outlined in it); `nil` when it is linked to nothing on this day.
+        var linkColorHex: String? = nil
+        /// For a linked transaction outside its event's time: the event's stripe carried on from the card's nearer edge to the transaction's
+        /// time, so it reads as that event's. `nil` when there is no such event card on this day.
+        var tail: Tail? = nil
 
         /// Whether a touch at `point` is this line's. Where no card is drawn: on its row or its dot. Over a card: on its row while any of its text is
         /// written, else only where its row and its dot meet, so the card under the unwritten text (its rows too) is touched as the card.
@@ -74,6 +79,13 @@ struct DayRenderPlan {
             guard overCard else { return frame.contains(point) || markFrame.contains(point) }
             return reveal > 0 ? frame.contains(point) : frame.intersection(markFrame).contains(point)
         }
+    }
+
+    /// A dashed line at `x` from `fromY` (the card's edge) to `toY` (the transaction's time), in the linked event's colour.
+    struct Tail: Equatable {
+        let x: CGFloat
+        let fromY: CGFloat
+        let toY: CGFloat
     }
 
     struct OverflowItem {
@@ -358,7 +370,7 @@ struct DayRenderPlan {
             eventItems.append(EventItem(
                 block: block, placement: placed, frame: frame, drawnFrame: drawn,
                 touchFrame: drawn.insetBy(dx: 0, dy: -touchMissing / 2), title: place, presentation: presentation,
-                header: nil, showsTitleInCard: presentation.showsTitle || id == focused,
+                header: nil, showsTitleInCard: presentation.writesTitle || id == focused,
                 insideRows: inside, shownRows: shown, hiddenRows: presentation.hiddenRows,
                 titleMaxWidth: {
                     switch placed?.titleResolution {
@@ -390,7 +402,12 @@ struct DayRenderPlan {
 
         // Where an event's title is written, a row keeps to the right part the engine left it; if even that meets the title, its text waits.
         func titleRects(wide: Bool) -> [CGRect] {
-            eventItems.filter { $0.header == nil && $0.showsTitleInCard && $0.presentation.showsTitle }.map { item in
+            eventItems.filter { $0.header == nil && $0.showsTitleInCard && $0.presentation.writesTitle }.map { item in
+                if !item.presentation.showsTitle {
+                    // The small title of a thin card: the card's own height is its row.
+                    let width = wide ? item.frame.width : min(item.frame.width, titleWidth(item.block.title) * EventPresentation.Metrics.compactShare + EventTitleLayer.horizontalPadding)
+                    return CGRect(x: item.frame.minX, y: item.drawnFrame.minY, width: width, height: item.drawnFrame.height)
+                }
                 let width = wide ? item.frame.width : min(titleWidth(item.block.title), item.titleMaxWidth ?? .infinity)
                 return CGRect(x: item.frame.minX + item.title.dx, y: item.frame.minY + item.title.dy, width: wide ? width : width + EventTitleLayer.horizontalPadding, height: (EventTitleLayer.rowHeight + 2) * scale)
             }
@@ -453,20 +470,30 @@ struct DayRenderPlan {
             return item
         }
 
-        // A header is an auxiliary place for an event's title, attached to the same event: the engine's, or a small tab for a card too
-        // thin to write in. Only where it covers nothing; a line (E0) never gets one.
+        // A linked transaction's chip takes its event's colour; outside the event's time, the event's stripe runs on to it.
+        let cardsByEvent = Dictionary(eventItems.map { ($0.block.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+        lineItems = lineItems.map { line in
+            guard let link = line.link, let card = cardsByEvent[link.eventID] else { return line }
+            var copy = line
+            copy.linkColorHex = card.block.calendarColorHex ?? "#3182F6"
+            if let anchor = line.anchorY {
+                let frame = card.drawnFrame
+                if anchor < frame.minY - 1 { copy.tail = Tail(x: frame.minX + 1.5, fromY: frame.minY, toY: anchor) }
+                else if anchor > frame.maxY + 1 { copy.tail = Tail(x: frame.minX + 1.5, fromY: frame.maxY, toY: anchor) }
+            }
+            return copy
+        }
+
+        // A header is an auxiliary place for an event's title, attached to the same event: the engine's, for a title that meets a line. Only
+        // where it covers nothing, and only for a card tall enough for its title: a thinner card writes its title small inside itself (or not at
+        // all), never in a tab above it.
         var occupied: [CGRect] = eventItems.map(\.drawnFrame) + lineItems.filter { $0.reveal > 0 }.map(\.frame) + overflowItems.map(\.frame)
-        let headerHeight = parameters.headerRow * scale
         for index in eventItems.indices.sorted(by: { eventItems[$0].frame.minY < eventItems[$1].frame.minY }) {
             let item = eventItems[index]
-            guard item.presentation.level > .line, item.block.id != expanded else { continue }
+            guard item.presentation.showsTitle, item.block.id != expanded, let spec = item.placement?.header else { continue }
             let own = item.drawnFrame
-            var rect: CGRect?
-            if let spec = item.placement?.header { rect = CGRect(x: own.minX, y: own.minY - spec.height, width: own.width, height: spec.height) }
-            else if !item.presentation.showsTitle, item.block.id != focused {
-                rect = CGRect(x: own.minX, y: own.minY - headerHeight, width: min(own.width, titleWidth(item.block.title) + 24), height: headerHeight)
-            }
-            guard let rect, rect.minY >= 0 else { continue }
+            let rect = CGRect(x: own.minX, y: own.minY - spec.height, width: own.width, height: spec.height)
+            guard rect.minY >= 0 else { continue }
             guard !occupied.contains(where: { $0 != own && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
             eventItems[index].header = rect
             eventItems[index].showsTitleInCard = false

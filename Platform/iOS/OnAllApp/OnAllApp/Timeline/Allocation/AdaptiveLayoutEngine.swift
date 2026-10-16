@@ -676,9 +676,17 @@ private extension AdaptiveLayoutEngine {
     }
 }
 
-/// How events relate to the ones they overlap, for any day. At most one step of indent, whatever the depth of the overlap. Shared by the
-/// engine and by the renderer, so a day the engine did not lay out (one sliding in) is drawn by the same rule.
+/// How events relate to the ones they overlap, for any day. Shared by the engine and by the renderer, so a day the engine did not lay out (one
+/// sliding in) is drawn by the same rule.
+///
+/// An overlap changes only the card in front (the one that starts later, or the shorter of two that start together): it is indented one step
+/// further than the deepest card it lies on, up to `maximumIndent`. The card behind is drawn exactly as it would be alone. So two cards that
+/// lie on the same card never share an edge (a card inside a card that is itself on a third is indented twice), and a card is never moved
+/// because something was put on top of it. Never lanes: every card keeps the column's width less its indent.
 enum EventOverlapAnalysis {
+    static let maximumIndent = 3
+
+
     /// Events must be sorted by (start, end descending, id).
     static func analyse(_ events: [AllocationEvent]) -> [String: EventOverlap] {
         var result: [String: EventOverlap] = [:]
@@ -697,8 +705,10 @@ enum EventOverlapAnalysis {
             } else {
                 role = .none
             }
+            let under = active.compactMap { result[$0.id]?.indent }.max()
             result[event.id] = EventOverlap(
-                role: role, indent: role == .none ? 0 : 1, pullsInOnRight: { if case .contained = role { return true } else { return false } }(),
+                role: role, indent: under.map { min(maximumIndent, $0 + 1) } ?? 0,
+                pullsInOnRight: { if case .contained = role { return true } else { return false } }(),
                 groupSize: 1, summarisesTitles: false
             )
             if event.startMinute >= groupEnd {
