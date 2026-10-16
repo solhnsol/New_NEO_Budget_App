@@ -167,6 +167,7 @@ final class AppModel {
             phase = .failed("일정과 거래를 불러오지 못했습니다.")
             return
         }
+        await bindSpendingByTime()
         await reload()
         observeChanges()
     }
@@ -447,7 +448,9 @@ final class AppModel {
         let result = await savePipeline.save(request)
         switch result {
         case .unchanged, .needsScope: break
-        case .saved, .refused, .failed: await reload()          // a refusal or failure may mean the calendar changed: show what it holds now
+        case .saved, .refused, .failed:                         // a refusal or failure may mean the calendar changed: show what it holds now
+            await bindSpendingByTime()
+            await reload()
         }
         return result
     }
@@ -516,7 +519,30 @@ final class AppModel {
 
     /// The ledger changed (a notification arrived, an account was answered): the timeline and the ledger tab read it again.
     func ledgerDidChange() async {
-        if service != nil { await reload() } else { dataGeneration += 1 }
+        if service != nil {
+            await bindSpendingByTime()
+            await reload()
+        } else {
+            dataGeneration += 1
+        }
+    }
+
+    /// Spending that happened during an event goes into it (`docs/ledger-behavior.md`, 1): each month that still has spending in no event is
+    /// matched against its events, as automation, so the user's own decisions (including taking a transaction out) always stand. Run when the
+    /// service starts, when the ledger changes and when the calendar changes; a transaction already decided is never looked at again.
+    func bindSpendingByTime() async {
+        guard let service, let transactions = try? await ledger.transactions() else { return }
+        let life = (try? await service.lifeSnapshot().state) ?? .empty
+        let months = Set(transactions
+            .filter { $0.flow == .spend && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .compactMap { marker -> LocalDate? in
+                let day = dayZone.localDate(of: marker.occurredAtUnixMilliseconds)
+                return try? LocalDate(year: day.year, month: day.month, day: 1)
+            })
+        for month in months.sorted() {
+            guard let next = try? LocalDate(year: month.month == 12 ? month.year + 1 : month.year, month: month.month % 12 + 1, day: 1) else { continue }
+            _ = try? await service.bindByTime(from: dayZone.dayBounds(month).start, to: dayZone.dayBounds(next).start)
+        }
     }
 
     private func observeLedger() {
@@ -530,6 +556,7 @@ final class AppModel {
         observer = Task { [weak self] in
             for await _ in await provider.changes() {
                 try? await Task.sleep(for: .milliseconds(300))
+                await self?.bindSpendingByTime()
                 await self?.reload()
             }
         }
