@@ -150,6 +150,7 @@ private struct StatementRow: View {
         case .transfer: return "이체"
         case .cardPayment: return "카드대금"
         case .adjustment: return "취소·환불"
+        case .reversal: return "되돌림"
         }
     }
 }
