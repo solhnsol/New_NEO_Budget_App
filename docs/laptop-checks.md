@@ -21,6 +21,7 @@ tools/dev/check.sh full
 | `claude/project-thread-hstee5` | 단축어 연결 코드가 Xcode에서 빌드되고 앱 테스트가 통과한다 (`RecordNotificationIntent`, 받은 알림 화면은 클라우드에서 컴파일하지 못했다). | `tools/dev/check.sh full` |
 | `claude/project-thread-hstee5` | **실기기:** 단축어 앱 동작 목록에 "OnAll · 알림 기록하기"가 보인다. 기존 자동화의 서버 전송 단계를 이 동작으로 바꾸고 결제 알림을 받으면, 가계부 탭 오른쪽 위 "받은 알림"에 제목·본문이 나뉘어 보인다(한 덩어리로 보이면 사전이 JSON으로 넘어오지 않은 것). | Hans가 폰에서 직접 |
 | `claude/project-thread-hstee5` | **실기기:** "이 계좌가 맞나요?"에서 계좌를 등록·연결하면 앞서 받은 알림까지 "가계부에 반영됨"으로 바뀌고, 소비 목록과 캘린더 거래 줄에 앱을 다시 켜지 않아도 나타난다. 앱을 껐다 켜도 남아 있다. 잠긴 화면에서 온 알림도 기록된다. | Hans가 폰에서 직접 |
+| `claude/project-thread-hstee5` | 실행 인자 없이 켜도(폰 설치본 포함) 캘린더가 고정 그리드로 열린다. `-browse-classic`을 주면 예전 화면이 나온다. `FixedGridBrowseTests`의 기본값 테스트가 통과한다. | `tools/dev/check.sh ui` (인자 없이) |
 
 ## 확인 완료 (2026-10-16, 노트북)
 

@@ -94,11 +94,12 @@ private func visibleTitles(_ plan: DayRenderPlan) -> Int { plan.events.filter { 
 
 // MARK: The flag
 
-@Test func theDefaultIsTheExistingBrowseAndOnlyTheLaunchArgumentTurnsTheGridOn() {
-    #expect(BrowseAxisMode.resolve(arguments: []) == .classic)
-    #expect(BrowseAxisMode.resolve(arguments: ["-demo", "-demo-trans"]) == .classic)
-    #expect(BrowseAxisMode.resolve(arguments: ["-demo", "-browse-temporal"]) == .fixedGrid)      // DEBUG builds (these tests) read it
-    #expect(BrowseAxisMode.current == .classic)                                                  // the test process was not launched with it
+@Test func theFixedGridIsTheDefaultAndOnlyTheLaunchArgumentBringsBackTheClassicBrowse() {
+    #expect(BrowseAxisMode.resolve(arguments: []) == .fixedGrid)
+    #expect(BrowseAxisMode.resolve(arguments: ["-demo", "-demo-trans"]) == .fixedGrid)
+    #expect(BrowseAxisMode.resolve(arguments: ["-demo", "-browse-temporal"]) == .fixedGrid)      // the old switch still works and changes nothing
+    #expect(BrowseAxisMode.resolve(arguments: ["-demo", "-browse-classic"]) == .classic)         // DEBUG builds (these tests) read it
+    #expect(BrowseAxisMode.current == .fixedGrid)                                                // the test process was not launched with it
 }
 
 // MARK: Equivalence of what is drawn
