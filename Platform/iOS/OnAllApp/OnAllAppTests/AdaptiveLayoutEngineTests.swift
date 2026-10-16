@@ -151,15 +151,21 @@ private func busy(_ prefix: String, count: Int, start: Int = 9 * 60, linked: Int
     #expect(inner.overlap.role == .contained(in: "outer") && inner.overlap.indent == 1 && inner.overlap.pullsInOnRight)
 }
 
-@Test func threeOrMoreOverlapsNeverIndentPastOneStepAndSummariseTheirTitles() throws {
+@Test func eachOverlappingCardIsIndentedPastTheCardItLiesOnUpToTheLimitAndTheyStillSummariseTheirTitles() throws {
+    // Policy (2026-10-16): only the card in front moves, one step past the deepest card it lies on, so no two cards share an edge.
     let events = (0..<5).map { ev("e\($0)", 600 + $0 * 10, 900) }
     let layout = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: events)))
-    #expect(layout.events.allSatisfy { $0.overlap.indent <= 1 })
+    #expect(try (0..<5).map { try placement(layout, "e\($0)").overlap.indent } == [0, 1, 2, 3, 3])
     #expect(layout.events.allSatisfy { $0.overlap.groupSize == 5 && $0.overlap.summarisesTitles })
     #expect(Set(layout.events.map(\.id)).count == 5)                                  // none is dropped
-    // A containing chain is still one step: nested inside nested is not a second indent.
+    // A card inside a card inside a third is indented twice.
     let nested = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [ev("a", 540, 900), ev("b", 600, 800), ev("c", 650, 700)])))
-    #expect(nested.events.allSatisfy { $0.overlap.indent <= 1 })
+    #expect(try ["a", "b", "c"].map { try placement(nested, $0).overlap.indent } == [0, 1, 2])
+    // Once the card under it has ended, a card is back at the column's edge.
+    let later = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [ev("a", 540, 600), ev("b", 570, 660), ev("c", 630, 700)])))
+    #expect(try ["a", "b", "c"].map { try placement(later, $0).overlap.indent } == [0, 1, 2])
+    let apart = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [ev("a", 540, 600), ev("b", 570, 620), ev("c", 625, 700)])))
+    #expect(try placement(apart, "c").overlap.indent == 0)
 }
 
 // MARK: Transactions: lines, links and overflow

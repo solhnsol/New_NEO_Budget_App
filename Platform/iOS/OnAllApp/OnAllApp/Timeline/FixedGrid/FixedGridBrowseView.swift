@@ -321,7 +321,7 @@ struct FixedGridBrowseView: View {
         }
         .overlay(alignment: .bottom) { editBar }
         .confirmationDialog(
-            "반복 일정입니다", isPresented: Binding(get: { editor?.scopeQuestion != nil }, set: { shown in if !shown { scopeDialogClosed() } }),
+            "반복 일정이에요", isPresented: Binding(get: { editor?.scopeQuestion != nil }, set: { shown in if !shown { scopeDialogClosed() } }),
             titleVisibility: .visible, presenting: editor?.scopeQuestion
         ) { question in
             ForEach(question.options, id: \.self) { scope in Button(FixedGridEditor.label(for: scope)) { editor?.answer(scope) } }
@@ -551,6 +551,12 @@ struct FixedGridBrowseView: View {
                         startIsCovered: coveringFrames.contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
                     )
                     .opacity(opacity(item.blendItem))
+                }
+            }
+            // A linked transaction outside its event's time: the event's stripe runs on to it.
+            ForEach(lines.filter { $0.tail != nil }, id: \.id) { line in
+                if let tail = line.tail {
+                    TransactionTailView(tail: tail, colorHex: line.linkColorHex, dotX: axis.gutterWidth + LeaderLayout.dotSize / 2).opacity(opacity(.line(line.id)))
                 }
             }
             ForEach(lines, id: \.id) { line in
@@ -1529,8 +1535,8 @@ private struct DayLoadingMark: View {
     var body: some View {
         HStack(spacing: 6) {
             if state == .failed {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                Text("불러오지 못했습니다")
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.caution)
+                Text("불러오지 못했어요")
             } else {
                 ProgressView().controlSize(.mini)
                 Text("불러오는 중")
@@ -1718,7 +1724,7 @@ private struct CalendarChips: View {
                             .opacity(chosen ? 1 : 0.45)
                             .accessibilityElement(children: .combine)
                             .accessibilityAddTraits(chosen ? .isSelected : [])
-                            .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않습니다")
+                            .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않아요")
                     }
                 }
             }
@@ -1931,7 +1937,8 @@ private struct FixedHourAxis: View {
 
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
-        let states = HourAxis.layout(partition: partition, metrics: metrics)
+        // The hours with a line across the days come first: theirs are the labels that keep their room.
+        let states = HourAxis.layout(partition: partition, metrics: metrics, first: Set((0...24).filter { gridWeight(hour: $0) >= 0.5 }))
         ZStack(alignment: .topLeading) {
             ForEach(0..<partition.slotCount, id: \.self) { slot in
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
@@ -1952,12 +1959,25 @@ private struct FixedHourAxis: View {
                     .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
                 }
                 if state.labelOpacity > 0.003 {
-                    Text(Formatting.hourLabel(state.hour % 24))
-                        .font(.system(size: metrics.labelFontSize).monospacedDigit()).foregroundStyle(.secondary)
-                        .lineLimit(1).minimumScaleFactor(0.5)
-                        .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
-                        .opacity(state.labelOpacity)
-                        .offset(y: state.labelCentre - metrics.labelHeight / 2)
+                    // An hour on a line of the grid is the axis's main label: dark, semibold, full size. Every other hour is gray and a size
+                    // smaller. Between days the two pass into each other as the hour's line comes or goes.
+                    let grid = gridWeight(hour: state.hour)
+                    ZStack(alignment: .trailing) {
+                        if grid < 1 {
+                            Text(Formatting.hourLabel(state.hour % 24))
+                                .font(.system(size: metrics.labelFontSize * 0.85).monospacedDigit()).foregroundStyle(Theme.textTertiary)
+                                .opacity(1 - grid)
+                        }
+                        if grid > 0 {
+                            Text(Formatting.hourLabel(state.hour % 24))
+                                .font(.system(size: metrics.labelFontSize, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
+                                .opacity(grid)
+                        }
+                    }
+                    .lineLimit(1).minimumScaleFactor(0.5)
+                    .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
+                    .opacity(state.labelOpacity)
+                    .offset(y: state.labelCentre - metrics.labelHeight / 2)
                 }
             }
         }

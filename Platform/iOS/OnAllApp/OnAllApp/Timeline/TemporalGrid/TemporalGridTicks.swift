@@ -53,8 +53,10 @@ enum HourAxis {
         return t * t * (3 - 2 * t)
     }
 
-    /// The 25 hours (00 ... 24) on `partition` as drawn now.
-    static func layout(partition: TemporalGridPartition, metrics: Metrics) -> [HourAxisState] {
+    /// The 25 hours (00 ... 24) on `partition` as drawn now. `first`: hours that go before every other in the order of importance (keeping their
+    /// own order), such as the hours a fixed grid draws a line across the days at, so their labels are the ones that keep their room.
+    static func layout(partition: TemporalGridPartition, metrics: Metrics, first: Set<Int> = []) -> [HourAxisState] {
+        let importance = first.isEmpty ? Self.importance : Self.importance.filter { first.contains($0) } + Self.importance.filter { !first.contains($0) }
         let total = partition.totalHeight
         let half = metrics.labelHeight / 2
         let y = (0...24).map { partition.timeToY(Double($0 * 60)) }

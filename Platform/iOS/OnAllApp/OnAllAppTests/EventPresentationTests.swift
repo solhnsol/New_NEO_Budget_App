@@ -311,3 +311,20 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
         if line.reveal > 0 { #expect(!title.intersects(line.frame.insetBy(dx: 0, dy: 4))) }
     }
 }
+
+
+@Test func aCardThinnerThanTheTitleWritesItSmallThenNotAtAll() {
+    let m = EventPresentation.Metrics.standard()
+    #expect(m.compactNeed < m.titleNeed)
+    let none = EventPresentation.make(height: m.compactNeed - 0.5, metrics: m)
+    #expect(none.compactTitle == 0 && none.title == 0)
+    let small = EventPresentation.make(height: m.compactNeed + m.ramp, metrics: m)
+    #expect(small.compactTitle == 1 && small.title == 0 && small.writesTitle)
+    let full = EventPresentation.make(height: m.titleNeed + m.ramp, metrics: m)
+    #expect(full.title == 1 && full.compactTitle == 0)
+    // Between the two the small title gives way as the title comes in; never both whole.
+    for step in 0...20 {
+        let p = EventPresentation.make(height: m.compactNeed + CGFloat(step), metrics: m)
+        #expect(p.title + p.compactTitle <= 1.0001)
+    }
+}
