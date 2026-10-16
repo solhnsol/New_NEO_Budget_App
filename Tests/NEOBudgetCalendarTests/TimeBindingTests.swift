@@ -65,3 +65,21 @@ private let trip = allDayEvent("trip", title: "여행", from: today, to: today)
     let allocation = try #require((await h.life()).allocationSet(for: txID("meal"))?.allocations.first)
     #expect(allocation.activityID == nil && allocation.provenance.source == .user)
 }
+
+@Test func aRefundFollowsItsPurchaseIntoItsEvent() async throws {
+    let h = Harness.make(events: [lunch], transactions: [
+        marker("meal", at: at(today, 12, 41), amount: 15_000),
+        marker("back", at: at(today, 20), amount: 5_000, flow: .refund),
+    ])
+    let bounds = seoul.dayBounds(today)
+    _ = try await h.service.bindByTime(from: bounds.start, to: bounds.end)
+    let refundOf = [txID("back"): txID("meal")]
+    let placed = try await h.service.bindRefunds(refundOf: refundOf)
+    #expect(placed == 1)
+    let life = await h.life()
+    let refund = try #require(life.allocationSet(for: txID("back"))?.allocations.first)
+    #expect(refund.activityID == life.allocationSet(for: txID("meal"))?.allocations.first?.activityID)
+    #expect(refund.provenance.source == .automated)
+    let again = try await h.service.bindRefunds(refundOf: refundOf)
+    #expect(again == 0)
+}

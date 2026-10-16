@@ -107,6 +107,21 @@ public actor CalendarCommandService {
         return bound
     }
 
+    /// Puts each unallocated refund into the activity its purchase belongs to (`TimeBinding.refundProposals`), as automation. `refundOf` maps a
+    /// refund to its purchase, as the ledger links them. Returns how many were placed.
+    @discardableResult
+    public func bindRefunds(refundOf: [LedgerEntryID: LedgerEntryID]) async throws -> Int {
+        let life = try repository.snapshot().state
+        let refunds = transactions.transactions(withIDs: Set(refundOf.keys))
+        var bound = 0
+        for proposal in TimeBinding.refundProposals(refunds: refunds, refundOf: refundOf, life: life) {
+            let provenance = AssignmentProvenance.automated(origin: TimeBinding.refundOrigin, confidence: 1, at: now())
+            let input = LinkTransactionInput(transactionID: proposal.transactionID, target: .activity(proposal.activityID), provenance: provenance)
+            if case .applied = await linkTransaction(input) { bound += 1 }
+        }
+        return bound
+    }
+
     public func weekStrip(containing day: LocalDate, firstWeekday: Int = 0, visibleCalendarIDs: Set<CalendarID>? = nil) async throws -> [WeekStripDay] {
         let timeZone = configuration.displayTimeZone
         let offset = ((day.weekday - firstWeekday) % 7 + 7) % 7

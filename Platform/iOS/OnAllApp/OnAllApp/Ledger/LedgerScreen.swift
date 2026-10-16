@@ -107,7 +107,8 @@ struct LedgerDayHeader: View {
 }
 
 /// One transaction line: its category on a tile, what and when (and which activities), the amount on the right; a refund is blue with a plus, as
-/// Korean banks show money coming back.
+/// Korean banks show money coming back. A purchase that got money back shows what it cost after that, the charged amount struck through under
+/// it, and one small line per refund or settlement.
 struct LedgerRow: View {
     let entry: LedgerListEntry
     let zoneIdentifier: String
@@ -123,12 +124,32 @@ struct LedgerRow: View {
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                 Text(transaction.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(subtitle).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                ForEach(entry.offsets) { offset in
+                    Text(LedgerRow.offsetLine(offset, currency: transaction.amount.currency, zoneIdentifier: zoneIdentifier))
+                        .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                }
             }
             Spacer(minLength: Theme.Space.s)
-            Text((isRefund ? "+" : "") + Formatting.money(transaction.amount.minorUnits, currency: transaction.amount.currency))
-                .font(Theme.Typo.amount)
-                .foregroundStyle(Theme.amountColor(isIncoming: isRefund))
+            VStack(alignment: .trailing, spacing: Theme.Space.xxs) {
+                Text((isRefund ? "+" : "") + Formatting.money(entry.netMinorUnits ?? transaction.amount.minorUnits, currency: transaction.amount.currency))
+                    .font(Theme.Typo.amount)
+                    .foregroundStyle(Theme.amountColor(isIncoming: isRefund))
+                if entry.netMinorUnits != nil {
+                    Text(Formatting.money(transaction.amount.minorUnits, currency: transaction.amount.currency))
+                        .font(Theme.Typo.caption).monospacedDigit().strikethrough().foregroundStyle(Theme.textTertiary)
+                }
+            }
         }
+    }
+
+    /// "환불 19,000 · 10/9" or "민수 정산 30,000 · 10/9".
+    static func offsetLine(_ offset: LedgerListEntry.Offset, currency: String, zoneIdentifier: String) -> String {
+        let what: String
+        switch offset.kind {
+        case .refund: what = "환불"
+        case let .settlement(from): what = from + " 정산"
+        }
+        return what + " " + Formatting.money(offset.minorUnits, currency: currency) + " · " + Formatting.shortDate(offset.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
     }
 
     private var subtitle: String {

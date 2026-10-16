@@ -12,6 +12,8 @@ import NEOBudgetCore
 public enum TimeBinding {
     /// The rule's name on the allocations it makes.
     public static let origin = "time-binding/1"
+    /// The name on allocations that put a refund with its purchase.
+    public static let refundOrigin = "refund-follows-purchase/1"
 
     public struct Proposal: Hashable, Sendable {
         public let transactionID: LedgerEntryID
@@ -41,6 +43,30 @@ public enum TimeBinding {
                     return (a.key.calendarID.rawValue, a.key.eventID.rawValue) < (b.key.calendarID.rawValue, b.key.eventID.rawValue)
                 }
                 return chosen.map { Proposal(transactionID: transaction.id, event: $0.key) }
+            }
+    }
+
+    /// A refund goes where its purchase went (`docs/ledger-behavior.md`, 2): an unallocated refund whose purchase belongs wholly to one activity
+    /// is proposed for that activity. A purchase split among activities, or kept out of all, leaves its refund alone.
+    public struct RefundProposal: Hashable, Sendable {
+        public let transactionID: LedgerEntryID
+        public let activityID: ActivityID
+
+        public init(transactionID: LedgerEntryID, activityID: ActivityID) {
+            self.transactionID = transactionID
+            self.activityID = activityID
+        }
+    }
+
+    public static func refundProposals(refunds: [TransactionMarker], refundOf: [LedgerEntryID: LedgerEntryID], life: LifeState) -> [RefundProposal] {
+        refunds
+            .filter { $0.flow == .refund && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .sorted { $0.id.rawValue < $1.id.rawValue }
+            .compactMap { refund in
+                guard let original = refundOf[refund.id], let set = life.allocationSet(for: original) else { return nil }
+                let activities = Set(set.allocations.map(\.activityID))
+                guard activities.count == 1, let only = activities.first, let activityID = only else { return nil }
+                return RefundProposal(transactionID: refund.id, activityID: activityID)
             }
     }
 }

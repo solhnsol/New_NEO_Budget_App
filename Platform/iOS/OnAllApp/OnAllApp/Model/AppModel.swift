@@ -463,7 +463,8 @@ final class AppModel {
     func ledgerSections() async -> [LedgerDaySection]? {
         guard let transactions = try? await ledger.transactions() else { return nil }
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
-        return LedgerList.sections(transactions, life: life, zone: dayZone)
+        let refundOf = (try? await ledger.refundLinks()) ?? [:]
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
     }
 
     /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
@@ -527,9 +528,10 @@ final class AppModel {
         }
     }
 
-    /// Spending that happened during an event goes into it (`docs/ledger-behavior.md`, 1): each month that still has spending in no event is
-    /// matched against its events, as automation, so the user's own decisions (including taking a transaction out) always stand. Run when the
-    /// service starts, when the ledger changes and when the calendar changes; a transaction already decided is never looked at again.
+    /// Spending that happened during an event goes into it (`docs/ledger-behavior.md`, 1), and a refund goes where its purchase went (2). Each month
+    /// that still has spending in no event is matched against its events, as automation, so the user's own decisions (including taking a
+    /// transaction out) always stand. Run when the service starts, when the ledger changes and when the calendar changes; a transaction already
+    /// decided is never looked at again.
     func bindSpendingByTime() async {
         guard let service, let transactions = try? await ledger.transactions() else { return }
         let life = (try? await service.lifeSnapshot().state) ?? .empty
@@ -543,6 +545,8 @@ final class AppModel {
             guard let next = try? LocalDate(year: month.month == 12 ? month.year + 1 : month.year, month: month.month % 12 + 1, day: 1) else { continue }
             _ = try? await service.bindByTime(from: dayZone.dayBounds(month).start, to: dayZone.dayBounds(next).start)
         }
+        // A refund follows its purchase into the event, wherever in time it came back.
+        if let refundOf = try? await ledger.refundLinks(), !refundOf.isEmpty { _ = try? await service.bindRefunds(refundOf: refundOf) }
     }
 
     private func observeLedger() {

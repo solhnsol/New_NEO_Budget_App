@@ -59,6 +59,15 @@ actor AppLedger {
         LedgerTimelineProjection.transactions(in: try snapshot())
     }
 
+    /// Each refund or cancellation and the purchase it gives money back for, as the ledger links them.
+    func refundLinks() throws -> [LedgerEntryID: LedgerEntryID] {
+        Self.refundLinks(in: try snapshot().ledger)
+    }
+
+    static func refundLinks(in ledger: LedgerSnapshot) -> [LedgerEntryID: LedgerEntryID] {
+        Dictionary(ledger.entries.compactMap { entry in entry.adjustment.map { (entry.id, $0.originalEntryID) } }, uniquingKeysWith: { first, _ in first })
+    }
+
     /// Received notifications, newest first, with where each ended up. Empty outside the real ledger.
     func inbox() -> [InboxItem] {
         guard case let .live(ledger, _) = backing else { return [] }

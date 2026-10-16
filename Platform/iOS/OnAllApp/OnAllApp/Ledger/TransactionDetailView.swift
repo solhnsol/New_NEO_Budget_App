@@ -38,6 +38,32 @@ struct TransactionDetailView: View {
                 }
             }
             .onAllCardRow()
+            if !entry.offsets.isEmpty, let net = entry.netMinorUnits {
+                Section {
+                    ForEach(entry.offsets) { offset in
+                        LabeledContent {
+                            Text("+" + Formatting.money(offset.minorUnits, currency: transaction.amount.currency))
+                                .font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: true))
+                        } label: {
+                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                                Text(offsetTitle(offset)).foregroundStyle(Theme.textPrimary)
+                                Text(Formatting.shortDate(offset.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier))
+                                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                            }
+                        }
+                    }
+                    LabeledContent {
+                        Text(Formatting.money(net, currency: transaction.amount.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+                    } label: {
+                        Text("실제 부담").foregroundStyle(Theme.textSecondary)
+                    }
+                } header: {
+                    Text("돌려받은 돈")
+                } footer: {
+                    Text("보기에만 반영돼요. 계좌·카드 내역과 카드 사용액은 결제한 금액 그대로예요.")
+                }
+                .onAllCardRow()
+            }
             Section {
                 if entry.portions.isEmpty {
                     Text("아직 연결된 활동이 없어요").foregroundStyle(Theme.textTertiary)
@@ -66,6 +92,13 @@ struct TransactionDetailView: View {
         .onAllGroupedScreen()
         .navigationTitle(transaction.title ?? "거래")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func offsetTitle(_ offset: LedgerListEntry.Offset) -> String {
+        switch offset.kind {
+        case .refund: "환불"
+        case let .settlement(from): from + " 정산"
+        }
     }
 
     private func row(_ label: String, _ value: String) -> some View {
