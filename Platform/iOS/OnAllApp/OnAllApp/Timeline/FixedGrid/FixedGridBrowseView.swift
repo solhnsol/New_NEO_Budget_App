@@ -785,7 +785,7 @@ struct FixedGridBrowseView: View {
         // The draft follows the finger (the editing parts), the edge kept at the distance from the finger it had when the drag began.
         if let handle = FixedGridEditInteraction.Handle(hit), let target = edit.state.editing?.target {
             if phase == .began, let card = gestureMode.target?.frame {
-                room.grabOffset = (handle == .start ? card.minY : card.maxY) - point.y
+                room.grabOffset = edgeY(handle, of: target, card: card) - point.y
             }
             edit.send(.handleDrag(phase, handle, point: point, minute: minute(atY: point.y + room.grabOffset, day: target.day)))
         }
@@ -910,14 +910,26 @@ struct FixedGridBrowseView: View {
         return model.cachedTimeline(for: target.day)?.blocks.first { $0.eventKey == target.eventKey }.map { $0.calendarColorHex }
     }
 
-    /// A new event's card in the grid's coordinates: across its day's column, from its start to its end on the axis drawn now.
+    /// A new event's card in the grid's coordinates: across its day's column, from its start on the axis drawn now, as tall as its time there but never too
+    /// thin to name it (in a folded stretch of the day an hour may be only a few points; the grid gives it its room once it is saved).
     private func newCardFrame(day: LocalDate, startMinute: Int, endMinute: Int, axis: ElapsedMinuteAxisMapping) -> CGRect {
         let geometry = geometry(width: room.width)
         let top = axis.y(minute: startMinute)
         return CGRect(
             x: geometry.x(ofDay: Double(day.daysSinceUnixEpoch), at: position) + axis.gutterWidth + 2, y: top,
-            width: max(0, geometry.dayWidth - Self.trailing - 4), height: max(1, axis.y(endMinute: endMinute) - top)
+            width: max(0, geometry.dayWidth - Self.trailing - 4), height: max(Self.newCardMinimumHeight, axis.y(endMinute: endMinute) - top)
         )
+    }
+
+    /// The least a new event's card is drawn (its title and time written in it).
+    private static let newCardMinimumHeight: CGFloat = 36
+
+    /// Where an edge of the edited event really is on the axis drawn now (a new event's card may be drawn taller than its time; its handle drags from the
+    /// real edge, so the first step does not jump).
+    private func edgeY(_ handle: FixedGridEditInteraction.Handle, of target: FixedGridEditInteraction.Target, card: CGRect) -> CGFloat {
+        guard target.isNew, let segment = editor?.draft?.segment(on: target.day) else { return handle == .start ? card.minY : card.maxY }
+        let axis = planner.axis(for: target.day, partition: frame(zoom: pinch.zoom, viewport: pinch.viewportHeight, width: room.width).shown, zone: zone)
+        return handle == .start ? axis.y(minute: segment.startMinute) : axis.y(endMinute: segment.endMinute)
     }
 
     /// The new event a long press carries: outlined where it would be put down, and its start written on the hour axis over the hours there.
@@ -959,8 +971,9 @@ struct FixedGridBrowseView: View {
     /// While a handle of the edited card is dragged, the time of that edge is written on the hour axis too.
     @ViewBuilder
     private func draggedEdgeMark() -> some View {
-        if let editor, editor.isDragging, let edge = editor.edge, let draft = editor.draft, let card = gestureMode.target?.frame, !card.isNull {
-            let y = edge == .start ? card.minY : card.maxY
+        if let editor, editor.isDragging, let edge = editor.edge, let draft = editor.draft, let target = edit.state.editing?.target,
+           let card = gestureMode.target?.frame, !card.isNull {
+            let y = edgeY(edge == .start ? .start : .end, of: target, card: card)
             GutterTimeMark(text: DraftCard.clock(edge == .start ? draft.startDate : draft.endDate, zone: zone), y: y, gutter: Self.gutter, lineTo: card.minX)
                 .allowsHitTesting(false)
         }
@@ -1568,6 +1581,12 @@ private struct EditSessionBar: View {
         .shadow(color: .black.opacity(0.12), radius: 8, y: 2)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
         .onChange(of: editor.isRenaming, initial: true) { _, renaming in typing = renaming }
+        // A bar that appears already renaming (a new event put down) may not take the focus on its first frame: it is asked again once it is on screen.
+        .task(id: editor.isRenaming) {
+            guard editor.isRenaming else { return }
+            try? await Task.sleep(for: .milliseconds(120))
+            if editor.isRenaming, !typing { typing = true }
+        }
         // The keyboard went away by itself (swiped down, another field): the renaming ends, the title kept.
         .onChange(of: typing) { _, now in if !now && editor.isRenaming { endRename() } }
     }
