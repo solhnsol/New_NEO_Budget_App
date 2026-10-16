@@ -197,6 +197,20 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     #expect(placed(on: 0.7, readFrom: nil).events.first?.presentation == placed(on: 0.7, readFrom: 0.7).events.first?.presentation)   // none: as before
 }
 
+@Test func whileTheDaysMoveALineIsWrittenAsTheDayWritesItAtRestWhereverTheAxisPutsIt() throws {
+    let tl = try timeline([], [try spend("a", minute: 600), try spend("b", minute: 610)])
+    func placed(on ppm: CGFloat) -> DayRenderPlan {
+        DayRenderPlan(timeline: tl, role: nil, layout: nil, geometry: TimelineGeometry(totalMinutes: 1440, pointsPerMinute: ppm), layoutWidth: layoutWidth, titleWidth: { _ in 40 })
+    }
+    let rest = placed(on: 3), squeezed = placed(on: 0.2)                                   // 30 points apart at rest, 2 on the way
+    #expect(rest.lines.count == 2 && rest.lines.allSatisfy { $0.reveal >= 1 })
+    #expect(squeezed.lines.contains { $0.reveal < 1 })                                      // on its own, the squeezed axis would hide one
+    let held = squeezed.holdingVisibility(of: rest, textScale: 1)
+    #expect(held.lines.map(\.reveal) == rest.lines.map(\.reveal))                          // written as at rest
+    #expect(held.lines.map(\.frame.minY) == squeezed.lines.map(\.frame.minY))              // placed where the moving axis has it
+    #expect(held.lines.map(\.frame.minX) == rest.lines.map(\.frame.minX))
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {

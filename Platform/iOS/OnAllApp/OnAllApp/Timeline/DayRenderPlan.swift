@@ -480,6 +480,47 @@ struct DayRenderPlan {
         hitOrder = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
     }
 
+    /// This plan, with what it shows held to `rest`: the same day under the same decision, placed on the partition that decision has at rest. While the days move
+    /// the cards are placed on the blend of two partitions, so how far apart things are changes with the position; what is written (a line's text, its width, a
+    /// header, a shortened title) is what the day shows at rest, so nothing comes and goes because the time between two things is squeezed on the way.
+    /// Only where things are drawn follows the moving axis.
+    func holdingVisibility(of rest: DayRenderPlan, textScale: CGFloat) -> DayRenderPlan {
+        let scale = max(0.5, textScale)
+        var held = self
+        var restLines: [String: LineItem] = [:]
+        for line in rest.lines { restLines[line.id] = line }
+        held.lines = lines.map { line in
+            guard let kept = restLines[line.id] else { return line }
+            var copy = line
+            copy.reveal = kept.reveal
+            copy.frame = CGRect(x: kept.frame.minX, y: line.frame.minY, width: kept.frame.width, height: line.frame.height)
+            copy.touchFrame = CGRect(x: kept.touchFrame.minX, y: line.touchFrame.minY, width: kept.touchFrame.width, height: line.touchFrame.height)
+            return copy
+        }
+        var restOverflows: [String: OverflowItem] = [:]
+        for overflow in rest.overflows { restOverflows[overflow.id] = overflow }
+        held.overflows = overflows.map { overflow in
+            guard let kept = restOverflows[overflow.id] else { return overflow }
+            var copy = overflow
+            copy.reveal = kept.reveal
+            copy.frame = CGRect(x: kept.frame.minX, y: overflow.frame.minY, width: kept.frame.width, height: overflow.frame.height)
+            copy.touchFrame = CGRect(x: kept.touchFrame.minX, y: overflow.touchFrame.minY, width: kept.touchFrame.width, height: overflow.touchFrame.height)
+            return copy
+        }
+        var restEvents: [BlockID: EventItem] = [:]
+        for item in rest.events { restEvents[item.block.id] = item }
+        held.events = events.map { item in
+            guard let kept = restEvents[item.block.id] else { return item }
+            var copy = item
+            copy.titleMaxWidth = kept.titleMaxWidth
+            copy.header = kept.header.map { CGRect(x: $0.minX, y: item.drawnFrame.minY - $0.height, width: $0.width, height: $0.height) }
+            copy.showsTitleInCard = kept.showsTitleInCard
+            copy.rowsFrame = Self.rowsFrame(card: item.drawnFrame, titleOffset: item.title.dy, hasHeader: copy.header != nil, presentation: item.presentation, scale: scale)
+            return copy
+        }
+        return held
+    }
+
     /// Where a card of `presentation` writes its inside rows: below the title's room (or the header's thin edge), one row per shown transaction
     /// and one for the "그 외"/summary row, cut off at the card's bottom like the card's own clip. The same stack as `EventBlockView`.
     static func rowsFrame(card: CGRect, titleOffset: CGFloat, hasHeader: Bool, presentation: EventPresentation, scale: CGFloat) -> CGRect? {
