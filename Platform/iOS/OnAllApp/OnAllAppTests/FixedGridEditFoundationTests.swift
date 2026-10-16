@@ -71,6 +71,8 @@ private let editing = G.Mode.editing(target)
     #expect(G.longPress(start: .content(event), mode: .browse) == .details(BlockID(rawValue: "x")))
     #expect(G.longPress(start: .content(.line("t")), mode: .browse) == .pickUpTransaction("t"))
     #expect(G.longPress(start: .content(.overflow("o")), mode: .browse) == .notice)
+    #expect(G.longPress(start: .content(.choose([.line("t"), .event(BlockID(rawValue: "x"))])), mode: .browse) == .pickUpTransaction("t"))
+    #expect(G.longPress(start: .content(.choose([.line("t"), .line("u")])), mode: .browse) == .notice)
     #expect(G.longPress(start: .empty, mode: editing) == .none)                                  // a tap outside ends the session first
     #expect(G.longPress(start: .content(event), mode: editing) == .none)
 }

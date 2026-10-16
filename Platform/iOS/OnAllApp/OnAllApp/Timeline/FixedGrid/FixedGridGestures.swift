@@ -136,6 +136,11 @@ enum FixedGridGestures {
         case (.browse, .empty): return .createDraft
         case (.browse, .content(.event(let id))): return .details(id)
         case (.browse, .content(.line(let id))): return .pickUpTransaction(id)
+        case (.browse, .content(.choose(let candidates))):
+            // Where touch areas meet (a line beside a card, two lines close together) a tap asks which is meant; a long press picks up the one
+            // transaction line among them, since nothing else there can be carried.
+            let lines = candidates.compactMap { candidate -> String? in if case let .line(id) = candidate { id } else { nil } }
+            return lines.count == 1 ? .pickUpTransaction(lines[0]) : .notice
         case (.browse, .content): return .notice
         default: return .none
         }

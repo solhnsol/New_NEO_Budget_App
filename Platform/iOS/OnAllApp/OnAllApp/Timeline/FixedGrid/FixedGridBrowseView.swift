@@ -85,6 +85,8 @@ struct FixedGridBrowseView: View {
         /// What the DEBUG edit probe saw: handle taps, handle drags and their steps, long presses meaning "create" on empty grid, and the day position when a
         /// handle drag began and ended (a drag from a handle must not move the days).
         var handleTaps = 0, handleDrags = 0, handleSteps = 0, createPresses = 0
+        /// Transactions picked up from their line, and put down on an event (linked).
+        var carryPickUps = 0, carryLinks = 0
         var dragPositions: [Double] = []
         var probeWrite: Task<Void, Never>?
         /// The planner's freeze for the open session, and the session's id it belongs to.
@@ -690,6 +692,7 @@ struct FixedGridBrowseView: View {
               let display = found.plan.lines.first(where: { $0.id == id })?.display else { return }
         let transactionID = LedgerEntryID(rawValue: id)
         let linked = found.timeline.blocks.first { $0.allocations.contains { $0.transactionID == transactionID } }?.eventKey
+        room.carryPickUps += 1
         carrying = FixedGridTransactionCarry(
             transactionID: transactionID, title: display.title, amount: display.amount, flow: display.flow, linkedEvent: linked, at: point, cards: eventCards()
         )
@@ -709,6 +712,7 @@ struct FixedGridBrowseView: View {
             carry.move(to: point, cards: eventCards())
             carrying = nil
             if case let .link(transaction, event) = carry.outcome {
+                room.carryLinks += 1
                 Haptics.enterEdit()
                 Task { _ = await model.perform(ActivityEditing.link(transaction, event: event, now: Int64(Date().timeIntervalSince1970 * 1_000))) }
             }
@@ -1015,7 +1019,7 @@ struct FixedGridBrowseView: View {
             state = "꺼짐"
         }
         let drift = room.anchorDrift.map { String(format: " · 앵커 오차 %.2fpt", Double($0)) } ?? ""
-        return "편집 시험 \(state) · 핸들 탭 \(room.handleTaps) · 핸들 끌기 \(room.handleDrags)(\(room.handleSteps)) · 날짜 이동 \(moved ? "있음" : "없음") · 만들기 \(room.createPresses) · \(outside)\(drift) · 마지막 \(edit.log.last.map(Self.probeName) ?? "—")"
+        return "편집 시험 \(state) · 핸들 탭 \(room.handleTaps) · 핸들 끌기 \(room.handleDrags)(\(room.handleSteps)) · 날짜 이동 \(moved ? "있음" : "없음") · 만들기 \(room.createPresses) · 거래 들기 \(room.carryPickUps)/연결 \(room.carryLinks) · \(outside)\(drift) · 마지막 \(edit.log.last.map(Self.probeName) ?? "—")"
     }
 
     private static func probeName(_ command: FixedGridEditInteraction.Command) -> String {
