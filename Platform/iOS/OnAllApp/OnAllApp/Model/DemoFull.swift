@@ -35,7 +35,9 @@ enum DemoFull {
 
     static var isOn: Bool {
         let args = ProcessInfo.processInfo.arguments
-        return args.contains("-demo-full") || (!args.contains("-demo") && !args.contains("-live"))
+        // Tests build the sample ledger and demo themselves and expect the usual day.
+        let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        return args.contains("-demo-full") || (!testing && !args.contains("-demo") && !args.contains("-live"))
     }
 
     static let firstOffset = -28, lastOffset = 14
