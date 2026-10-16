@@ -180,7 +180,7 @@ private let longTitle = "아주 긴 일정 제목입니다"
     let events = try [event(0, "가", 600, 700), event(1, "나", 600, 690), event(2, "다", 600, 680), event(3, "라", 605, 650)]
     let r = render(try timeline(events))
     #expect(r.plan.events.count == 4 && Set(r.plan.events.map(\.block.title)) == ["가", "나", "다", "라"])
-    #expect(r.plan.events.allSatisfy { $0.placement?.overlap.indent ?? 0 <= 1 })
+    #expect(r.plan.events.allSatisfy { $0.placement?.overlap.indent ?? 0 <= EventOverlapAnalysis.maximumIndent })
     for placed in r.plan.events {
         #expect(placed.frame.minY == r.geometry.y(minute: placed.block.startMinute))
         #expect(r.plan.hit(at: CGPoint(x: placed.frame.maxX - 2, y: placed.frame.maxY - 2)) != .nothing)
@@ -391,24 +391,23 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(abs(first.frame.maxY - second.frame.minY) < 0.001)                                 // the two meet where their times meet
 }
 
-@Test func aCardTooThinForATitleGetsAHeaderTabOnlyWhereTheSpaceAboveIsFreeAndALineNever() throws {
-    let geometry = TimelineGeometry(totalMinutes: 1440)                                    // the plain axis: a 5 minute event is a thin card
+@Test func aCardTooThinForATitleWritesItSmallInsideItselfAndNeverGetsATab() throws {
+    // Policy (2026-10-16, Hans): a card thinner than its title writes the title in small type inside the card while a small line fits, then
+    // writes none. No tab or header above a thin card.
+    let geometry = TimelineGeometry(totalMinutes: 1440)                                    // the plain axis: a few minutes is a thin card
     func plan(_ events: [CalendarEvent]) throws -> DayRenderPlan {
         DayRenderPlan(timeline: try timeline(events), role: nil, layout: nil, geometry: geometry, layoutWidth: layoutWidth, titleWidth: { _ in 30 })
     }
-    let alone = try plan([event(1, "앞", 17 * 60, 17 * 60 + 12), event(2, "뒤", 17 * 60 + 12, 18 * 60 + 30)])
-    let thin = try #require(alone.events.first { $0.block.title == "앞" })
-    #expect(thin.presentation.level == .sliver && !thin.showsTitleInCard)
-    let tab = try #require(thin.header)
-    #expect(tab.maxY <= thin.drawnFrame.minY + 0.01 && tab.minX == thin.frame.minX)                 // sits on the card, in its column
-    #expect(alone.events.filter { $0.block.title != "앞" }.allSatisfy { !$0.frame.intersects(tab) })  // and covers no other event
-    let busy = try plan([event(3, "위", 16 * 60 + 40, 16 * 60 + 58), event(1, "앞", 17 * 60, 17 * 60 + 12), event(2, "뒤", 17 * 60 + 12, 18 * 60 + 30)])
-    let covered = try #require(busy.events.first { $0.block.title == "앞" })
-    #expect(covered.header.map { rect in !busy.events.contains { $0.block.title != "앞" && $0.frame.intersects(rect) } } ?? true)
-    // A line (a few minutes on this axis) has no header at all: it is not forced to name itself.
+    let metrics = EventPresentation.Metrics.standard()
+    let minutes = (1...60).first { geometry.y(minute: 17 * 60 + $0) - geometry.y(minute: 17 * 60) > metrics.compactNeed + 1 } ?? 60
+    let small = try plan([event(1, "앞", 17 * 60, 17 * 60 + minutes), event(2, "뒤", 18 * 60, 18 * 60 + 30)])
+    let thin = try #require(small.events.first { $0.block.title == "앞" })
+    #expect(thin.frame.height < metrics.titleNeed)
+    #expect(!thin.presentation.showsTitle && thin.presentation.compactTitle > 0 && thin.showsTitleInCard && thin.header == nil)
+    // Thinner than the small line: no title at all, and still no tab.
     let line = try plan([event(1, "선", 12 * 60, 12 * 60 + 2)])
     let only = try #require(line.events.first)
-    #expect(only.presentation.level == .line && only.header == nil)
+    #expect(only.presentation.compactTitle == 0 && !only.presentation.showsTitle && only.header == nil && !only.showsTitleInCard)
 }
 
 // MARK: On an axis planned for stability, what is drawn is what the axis has room for
@@ -575,4 +574,29 @@ private func demoLikeFixedGrid(meetingStart: Int, viewport: CGFloat) throws -> [
         }
     }
     #expect(sawRows, "no viewport gave 스터디 room for its rows, so the case was never checked")
+}
+
+
+// MARK: Overlap changes only the card in front (2026-10-16)
+
+@Test func twoCardsLyingOnTheSameCardAreIndentedApartAndTheCardBehindIsDrawnAsIfAlone() throws {
+    // The demo day Hans saw: 점심 12:00–13:00, a new event 12:30–15:45 that holds 스터디 12:30–14:30. Both later cards lie on 점심; before,
+    // both were indented the same one step and drawn on top of each other.
+    let events = try [event(0, "점심", 720, 780), event(1, "새 일정", 750, 945), event(2, "스터디", 750, 870)]
+    let r = render(try timeline(events))
+    let lunch = try item(r, "점심"), added = try item(r, "새 일정"), study = try item(r, "스터디")
+    #expect(added.frame.minX > lunch.frame.minX && study.frame.minX > added.frame.minX)
+    #expect(study.frame.minX - added.frame.minX == AllocationParameters().indentStep)
+    // The card behind keeps the frame and title it has alone.
+    let alone = try item(render(try timeline([event(0, "점심", 720, 780)])), "점심")
+    #expect(lunch.frame.minX == alone.frame.minX && lunch.frame.width == alone.frame.width && lunch.title == DayContentLayout.TitlePlacement())
+}
+
+@Test func aLinkedTransactionOutsideItsEventGetsTheEventsColourAndATailToTheCard() throws {
+    let r = render(try timeline([event(0, "점심", 720, 780)], [spend("late", minute: 830), spend("free", minute: 900)], link: ["late": 0]), viewport: 900)
+    let card = try item(r, "점심")
+    let late = try #require(r.plan.lines.first { $0.id == "late" }), free = try #require(r.plan.lines.first { $0.id == "free" })
+    let tail = try #require(late.tail)
+    #expect(late.linkColorHex != nil && free.linkColorHex == nil && free.tail == nil)
+    #expect(abs(tail.fromY - card.drawnFrame.maxY) < 0.001 && abs(tail.toY - (late.anchorY ?? 0)) < 0.001 && tail.x > card.frame.minX)
 }

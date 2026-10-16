@@ -321,7 +321,7 @@ struct FixedGridBrowseView: View {
         }
         .overlay(alignment: .bottom) { editBar }
         .confirmationDialog(
-            "반복 일정입니다", isPresented: Binding(get: { editor?.scopeQuestion != nil }, set: { shown in if !shown { scopeDialogClosed() } }),
+            "반복 일정이에요", isPresented: Binding(get: { editor?.scopeQuestion != nil }, set: { shown in if !shown { scopeDialogClosed() } }),
             titleVisibility: .visible, presenting: editor?.scopeQuestion
         ) { question in
             ForEach(question.options, id: \.self) { scope in Button(FixedGridEditor.label(for: scope)) { editor?.answer(scope) } }
@@ -1535,8 +1535,8 @@ private struct DayLoadingMark: View {
     var body: some View {
         HStack(spacing: 6) {
             if state == .failed {
-                Image(systemName: "exclamationmark.triangle").foregroundStyle(.orange)
-                Text("불러오지 못했습니다")
+                Image(systemName: "exclamationmark.triangle").foregroundStyle(Theme.caution)
+                Text("불러오지 못했어요")
             } else {
                 ProgressView().controlSize(.mini)
                 Text("불러오는 중")
@@ -1724,7 +1724,7 @@ private struct CalendarChips: View {
                             .opacity(chosen ? 1 : 0.45)
                             .accessibilityElement(children: .combine)
                             .accessibilityAddTraits(chosen ? .isSelected : [])
-                            .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않습니다")
+                            .accessibilityHint(chosen ? "" : "다른 캘린더로 옮기기는 아직 지원하지 않아요")
                     }
                 }
             }
