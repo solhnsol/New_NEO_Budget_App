@@ -39,7 +39,7 @@ public struct NotificationCorrelator: Sendable {
     // MARK: The incoming notification is evidence of an act already recorded
 
     private func corroboration(of incoming: CorrelationObservation, in records: [CorrelationRecord]) -> CorrelationMatch? {
-        let committed = records.filter { $0.entryID != nil }
+        let committed = records.filter { $0.entryID != nil && $0.corroborates == nil }
         // A bank withdrawal of a check card payment already recorded from the card's approval.
         if incoming.draft.kind == .withdrawal, case let .account(account)? = incoming.binding {
             let partners = committed.filter { record in
@@ -99,7 +99,7 @@ public struct NotificationCorrelator: Sendable {
               let name = Self.name(incoming.draft) else { return [] }
         return records
             .filter { record in
-                record.entryID != nil && record.draft.kind == .purchase && Self.name(record.draft) == name
+                record.entryID != nil && record.corroborates == nil && record.draft.kind == .purchase && Self.name(record.draft) == name
                     && record.draft.amount.currency == incoming.draft.amount.currency
                     && record.draft.amount.minorUnits >= incoming.draft.amount.minorUnits
                     && record.draft.occurredAt.unixMilliseconds <= incoming.draft.occurredAt.unixMilliseconds
@@ -120,7 +120,7 @@ public struct NotificationCorrelator: Sendable {
 
     /// A deposit on the transfer's other account that was recorded as income before this leg arrived.
     private func isIncomeLeg(_ record: CorrelationRecord, oppositeOf incoming: CorrelationObservation, counterpart: AccountID) -> Bool {
-        record.entryID != nil && record.recordedAsIncome && record.binding == .account(counterpart)
+        record.entryID != nil && record.corroborates == nil && record.recordedAsIncome && record.binding == .account(counterpart)
             && record.draft.direction != incoming.draft.direction && sameMoney(record, incoming)
     }
 
@@ -151,7 +151,7 @@ public struct NotificationCorrelator: Sendable {
 }
 
 /// A notification that just arrived, with its account already resolved.
-public struct CorrelationObservation: Equatable, Sendable {
+public struct CorrelationObservation: Codable, Equatable, Sendable {
     public let candidateID: TransactionCandidateID
     public let draft: TransactionCandidateDraft
     /// Where the money moved, when the account layer resolved it.
@@ -211,7 +211,7 @@ public enum CorrelationRule: String, Codable, Sendable {
     case refundSuggestion
 }
 
-public struct CorrelationMatch: Equatable, Sendable {
+public struct CorrelationMatch: Codable, Hashable, Sendable {
     public let candidateID: TransactionCandidateID
     public let rule: CorrelationRule
 

@@ -100,6 +100,7 @@ public struct InMemoryLedgerRepository: LedgerRepository {
         var acceptedEntries: [LedgerEntryID: LedgerEntry] = [:]
         var adjustedMinorUnits: [LedgerEntryID: Int64] = [:]
         var evidenceOwners: [String: LedgerEntryID] = [:]
+        var reversed = Set<LedgerEntryID>()
 
         for entry in entries {
             try validateEntryShape(entry)
@@ -185,6 +186,19 @@ public struct InMemoryLedgerRepository: LedgerRepository {
                 adjustedMinorUnits[link.originalEntryID] = total
             }
 
+            if let target = entry.reverses {
+                // Only an income is reversed for now (a transfer leg recorded before the transfer was known), and only once.
+                guard let original = acceptedEntries[target], original.kind == .income, original.reverses == nil,
+                      original.liabilityChanges.isEmpty,
+                      Set(original.postings.map(\.accountID)) == Set(entry.postings.map(\.accountID)),
+                      try original.postings.allSatisfy({ posting in
+                          try entry.postings.first { $0.accountID == posting.accountID }?.delta == posting.delta.negated()
+                      }) else {
+                    throw LedgerValidationError.reversalTargetInvalid(target)
+                }
+                guard reversed.insert(target).inserted else { throw LedgerValidationError.alreadyReversed(target) }
+            }
+
             acceptedEntries[entry.id] = entry
         }
 
@@ -232,7 +246,14 @@ public struct InMemoryLedgerRepository: LedgerRepository {
             throw LedgerValidationError.invalidBudgetImpact
         }
 
+        guard (entry.kind == .reversal) == (entry.reverses != nil) else {
+            throw LedgerValidationError.invalidEntryShape(kind: entry.kind)
+        }
         switch entry.kind {
+        case .reversal:
+            guard entry.adjustment == nil, entry.budgetImpact == nil, entry.liabilityChanges.isEmpty, !entry.postings.isEmpty else {
+                throw LedgerValidationError.invalidEntryShape(kind: entry.kind)
+            }
         case .expense:
             guard entry.adjustment == nil,
                   let impact = entry.budgetImpact,
