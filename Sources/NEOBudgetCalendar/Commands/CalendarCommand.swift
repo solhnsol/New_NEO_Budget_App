@@ -139,9 +139,13 @@ public struct LinkTransactionInput: Hashable, Sendable {
 public struct UnlinkTransactionInput: Hashable, Sendable {
     public let transactionID: LedgerEntryID
     public let by: AssignmentProvenance
-    public init(transactionID: LedgerEntryID, by: AssignmentProvenance) {
+    /// Records that the transaction belongs to no activity instead of leaving it unallocated, so automation (such as `TimeBinding`) never
+    /// puts it back. What a user taking a transaction out of an event means.
+    public let keepOut: Bool
+    public init(transactionID: LedgerEntryID, by: AssignmentProvenance, keepOut: Bool = false) {
         self.transactionID = transactionID
         self.by = by
+        self.keepOut = keepOut
     }
 }
 

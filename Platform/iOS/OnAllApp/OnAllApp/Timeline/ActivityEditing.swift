@@ -58,12 +58,12 @@ enum ActivityEditing {
     }
 
     static func unlink(_ transaction: LedgerEntryID, now: Int64) -> CalendarCommand {
-        .unlinkTransaction(UnlinkTransactionInput(transactionID: transaction, by: provenance(now: now)))
+        // Kept out, so binding by time does not put it back (`docs/ledger-behavior.md`, Q1).
+        .unlinkTransaction(UnlinkTransactionInput(transactionID: transaction, by: provenance(now: now), keepOut: true))
     }
 
-    /// Transactions of the day that no event has taken, nearest to the event's time first, as candidates to link. A transaction
-    /// is never offered by time alone as already belonging: this is only a list to choose from. Ones wholly linked elsewhere are
-    /// not offered.
+    /// Transactions of the day that no event has taken, nearest to the event's time first, as candidates to link. Spending inside an
+    /// event's time is already bound to it (`TimeBinding`); this list is for the rest. Ones wholly linked elsewhere are not offered.
     static func linkCandidates(for block: EventBlock, in timeline: DayTimeline) -> [TransactionMarkerItem] {
         let middle = (block.startUnixMilliseconds + block.endUnixMilliseconds) / 2
         return timeline.markers
