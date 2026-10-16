@@ -466,6 +466,32 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     #expect(sawRows)
 }
 
+@Test func aTitleMovedDownIsNotWrittenOnACardInsideItsOwnAndItsRowsStayAboveItsEndTime() throws {
+    // Regression (a new event 12:15–15:15 put around "스터디" on the fixed grid, under "점심 약속" 12:00): the new event's title, moved down clear of
+    // "점심 약속", landed on "스터디"'s card and read as its title; "스터디"'s own title went down a row and its rows ("편의점") down with it, over its "14:30".
+    let tl = try timeline(
+        [event(0, "점심 약속", 720, 780), event(1, "새 일정", 735, 915), event(2, "스터디", 750, 870)],
+        [spend("cafe", minute: 750, won: 4_800), spend("store", minute: 845, won: 3_500)], link: ["cafe": 2, "store": 2]
+    )
+    let metrics = EventPresentation.Metrics.standard()
+    var sawRows = false
+    for viewport in stride(from: CGFloat(300), through: 1_600, by: 50) {
+        let r = render(tl, viewport: viewport)
+        let outer = try item(r, "새 일정"), inner = try item(r, "스터디")
+        if outer.showsTitleInCard {
+            let titleTop = outer.frame.minY + outer.title.dy
+            #expect(titleTop < inner.frame.minY - 0.5 || outer.title.dx > 0 && outer.frame.minX + outer.title.dx >= inner.frame.minX,
+                    "@\(viewport): 새 일정's title at \(titleTop) is on 스터디's card from \(inner.frame.minY)")
+        }
+        guard let rows = inner.rowsFrame else { continue }
+        sawRows = true
+        if inner.presentation.showsEndTime {
+            #expect(rows.maxY <= inner.drawnFrame.maxY - metrics.timeLine - metrics.padding + 0.5, "@\(viewport): 스터디's rows reach \(rows.maxY), its card ends at \(inner.drawnFrame.maxY)")
+        }
+    }
+    #expect(sawRows)
+}
+
 // MARK: Inside rows and transaction lines on the fixed grid
 
 /// The demo's two days (`-demo -browse-temporal`) in the shape the fixed grid sees them: a card holding two inside rows ("스터디") over the stretch where a
