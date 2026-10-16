@@ -1,3 +1,4 @@
+import Foundation
 import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
@@ -36,21 +37,37 @@ struct LedgerScreen: View {
                             }
                         }
                     } header: {
-                        HStack {
-                            Text(Formatting.dayTitle(section.day))
-                            Spacer()
-                            Text(section.totals.map { Formatting.money($0.minorUnits, currency: $0.currency) }.joined(separator: " · "))
-                                .monospacedDigit()
-                        }
+                        LedgerDayHeader(section: section, isToday: section.day == today)
                     }
                 }
             }
-            .listStyle(.insetGrouped)
+            // One continuous scroll: plain sections whose day header stays pinned until the next day pushes it away.
+            .listStyle(.plain)
         }
     }
 
+    private var today: LocalDate { model.dayZone.localDate(of: Int64(Date().timeIntervalSince1970 * 1_000)) }
+
     private func load() async {
         if let loaded = await model.ledgerSections() { sections = loaded } else if sections == nil { sections = [] }
+    }
+}
+
+/// The boundary between two days: the date (and "오늘"), then the day's net spending, on a bar that stays at the top while its day scrolls.
+struct LedgerDayHeader: View {
+    let section: LedgerDaySection
+    let isToday: Bool
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(Formatting.dayTitle(section.day)).font(.headline).foregroundStyle(.primary)
+            if isToday { Text("오늘").font(.caption.weight(.semibold)).foregroundStyle(.tint) }
+            Spacer()
+            Text(section.totals.map { Formatting.money($0.minorUnits, currency: $0.currency) }.joined(separator: " · "))
+                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .textCase(nil)
+        .padding(.top, 6)
     }
 }
 
