@@ -73,8 +73,7 @@ private struct SyntheticCoverage: Decodable {
     let nonTransactions: Set<String> = [
         "synthetic-kp_receive_request-default",
         "synthetic-tb_interest-default",
-        "synthetic-tmoney-balance",
-        "synthetic-tmoney-ride"
+        "synthetic-tmoney-balance"
     ]
     for input in coverage.notifications {
         let outcome = try parser.parse(input, context: context)
@@ -87,6 +86,11 @@ private struct SyntheticCoverage: Decodable {
         }
         guard case let .candidate(draft) = outcome else {
             Issue.record("Expected draft for synthetic provider shape \(input.id), got \(outcome)")
+            continue
+        }
+        if input.id == "synthetic-tmoney-ride" {
+            // The fare (`₩1,000 for Metro`), never the balance after it.
+            #expect(draft.amount.minorUnits == 1_000 && draft.kind == .purchase && draft.instrument.kind == .transitCard)
             continue
         }
         #expect(draft.amount.minorUnits == 12_000)

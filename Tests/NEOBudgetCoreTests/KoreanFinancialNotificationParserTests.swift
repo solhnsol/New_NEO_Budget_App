@@ -235,3 +235,40 @@ private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateD
         )
     }
 }
+
+@Test func walletTransitFareIsAPurchaseFromTheTransitCardAndTheBalanceIsNeverTheAmount() throws {
+    let draft = try parsedDraft(rawNotification(title: "Seoul Transit", subtitle: "₩1,550 for Metro", body: "Your new balance is ₩10,000."))
+    #expect(draft.kind == .purchase && draft.direction == .outflow && draft.ruleID == "transit-fare")
+    #expect(draft.amount == (try parserWon(1_550)))
+    #expect(draft.instrument.kind == .transitCard)
+    #expect(draft.counterparty.merchantRaw == "Metro")
+    #expect(!draft.hasHardIssues)
+
+    // The same card ready to assemble: an expense of the fare from the transit card's account.
+    let transitID = AccountID(rawValue: "transit-card")
+    let candidate = try DefaultTransactionCandidateAssembler().assemble(draft, resolution: .resolved(.account(transitID)), context: assemblyContext())
+    #expect(candidate.status == .ready)
+    #expect(candidate.proposedEntry?.kind == .expense)
+    #expect(candidate.proposedEntry?.postings == [Posting(accountID: transitID, delta: try parserWon(-1_550))])
+}
+
+@Test func walletTransitBalanceAndNoChargeNoticesAreNotTransactions() throws {
+    let parser = KoreanFinancialNotificationParser()
+    #expect(try parser.parse(
+        rawNotification(title: "Seoul Transit", subtitle: "Metro Card Read", body: "Your current balance is ₩8,450."), context: parserContext()
+    ) == .notTransaction(.balanceInquiry))
+    #expect(try parser.parse(
+        rawNotification(title: "Seoul Transit", subtitle: "Bus", body: "There was no charge for this transaction.\nYour current balance is ₩10,000."), context: parserContext()
+    ) == .notTransaction(.balanceInquiry))
+    #expect(try parser.parse(
+        rawNotification(title: "Tmoney", body: "Your current balance is ₩100,000."), context: parserContext()
+    ) == .notTransaction(.balanceInquiry))
+}
+
+@Test func aWonFareWithoutTheTransitBalanceSentenceIsNotReadAsATransitRide() throws {
+    // Without the balance sentence the transit shape is not recognized, and the baseline rules (which read `원`, not `₩`) decide.
+    let outcome = try KoreanFinancialNotificationParser().parse(
+        rawNotification(title: "Seoul Transit", subtitle: "₩1,550 for Metro", body: "Thank you."), context: parserContext()
+    )
+    if case let .candidate(draft) = outcome { #expect(draft.ruleID != "transit-fare") }
+}
