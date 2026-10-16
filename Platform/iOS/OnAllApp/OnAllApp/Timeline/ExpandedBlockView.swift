@@ -23,7 +23,7 @@ enum ExpandedBlockPlan {
         var rows: [MetaRow] = []
         if let calendar = block.calendarTitle { rows.append(MetaRow(label: "캘린더", value: calendar)) }
         guard let activity = block.activity else {
-            rows.append(MetaRow(label: "활동", value: "아직 정보가 없습니다"))
+            rows.append(MetaRow(label: "활동", value: "아직 정보가 없어요"))
             return rows
         }
         let display = activity.display
@@ -31,7 +31,7 @@ enum ExpandedBlockPlan {
         if let area = display.areaName { rows.append(MetaRow(label: "장소", value: area)) }
         if !display.participantNames.isEmpty { rows.append(MetaRow(label: "참여자", value: participants(display.participantNames))) }
         if !display.tagNames.isEmpty { rows.append(MetaRow(label: "태그", value: display.tagNames.joined(separator: " "))) }
-        if display == .empty { rows.append(MetaRow(label: "활동", value: "아직 정보가 없습니다")) }
+        if display == .empty { rows.append(MetaRow(label: "활동", value: "아직 정보가 없어요")) }
         return rows
     }
 
@@ -102,7 +102,7 @@ struct ExpandedBlockView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(color: .black.opacity(0.18), radius: 8, y: 3)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(block.title), 펼쳐짐. 탭하면 접습니다.")
+        .accessibilityLabel("\(block.title), 펼쳐짐. 탭하면 접어요.")
     }
 
     private var transactions: some View {

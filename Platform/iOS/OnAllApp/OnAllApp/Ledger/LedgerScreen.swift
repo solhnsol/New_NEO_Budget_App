@@ -97,8 +97,10 @@ struct LedgerDayHeader: View {
             Text(Formatting.dayTitle(section.day)).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             if isToday { StatusBadge(text: "오늘", tone: .accent) }
             Spacer()
-            Text(section.totals.map { Formatting.money($0.minorUnits, currency: $0.currency) }.joined(separator: " · "))
-                .font(.system(.subheadline, weight: .medium)).monospacedDigit().foregroundStyle(Theme.textTertiary)
+            // A day whose refunds outweigh its spending got money back: "+3,000원" in blue, not "-3,000원".
+            let isMoneyBack = !section.totals.isEmpty && section.totals.allSatisfy { $0.minorUnits < 0 }
+            Text(section.totals.map { ($0.minorUnits < 0 ? "+" : "") + Formatting.money(abs($0.minorUnits), currency: $0.currency) }.joined(separator: " · "))
+                .font(.system(.subheadline, weight: .medium)).monospacedDigit().foregroundStyle(isMoneyBack ? Theme.accent : Theme.textTertiary)
         }
         .textCase(nil)
         .padding(.top, Theme.Space.m)

@@ -14,6 +14,9 @@ struct SettlementSheet: View {
     @State private var fixedText: [PersonID: String] = [:]
     @State private var failure: String?
     @State private var isSaving = false
+    @State private var isConfirmingRedo = false
+    /// The share being typed; the number pad has no return key, so the keyboard bar's 완료 clears it.
+    @FocusState private var typingShare: PersonID?
 
     var body: some View {
         NavigationStack {
@@ -26,18 +29,20 @@ struct SettlementSheet: View {
             }
             .navigationTitle((block?.title).map { $0 + " 정산" } ?? "정산")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } }
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("완료") { typingShare = nil }.fontWeight(.semibold)
+                }
+            }
         }
         .task(id: model.dataGeneration) { life = await model.lifeState() }
     }
 
     // MARK: What is stored
 
-    private var block: EventBlock? {
-        let days = model.strip.compactMap(\.timeline) + model.visibleTimelines
-        for day in days { if let found = day.blocks.first(where: { $0.eventKey == eventKey }) { return found } }
-        return nil
-    }
+    private var block: EventBlock? { model.locate(eventKey)?.block }
 
     private var activity: Activity? { life?.activity(forEvent: eventKey) }
     private var me: Person? { life?.persons.values.first(where: \.isSelf) }
@@ -71,11 +76,18 @@ struct SettlementSheet: View {
 
     // MARK: The form
 
-    private func makePlan(_ block: EventBlock) -> EventSettlementPlan? {
+    private func makePlan(_ block: EventBlock, fixed: [PersonID: Int64]) -> EventSettlementPlan? {
         total(block).flatMap { try? EventSettlementPlan.make(
             totalMinorUnits: $0.minorUnits, currency: $0.currency, me: me?.id ?? PersonID(rawValue: "~me"), others: others,
             headcount: activity?.headcount?.value, fixed: fixed
         ) }
+    }
+
+    /// Why there is nothing to split yet, under the amount; `nil` when there is.
+    private func paidNote(_ block: EventBlock, _ paid: (minorUnits: Int64, currency: String)?) -> String? {
+        if block.allocatedSpend.isEmpty { return "이 일정에 연결된 거래가 없어요. 일정에 거래를 연결하면 나눌 수 있어요." }
+        guard let paid else { return "일정에 연결된 거래 금액이 모두 확정되면 나눌 수 있어요." }
+        return paid.minorUnits > 0 ? nil : "환불을 빼면 나눌 금액이 없어요."
     }
 
     /// At least the people chosen and the user.
@@ -86,14 +98,17 @@ struct SettlementSheet: View {
 
     private func form(_ block: EventBlock) -> some View {
         let paid = total(block)
-        let plan = makePlan(block)
+        // Hand-set amounts over the total keep the rows (and the field being typed in) on screen with equal shares, and say what is wrong.
+        let planAsTyped = makePlan(block, fixed: fixed)
+        let isOverTotal = planAsTyped == nil && !fixed.isEmpty && makePlan(block, fixed: [:]) != nil
+        let plan = planAsTyped ?? (isOverTotal ? makePlan(block, fixed: [:]) : nil)
         let isLocked = !obligations.isEmpty
         return Form {
             Section {
                 AmountHero(
                     label: "결제한 금액",
-                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? "아직 몰라요",
-                    note: paid == nil ? "일정에 연결된 거래 금액이 모두 확정되면 나눌 수 있어요." : nil
+                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? (block.allocatedSpend.isEmpty ? "아직 없어요" : "아직 몰라요"),
+                    note: paidNote(block, paid)
                 )
             }
             .onAllCardRow()
@@ -116,19 +131,30 @@ struct SettlementSheet: View {
             if isLocked {
                 requestedSection()
             } else if let plan {
-                shareSection(plan)
+                shareSection(plan, isOverTotal: isOverTotal)
             }
         }
         .onAllGroupedScreen()
-        .primaryActionBar(isShown: !isLocked && plan != nil, isEnabled: !(plan?.others.isEmpty ?? true) && !isSaving) {
-            if let plan { Task { await request(plan) } }
+        .scrollDismissesKeyboard(.interactively)
+        .primaryActionBar(isShown: !isLocked && plan != nil, isEnabled: !(plan?.others.isEmpty ?? true) && !isOverTotal && !isSaving) {
+            if let plan, !isOverTotal { Task { await request(plan) } }
         } label: {
-            Text(plan.map { $0.others.isEmpty ? "함께한 사람을 골라 주세요" : "\($0.others.count)명에게 정산 요청 만들기" } ?? "정산 요청 만들기")
+            Text(isOverTotal ? "나눠 낼 금액을 고쳐 주세요" : plan.map { $0.others.isEmpty ? "함께한 사람을 골라 주세요" : "\($0.others.count)명에게 정산 요청 만들기" } ?? "정산 요청 만들기")
+        }
+        .confirmationDialog("정산 요청을 지우고 다시 나눌까요?", isPresented: $isConfirmingRedo, titleVisibility: .visible) {
+            Button("요청 지우고 다시 나누기", role: .destructive) { Task { await cancelRequests() } }
+            Button("그대로 두기", role: .cancel) {}
+        } message: {
+            Text("사람마다 만든 정산 요청이 지워지고, 사람과 금액을 다시 고를 수 있어요.")
         }
     }
 
-    private func shareSection(_ plan: EventSettlementPlan) -> some View {
+    private func shareSection(_ plan: EventSettlementPlan, isOverTotal: Bool) -> some View {
         Section {
+            if isOverTotal {
+                Label("직접 적은 금액이 결제한 " + Formatting.money(plan.totalMinorUnits, currency: plan.currency) + "보다 많아요", systemImage: "exclamationmark.circle.fill")
+                    .font(Theme.Typo.caption).foregroundStyle(Theme.danger)
+            }
             ForEach(plan.others) { share in
                 HStack(spacing: Theme.Space.m) {
                     PersonAvatar(name: share.name, size: 32)
@@ -139,6 +165,7 @@ struct SettlementSheet: View {
                         set: { fixedText[share.personID] = $0.isEmpty ? nil : $0 }
                     ))
                     .keyboardType(.numberPad)
+                    .focused($typingShare, equals: share.personID)
                     .multilineTextAlignment(.trailing)
                     .font(Theme.Typo.amount)
                     .frame(maxWidth: 140)
@@ -187,7 +214,7 @@ struct SettlementSheet: View {
                 }
             }
             if obligations.allSatisfy({ (life?.appliedMinorUnits(for: $0.id) ?? 0) == 0 }) {
-                Button("다시 나누기") { Task { await cancelRequests() } }
+                Button("다시 나누기") { isConfirmingRedo = true }
                     .buttonStyle(SecondaryButtonStyle(tint: Theme.danger))
                     .frame(maxWidth: .infinity, alignment: .trailing)
             }

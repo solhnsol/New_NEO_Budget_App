@@ -194,7 +194,7 @@ struct OverflowCardView: View {
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
-        .accessibilityHint("거래 목록을 엽니다")
+        .accessibilityHint("거래 목록을 열어요")
     }
 
     /// The total under the count, or the kinds when there is no single total.

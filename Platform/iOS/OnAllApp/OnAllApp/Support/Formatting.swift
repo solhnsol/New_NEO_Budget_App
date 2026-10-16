@@ -17,11 +17,44 @@ enum Formatting {
         }
     }
 
-    private static func grouped(_ value: Int64) -> String {
-        let formatter = NumberFormatter()
-        formatter.locale = locale
-        formatter.numberStyle = .decimal
-        return formatter.string(from: NSNumber(value: value)) ?? String(value)
+    /// `1234567` → `1,234,567`, as ko_KR writes it. Done by hand: this runs for every amount the grid and the lists draw, and a
+    /// `NumberFormatter` made per call is slow enough to show while days scroll.
+    static func grouped(_ value: Int64) -> String {
+        let digits = String(value.magnitude)
+        var result = ""
+        result.reserveCapacity(digits.count + digits.count / 3 + 1)
+        for (index, digit) in digits.enumerated() {
+            if index > 0, (digits.count - index) % 3 == 0 { result.append(",") }
+            result.append(digit)
+        }
+        return value < 0 ? "-" + result : result
+    }
+
+    /// Date formatters by format and zone, made once: making one per call is slow, and lists and the grid write many times.
+    /// `DateFormatter` is safe to use from several threads once it is set up.
+    private final class DateFormatters: @unchecked Sendable {
+        private let lock = NSLock()
+        private var made: [String: DateFormatter] = [:]
+
+        func formatter(_ format: String, zoneIdentifier: String, locale: Locale) -> DateFormatter {
+            lock.lock()
+            defer { lock.unlock() }
+            let key = format + "|" + zoneIdentifier + "|" + locale.identifier
+            if let known = made[key] { return known }
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = TimeZone(identifier: zoneIdentifier)
+            formatter.dateFormat = format
+            made[key] = formatter
+            return formatter
+        }
+    }
+
+    private static let dateFormatters = DateFormatters()
+
+    private static func string(_ unixMilliseconds: Int64, format: String, zoneIdentifier: String) -> String {
+        dateFormatters.formatter(format, zoneIdentifier: zoneIdentifier, locale: locale)
+            .string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
     }
 
     /// A total that never looks more certain than it is.
@@ -46,11 +79,7 @@ enum Formatting {
     }
 
     static func time(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = TimeZone(identifier: zoneIdentifier)
-        formatter.dateFormat = "a h:mm"
-        return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+        string(unixMilliseconds, format: "a h:mm", zoneIdentifier: zoneIdentifier)
     }
 
     @MainActor private static var clockFormatters: [String: DateFormatter] = [:]
@@ -72,11 +101,7 @@ enum Formatting {
 
     /// "10/7": the date of something that happened on another day.
     static func shortDate(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
-        let formatter = DateFormatter()
-        formatter.locale = locale
-        formatter.timeZone = TimeZone(identifier: zoneIdentifier)
-        formatter.dateFormat = "M/d"
-        return formatter.string(from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+        string(unixMilliseconds, format: "M/d", zoneIdentifier: zoneIdentifier)
     }
 
     static func timeRange(_ start: Int64, _ end: Int64, zoneIdentifier: String) -> String {

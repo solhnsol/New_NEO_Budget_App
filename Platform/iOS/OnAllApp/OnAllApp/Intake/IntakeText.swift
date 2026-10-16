@@ -23,6 +23,12 @@ enum IntakeText {
         }
     }
 
+    /// Waiting because the message never says which account it is about: tapping it asks the user (`RuleAnswerSheet`).
+    static func asksForAccount(_ status: IntakeStatus) -> Bool {
+        if case let .waiting(issues) = status { return issues.contains(.unboundSource) }
+        return false
+    }
+
     static func issue(_ issue: CandidateIssue) -> String {
         switch issue {
         case .unknownAccount: "처음 보는 계좌"

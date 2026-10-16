@@ -81,11 +81,11 @@ struct EventDetailView: View {
             ForEach(selection.rows) { item in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title ?? "거래")
-                        Text(Formatting.clock(minute: item.minute) + " · " + AmountKindNames.name(item.kind)).font(.caption).foregroundStyle(.secondary)
+                        Text(item.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                        Text(Formatting.clock(minute: item.minute) + " · " + AmountKindNames.name(item.kind)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
                     Spacer()
-                    Text(item.amount).monospacedDigit()
+                    Text(item.amount).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
                 }
             }
         } footer: {
@@ -112,10 +112,10 @@ struct EventDetailView: View {
                 ForEach(refunds, id: \.currency) { total in row("환불", Formatting.aggregate(total)) }
                 ForEach(allocations, id: \.allocationID) { item in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title ?? "거래").font(.body)
+                        Text(item.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
                         Text(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency)
                              + (item.isPartOfTransaction ? " (전체 " + Formatting.money(item.transactionAmount.minorUnits, currency: item.transactionAmount.currency) + " 중)" : ""))
-                            .font(.footnote).foregroundStyle(.secondary)
+                            .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
             }

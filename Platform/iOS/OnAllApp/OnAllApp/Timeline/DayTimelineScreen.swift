@@ -22,9 +22,9 @@ struct DayTimelineScreen: View {
         defer { BrowseProbe.end(probe) }
         return NavigationStack {
             content
-                .navigationTitle(model.isDemo ? "데모" : "")
+                .navigationTitle(model.isDemo && !DemoFull.isOn ? "데모" : "")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar(model.isDemo ? .visible : .hidden, for: .navigationBar)
+                .toolbar(model.isDemo && !DemoFull.isOn ? .visible : .hidden, for: .navigationBar)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, model.phase == .ready { Task { await model.reload() } }
@@ -39,14 +39,14 @@ struct DayTimelineScreen: View {
         case .needsAccess:
             StatusView(
                 symbol: "calendar.badge.clock",
-                title: "캘린더를 연결하세요",
-                message: "OnAll은 기기 캘린더의 일정을 읽어 타임라인에 보여줍니다. 일정은 캘린더에 그대로 남고 OnAll은 읽기와 변경 요청만 합니다.",
+                title: "캘린더를 연결해 주세요",
+                message: "OnAll은 기기 캘린더의 일정을 읽어 보여 줘요. 일정은 캘린더에 그대로 남고, OnAll은 읽고 바꾸기만 해요.",
                 actionTitle: "캘린더 접근 허용"
             ) { await model.requestAccess() }
         case .denied:
             StatusView(
                 symbol: "lock.slash",
-                title: "캘린더 접근이 꺼져 있습니다",
+                title: "캘린더 접근이 꺼져 있어요",
                 message: "설정 > OnAll에서 캘린더 접근을 '전체 접근'으로 바꿔 주세요.",
                 actionTitle: "설정 열기"
             ) { await openSettings() }
@@ -214,10 +214,10 @@ private struct StatusView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: symbol).font(.system(size: 44)).foregroundStyle(.secondary)
-            Text(title).font(.title3.bold()).multilineTextAlignment(.center)
-            Text(message).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-            Button(actionTitle) { Task { await action() } }.buttonStyle(.borderedProminent)
+            Image(systemName: symbol).font(.system(size: 44)).foregroundStyle(Theme.textTertiary)
+            Text(title).font(Theme.Typo.title).foregroundStyle(Theme.textPrimary).multilineTextAlignment(.center)
+            Text(message).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
+            Button(actionTitle) { Task { await action() } }.buttonStyle(.onAllPrimary).padding(.top, Theme.Space.s)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -234,13 +234,21 @@ private struct DayHeader: View {
             Spacer()
             Button("오늘") { goTo(model.today) }
                 .buttonStyle(.bordered).disabled(model.isToday)
-            Button { goTo(model.selectedDay.adding(days: -1)) } label: { Image(systemName: "chevron.left") }
-                .accessibilityLabel("이전 날")
-            Button { goTo(model.selectedDay.adding(days: 1)) } label: { Image(systemName: "chevron.right") }
-                .accessibilityLabel("다음 날")
+            // The arrows get a full 44pt square to hit (the bare symbol was about half that); the header keeps its height.
+            HStack(spacing: 0) {
+                Button { goTo(model.selectedDay.adding(days: -1)) } label: { arrow("chevron.left") }
+                    .accessibilityLabel("이전 날")
+                Button { goTo(model.selectedDay.adding(days: 1)) } label: { arrow("chevron.right") }
+                    .accessibilityLabel("다음 날")
+            }
+            .padding(.trailing, -10)
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 4)
+    }
+
+    private func arrow(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

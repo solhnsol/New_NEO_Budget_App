@@ -136,7 +136,7 @@ private func expectConsistent(_ model: AppModel, _ note: String) {
     gate.failing = [far.adding(days: 1)]
     #expect(model.moveTo(far))
     await model.loadMissing()
-    #expect(model.phase == .failed("일정과 거래를 불러오지 못했습니다."))
+    #expect(model.phase == .failed("일정과 거래를 불러오지 못했어요"))
     #expect(model.cachedTimeline(for: far) != nil && model.cachedTimeline(for: far.adding(days: 2)) != nil)      // the others were kept
     gate.failing = []
     await model.loadMissing()

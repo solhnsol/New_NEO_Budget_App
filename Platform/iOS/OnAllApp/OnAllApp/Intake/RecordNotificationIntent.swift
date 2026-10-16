@@ -7,7 +7,7 @@ import NEOBudgetInMemoryStorage
 /// (`{app, title, subtitle, body, timestamp}`, or an array of them) and the app records it without opening.
 struct RecordNotificationIntent: AppIntent {
     static var title: LocalizedStringResource { "알림 기록하기" }
-    static var description: IntentDescription { IntentDescription("결제·입출금 알림을 OnAll 가계부에 기록합니다. 단축어의 알림 JSON을 그대로 넘기세요.") }
+    static var description: IntentDescription { IntentDescription("결제·입출금 알림을 OnAll 가계부에 기록해요. 단축어의 알림 JSON을 그대로 넘겨 주세요.") }
     static var openAppWhenRun: Bool { false }
 
     @Parameter(title: "알림 JSON")
@@ -36,7 +36,7 @@ enum RecordNotificationError: Error, CustomLocalizedStringResourceConvertible {
 
     var localizedStringResource: LocalizedStringResource {
         switch self {
-        case .unreadablePayload: "알림 JSON을 읽지 못했습니다. 단축어가 app, title, body, timestamp를 사전으로 넘기는지 확인하세요."
+        case .unreadablePayload: "알림 JSON을 읽지 못했어요. 단축어가 app, title, body, timestamp를 사전으로 넘기는지 확인해 주세요."
         }
     }
 }
