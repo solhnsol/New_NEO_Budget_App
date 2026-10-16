@@ -104,8 +104,13 @@ struct EventPresentation: Equatable {
     }
 
     /// `maximumRows`: the most rows a card writes for its transactions, however tall (the collapsed block's three unless the grid shows more).
-    static func make(height: CGFloat, insideCount: Int = 0, metrics: Metrics = .standard(), maximumRows: Int = InlineAllocationPlan.maximumRows) -> EventPresentation {
+    /// `rowRoom`: how far down the card its rows may go, when less than its height (a card drawn over it, an event inside it, begins there): the rows are
+    /// written from that room, everything else from the height.
+    static func make(
+        height: CGFloat, insideCount: Int = 0, metrics: Metrics = .standard(), maximumRows: Int = InlineAllocationPlan.maximumRows, rowRoom: CGFloat? = nil
+    ) -> EventPresentation {
         let ramp = metrics.ramp
+        let rowsHeight = min(height, rowRoom ?? height)
         let level: Level
         switch height {
         case ..<metrics.lineHeight: level = .line
@@ -117,15 +122,15 @@ struct EventPresentation: Equatable {
         let card = min(1, max(0, (height - metrics.lineHeight) / max(0.001, metrics.cardHeight - metrics.lineHeight)))
         let endTime = appearing(height, over: metrics.endNeed, ramp: ramp)
         // Rows come after the title and the end time's line.
-        let capacity = max(0, Int(((height - metrics.reserved) / metrics.rowHeight).rounded(.down)))
+        let capacity = max(0, Int(((rowsHeight - metrics.reserved) / metrics.rowHeight).rounded(.down)))
         let rows = InlineAllocationPlan.make(allocationCount: insideCount, rowCapacity: capacity, maximumRows: maximumRows)
         let hasRows = rows.shown > 0 || rows.showsSummaryRow
         let summary = insideCount > 0 && !hasRows ? appearing(height, over: metrics.summaryNeed, ramp: ramp) : 0
         var more: CGFloat = 1
         if rows.hidden > 0, rows.shown > 0 {
             let next = (capacity + 1...max(capacity + 1, maximumRows)).first { InlineAllocationPlan.make(allocationCount: insideCount, rowCapacity: $0, maximumRows: maximumRows).shown > rows.shown }
-            let leaving = next.map { 1 - appearing(height, over: metrics.reserved + CGFloat($0) * metrics.rowHeight - ramp, ramp: ramp) } ?? 1
-            let arriving = rows.shown > 1 ? appearing(height, over: metrics.reserved + CGFloat(rowsNeeded(toShow: rows.shown, of: insideCount, maximumRows: maximumRows) ) * metrics.rowHeight, ramp: ramp) : 1
+            let leaving = next.map { 1 - appearing(rowsHeight, over: metrics.reserved + CGFloat($0) * metrics.rowHeight - ramp, ramp: ramp) } ?? 1
+            let arriving = rows.shown > 1 ? appearing(rowsHeight, over: metrics.reserved + CGFloat(rowsNeeded(toShow: rows.shown, of: insideCount, maximumRows: maximumRows) ) * metrics.rowHeight, ramp: ramp) : 1
             more = min(leaving, arriving)
         }
         return EventPresentation(
@@ -133,9 +138,9 @@ struct EventPresentation: Equatable {
             title: appearing(height, over: metrics.titleNeed, ramp: ramp),
             startTime: appearing(height, over: metrics.startNeed, ramp: ramp),
             endTime: endTime, transactionSummary: summary,
-            transactions: hasRows ? appearing(height, over: metrics.detailNeed, ramp: ramp) : 0,
+            transactions: hasRows ? appearing(rowsHeight, over: metrics.detailNeed, ramp: ramp) : 0,
             shownRows: rows.shown, hiddenRows: rows.hidden, showsSummaryRow: rows.showsSummaryRow,
-            rowReveals: (0..<rows.shown).map { appearing(height, over: metrics.reserved + CGFloat(rowsNeeded(toShow: $0 + 1, of: insideCount, maximumRows: maximumRows)) * metrics.rowHeight, ramp: ramp) },
+            rowReveals: (0..<rows.shown).map { appearing(rowsHeight, over: metrics.reserved + CGFloat(rowsNeeded(toShow: $0 + 1, of: insideCount, maximumRows: maximumRows)) * metrics.rowHeight, ramp: ramp) },
             moreReveal: more
         )
     }

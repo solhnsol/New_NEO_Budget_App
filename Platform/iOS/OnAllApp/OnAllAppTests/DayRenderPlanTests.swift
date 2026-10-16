@@ -448,6 +448,24 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     }
 }
 
+@Test func aCardsRowsStopWhereAnEventInsideItBeginsSoItsTitleIsNotWrittenOverThem() throws {
+    // Regression (a new event put around "스터디" on the fixed grid): the enclosing card's "거래 2건" row ran down under the inner card, where the inner
+    // card's title is written in the layer above all cards.
+    let tl = try timeline(
+        [event(0, "새 일정", 750, 945), event(1, "스터디", 840, 900)],
+        [spend("a", minute: 760), spend("b", minute: 770), spend("c", minute: 780)], link: ["a": 0, "b": 0, "c": 0]
+    )
+    var sawRows = false
+    for viewport in stride(from: CGFloat(200), through: 1_400, by: 40) {
+        let r = render(tl, viewport: viewport)
+        let outer = try item(r, "새 일정"), inner = try item(r, "스터디")
+        guard let rows = outer.rowsFrame else { continue }
+        sawRows = true
+        #expect(rows.maxY <= inner.frame.minY + 0.5, "@\(viewport): rows reach \(rows.maxY), 스터디 begins at \(inner.frame.minY)")
+    }
+    #expect(sawRows)
+}
+
 // MARK: Inside rows and transaction lines on the fixed grid
 
 /// The demo's two days (`-demo -browse-temporal`) in the shape the fixed grid sees them: a card holding two inside rows ("스터디") over the stretch where a

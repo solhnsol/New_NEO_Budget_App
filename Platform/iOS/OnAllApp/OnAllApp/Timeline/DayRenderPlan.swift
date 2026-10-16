@@ -292,13 +292,28 @@ struct DayRenderPlan {
         // How each event looks, from its height alone. `presentationGeometry`: the axis the heights are read from when it is not the one the cards are placed on (the days
         // moving: cards are placed on the blend of two partitions, but what is written in them is what the decision they come from makes of the cards at rest, so a card
         // that the blend squeezes or stretches on its way neither loses its rows nor shows rows it never has).
+        // A card's rows stop where an event that begins inside it is drawn over it (its title is written there): the rows go first, as they do for a lower card.
         var presentations: [BlockID: EventPresentation] = [:]
         for block in blocks {
             var height = frames[block.id]?.height ?? 0
+            let axis: any TimeAxisMapping
             if let basis = presentationGeometry, expanded != block.id, block.id != focused {
                 height = max(0, basis.y(bottomOfSpanFrom: block.startMinute, to: block.endMinute) - basis.y(minute: block.startMinute))
+                axis = basis
+            } else {
+                axis = geometry
             }
-            presentations[block.id] = EventPresentation.make(height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows)
+            var rowRoom: CGFloat?
+            if let own = frames[block.id], block.id != expanded, block.id != focused {
+                let inner = blocks.filter { other in
+                    guard other.id != block.id, other.startMinute > block.startMinute, other.startMinute < block.endMinute, let frame = frames[other.id] else { return false }
+                    return frame.minX < own.maxX && frame.maxX > own.minX
+                }
+                rowRoom = inner.map { axis.y(minute: $0.startMinute) - axis.y(minute: block.startMinute) }.min()
+            }
+            presentations[block.id] = EventPresentation.make(
+                height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows, rowRoom: rowRoom
+            )
         }
 
         // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.
