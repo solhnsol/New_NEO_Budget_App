@@ -19,33 +19,30 @@ struct AccountsView: View {
     private var content: some View {
         switch statements {
         case .none:
-            ProgressView("계좌를 불러오는 중").frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("계좌를 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .some(statements) where statements.isEmpty:
-            ContentUnavailableView("등록된 계좌가 없습니다", systemImage: "building.columns", description: Text("계좌와 카드를 등록하면 실제 내역이 여기에 보입니다."))
+            ContentUnavailableView("등록한 계좌가 없어요", systemImage: "building.columns", description: Text("계좌와 카드를 등록하면 실제 내역을 여기서 볼 수 있어요."))
         case let .some(statements):
             List {
                 let usage = month.map { LedgerStatements.cardUsage(statements, month: $0, zone: model.dayZone) } ?? []
                 if !usage.isEmpty {
                     Section {
                         ForEach(usage) { card in
-                            LabeledContent {
-                                Text(Formatting.money(card.usedMinorUnits, currency: card.currency)).monospacedDigit()
-                            } label: {
-                                Text(card.name)
-                                Text("\(card.count)건").font(.caption).foregroundStyle(.secondary)
-                            }
+                            MoneyRow(symbol: "creditcard", title: card.name, subtitle: "\(card.count)건", amount: Formatting.money(card.usedMinorUnits, currency: card.currency))
                         }
                     } header: {
                         Text(month.map { "\($0.month)월 카드 사용" } ?? "카드 사용")
                     } footer: {
-                        Text("카드사 기준(실적·한도) 금액입니다. 결제 취소는 빠지고, 정산으로 돌려받은 돈은 빠지지 않습니다.")
+                        Text("카드사 기준(실적·한도) 금액이에요. 결제 취소는 빠지고, 정산으로 돌려받은 돈은 빠지지 않아요.")
                     }
+                    .onAllCardRow()
                 }
                 let accounts = statements.filter { if case .account = $0.source { true } else { false } }
                 let cards = statements.filter { if case .card = $0.source { true } else { false } }
                 if !accounts.isEmpty { sourceSection("계좌", accounts, label: "잔액") }
                 if !cards.isEmpty { sourceSection("신용카드", cards, label: "결제할 금액") }
             }
+            .onAllGroupedScreen()
         }
     }
 
@@ -55,14 +52,20 @@ struct AccountsView: View {
                 NavigationLink {
                     StatementView(statement: statement, zone: model.dayZone)
                 } label: {
-                    LabeledContent {
-                        Text(Formatting.money(statement.current, currency: statement.currency)).monospacedDigit()
-                    } label: {
-                        Text(statement.name)
-                        Text(label).font(.caption).foregroundStyle(.secondary)
-                    }
+                    MoneyRow(
+                        symbol: Self.symbol(statement.source),
+                        title: statement.name, subtitle: label, amount: Formatting.money(statement.current, currency: statement.currency)
+                    )
                 }
             }
+        }
+        .onAllCardRow()
+    }
+
+    private static func symbol(_ source: LedgerStatements.Source) -> String {
+        switch source {
+        case .account: return "building.columns"
+        case .card: return "creditcard"
         }
     }
 
@@ -87,15 +90,21 @@ struct StatementView: View {
         List {
             ForEach(days.keys.sorted(by: >), id: \.self) { day in
                 Section {
-                    ForEach(days[day] ?? []) { line in StatementRow(line: line, currency: statement.currency, isCard: isCard, zone: zone) }
+                    ForEach(days[day] ?? []) { line in
+                        StatementRow(line: line, currency: statement.currency, isCard: isCard, zone: zone)
+                            .listRowSeparator(.hidden)
+                    }
                 } header: {
-                    Text(Formatting.dayTitle(day)).font(.headline).foregroundStyle(.primary).textCase(nil)
+                    Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary).textCase(nil)
+                        .padding(.top, Theme.Space.s)
                 }
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.surface)
         .overlay {
-            if statement.lines.isEmpty { ContentUnavailableView("내역이 없습니다", systemImage: "list.bullet") }
+            if statement.lines.isEmpty { ContentUnavailableView("아직 내역이 없어요", systemImage: "list.bullet") }
         }
         .navigationTitle(statement.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -112,15 +121,15 @@ private struct StatementRow: View {
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(line.title ?? kindName).lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(line.title ?? kindName).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(subtitle).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(signedAmount).monospacedDigit().foregroundStyle(isIncrease ? Color.green : Color.primary)
+            Spacer(minLength: Theme.Space.s)
+            VStack(alignment: .trailing, spacing: Theme.Space.xxs) {
+                Text(signedAmount).font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: isIncrease))
                 if let balance = line.balanceAfter {
-                    Text(Formatting.money(balance, currency: currency)).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    Text(Formatting.money(balance, currency: currency)).font(Theme.Typo.caption).monospacedDigit().foregroundStyle(Theme.textTertiary)
                 }
             }
         }
@@ -152,5 +161,26 @@ private struct StatementRow: View {
         case .adjustment: return "취소·환불"
         case .reversal: return "되돌림"
         }
+    }
+}
+
+/// An account, a card or a card's usage: its icon on a tile, its name and what the number is, and the number on the right.
+private struct MoneyRow: View {
+    let symbol: String
+    let title: String
+    let subtitle: String
+    let amount: String
+
+    var body: some View {
+        HStack(spacing: Theme.Space.m) {
+            IconTile(systemName: symbol)
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(subtitle).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+            }
+            Spacer(minLength: Theme.Space.s)
+            Text(amount).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+        }
+        .padding(.vertical, Theme.Space.xxs)
     }
 }
