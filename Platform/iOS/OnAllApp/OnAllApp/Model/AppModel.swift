@@ -452,6 +452,15 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
+    /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
+    /// transactions are still listed, without allocations.
+    func ledgerSections() async -> [LedgerDaySection]? {
+        guard let transactions = try? await ledger.transactions() else { return nil }
+        let life = (try? await service?.lifeSnapshot().state) ?? .empty
+        return LedgerList.sections(transactions, life: life, zone: dayZone)
+    }
+
     private func observeChanges() {
         guard observer == nil else { return }
         let provider = provider
