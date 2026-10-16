@@ -126,7 +126,9 @@ struct WeekStripView: View {
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
         .onAppear { seed() }
-        .onChange(of: position) { _, _ in move() }
+        // The day can change inside a transaction that turns animations off (the screen moves the selected day that way, so the grid below does not
+        // animate): the strip's own motion is started in a fresh one, so the page, the circle leaving with its week and the capsule always move.
+        .onChange(of: position) { _, _ in withTransaction(Transaction()) { move() } }
     }
 
     private enum Role { case none, first, second }
