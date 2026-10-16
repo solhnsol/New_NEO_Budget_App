@@ -21,6 +21,7 @@ struct LedgerScreen: View {
                 case .accounts: AccountsView(model: model)
                 }
             }
+            .tint(Theme.accent)
             .navigationTitle("가계부")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -51,9 +52,9 @@ struct LedgerScreen: View {
     private var content: some View {
         switch sections {
         case .none:
-            ProgressView("거래를 불러오는 중").frame(maxWidth: .infinity, maxHeight: .infinity)
+            ProgressView("거래를 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
         case let .some(sections) where sections.isEmpty:
-            ContentUnavailableView("거래 내역이 없습니다", systemImage: "wonsign.circle", description: Text("결제 알림이 들어오면 여기에 쌓입니다."))
+            ContentUnavailableView("아직 거래가 없어요", systemImage: "wonsign.circle", description: Text("결제 알림이 오면 여기에 차곡차곡 쌓여요."))
         case let .some(sections):
             List {
                 ForEach(sections) { section in
@@ -64,6 +65,8 @@ struct LedgerScreen: View {
                             } label: {
                                 LedgerRow(entry: entry, zoneIdentifier: model.dayZone.identifier)
                             }
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
                         LedgerDayHeader(section: section, isToday: section.day == today)
@@ -72,6 +75,8 @@ struct LedgerScreen: View {
             }
             // One continuous scroll: plain sections whose day header stays pinned until the next day pushes it away.
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Theme.surface)
         }
     }
 
@@ -88,37 +93,41 @@ struct LedgerDayHeader: View {
     let isToday: Bool
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(Formatting.dayTitle(section.day)).font(.headline).foregroundStyle(.primary)
-            if isToday { Text("오늘").font(.caption.weight(.semibold)).foregroundStyle(.tint) }
+        HStack(alignment: .center, spacing: Theme.Space.s) {
+            Text(Formatting.dayTitle(section.day)).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            if isToday { StatusBadge(text: "오늘", tone: .accent) }
             Spacer()
             Text(section.totals.map { Formatting.money($0.minorUnits, currency: $0.currency) }.joined(separator: " · "))
-                .font(.subheadline).monospacedDigit().foregroundStyle(.secondary)
+                .font(.system(.subheadline, weight: .medium)).monospacedDigit().foregroundStyle(Theme.textTertiary)
         }
         .textCase(nil)
-        .padding(.top, 6)
+        .padding(.top, Theme.Space.m)
+        .padding(.bottom, Theme.Space.xs)
     }
 }
 
-/// One transaction line: what, when and which activities; the amount on the right (a refund in green with a plus).
+/// One transaction line: its category on a tile, what and when (and which activities), the amount on the right; a refund is blue with a plus, as
+/// Korean banks show money coming back.
 struct LedgerRow: View {
     let entry: LedgerListEntry
     let zoneIdentifier: String
 
     var body: some View {
         let transaction = entry.transaction
-        HStack(spacing: 12) {
-            Image(systemName: CategoryIcon.symbol(for: entry.categoryID) ?? (transaction.flow == .refund ? "arrow.uturn.backward" : "creditcard"))
-                .foregroundStyle(.secondary)
-                .frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(transaction.title ?? "거래").lineLimit(1)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+        let isRefund = transaction.flow == .refund
+        HStack(spacing: Theme.Space.m) {
+            IconTile(
+                systemName: CategoryIcon.symbol(for: entry.categoryID) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"),
+                tint: isRefund ? Theme.accent : Theme.textSecondary
+            )
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(transaction.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(subtitle).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
             }
-            Spacer(minLength: 8)
-            Text((transaction.flow == .refund ? "+" : "") + Formatting.money(transaction.amount.minorUnits, currency: transaction.amount.currency))
-                .monospacedDigit()
-                .foregroundStyle(transaction.flow == .refund ? Color.green : Color.primary)
+            Spacer(minLength: Theme.Space.s)
+            Text((isRefund ? "+" : "") + Formatting.money(transaction.amount.minorUnits, currency: transaction.amount.currency))
+                .font(Theme.Typo.amount)
+                .foregroundStyle(Theme.amountColor(isIncoming: isRefund))
         }
     }
 

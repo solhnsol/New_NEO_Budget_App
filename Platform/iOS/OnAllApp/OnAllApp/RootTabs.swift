@@ -11,5 +11,6 @@ struct RootTabs: View {
             LedgerScreen(model: model)
                 .tabItem { Label("가계부", systemImage: "wonsign.circle") }
         }
+        .tint(Theme.accent)
     }
 }

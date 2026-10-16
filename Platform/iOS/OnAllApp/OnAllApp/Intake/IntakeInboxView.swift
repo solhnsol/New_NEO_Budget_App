@@ -23,12 +23,12 @@ struct IntakeInboxView: View {
                 } header: {
                     Text("이 계좌가 맞나요?")
                 } footer: {
-                    Text("알림에 처음 나온 계좌와 카드입니다. 답하면 이전 알림까지 다시 계산합니다.")
+                    Text("알림에 처음 나온 계좌와 카드예요. 답해 주시면 이전 알림까지 다시 계산해요.")
                 }
             }
             Section {
                 if let items, items.isEmpty {
-                    Text("아직 받은 알림이 없습니다.").foregroundStyle(.secondary)
+                    Text("아직 받은 알림이 없어요.").foregroundStyle(Theme.textTertiary)
                 }
                 ForEach(items ?? []) { item in
                     InboxRow(item: item, zoneIdentifier: model.dayZone.identifier)
@@ -38,9 +38,10 @@ struct IntakeInboxView: View {
             } header: {
                 Text("받은 알림")
             } footer: {
-                Text("단축어의 'OnAll 알림 기록하기' 동작으로 들어온 알림입니다. '어느 계좌인지 모름'인 알림을 누르면 계좌를 정할 수 있습니다.")
+                Text("단축어의 'OnAll 알림 기록하기' 동작으로 들어온 알림이에요. '어느 계좌인지 모름'인 알림을 누르면 계좌를 정할 수 있어요.")
             }
         }
+        .onAllGroupedScreen()
         .navigationTitle("받은 알림")
         .navigationBarTitleDisplayMode(.inline)
         .overlay { if items == nil { ProgressView() } }
@@ -73,7 +74,7 @@ private struct InboxRow: View {
             Text(IntakeText.preview(notification)).font(.footnote).lineLimit(3)
             Text(IntakeText.status(item.status))
                 .font(.caption.weight(.medium))
-                .foregroundStyle(IntakeText.isSettled(item.status) ? Color.secondary : Color.orange)
+                .foregroundStyle(IntakeText.isSettled(item.status) ? Theme.textTertiary : Theme.caution)
         }
         .padding(.vertical, 2)
     }
@@ -130,7 +131,7 @@ private struct AccountAnswerSheet: View {
                 } header: {
                     Text("새 계좌")
                 } footer: {
-                    Text("잔액은 0원에서 시작해 알림으로 움직인 만큼만 셉니다.")
+                    Text("잔액은 0원에서 시작해서 알림으로 움직인 만큼만 세요.")
                 }
                 let fitting = accounts.filter { IntakeText.fits($0, candidate.kind) }
                 if !fitting.isEmpty {
@@ -148,7 +149,7 @@ private struct AccountAnswerSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
             .task { accounts = await model.registeredAccounts() }
-            .alert("저장하지 못했습니다", isPresented: $failed) { Button("확인", role: .cancel) {} }
+            .alert("저장하지 못했어요", isPresented: $failed) { Button("확인", role: .cancel) {} }
         }
     }
 
@@ -180,7 +181,7 @@ private struct RuleAnswerSheet: View {
                     LabeledContent("기관", value: IntakeText.institution(question.institution))
                     LabeledContent("종류", value: IntakeText.kind(question.kind))
                 } footer: {
-                    Text("이 앱이 보내는 같은 종류의 알림은 앞으로 고른 계좌로 기록합니다. 같은 기관에 계좌가 여러 개면 알림만으로는 정할 수 없어서 검토로 남습니다.")
+                    Text("이 앱이 보내는 같은 종류의 알림은 앞으로 고른 계좌로 기록해요. 같은 기관에 계좌가 여러 개면 알림만으로는 정할 수 없어서 검토로 남겨요.")
                 }
                 if !question.choices.isEmpty {
                     Section("등록한 계좌") {
@@ -201,10 +202,10 @@ private struct RuleAnswerSheet: View {
             .navigationTitle("어느 계좌인가요?")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
-            .alert("정하지 못했습니다", isPresented: $failed) {
+            .alert("정하지 못했어요", isPresented: $failed) {
                 Button("확인", role: .cancel) {}
             } message: {
-                Text("같은 기관에 다른 계좌가 있으면 알림만으로는 어느 계좌인지 알 수 없습니다.")
+                Text("같은 기관에 다른 계좌가 있으면 알림만으로는 어느 계좌인지 알 수 없어요.")
             }
         }
     }
