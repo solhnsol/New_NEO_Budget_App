@@ -47,7 +47,7 @@ enum SampleLedger {
             )
         }
 
-        let candidates = [
+        var candidates = [
             try candidate("sample-salary", .deposit, .inflow, 2_000_000, instant(9, 0)),
             try candidate("sample-restaurant", .purchase, .outflow, 12_000, instant(12, 20), merchant: "성수 식당"),
             try candidate("sample-dessert", .purchase, .outflow, 3_000, instant(12, 50), merchant: "디저트"),
@@ -63,6 +63,10 @@ enum SampleLedger {
             // A burst of purchases a few minutes apart, to see transaction lines that cannot all keep apart.
             ? try (0..<5).map { try candidate("sample-burst-\($0)", .purchase, .outflow, 1_000 + Int64($0) * 100, instant(16, 30 + $0 * 2), merchant: "상점 \($0)") }
             : [])
+        // `-demo-deposit`: a friend paying back part of lunch, to put on the restaurant purchase in the ledger tab.
+        if ProcessInfo.processInfo.arguments.contains("-demo-deposit") {
+            candidates.append(try candidate("sample-friend", .deposit, .inflow, 6_000, instant(22, 0), merchant: "테스트 친구"))
+        }
         // `-demo-trans`: a burst of purchases on each of the days around today (a few minutes apart), for the days that slide in.
         var transBurst: [TransactionCandidate] = []
         if ProcessInfo.processInfo.arguments.contains("-demo-trans") {

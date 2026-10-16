@@ -64,6 +64,11 @@ actor AppLedger {
         Self.refundLinks(in: try snapshot().ledger)
     }
 
+    /// Money that came in and nothing explains yet, newest first (`DepositMerge`).
+    func unclassifiedDeposits(life: LifeState) throws -> [LedgerDeposit] {
+        DepositMerge.unclassified(in: try snapshot(), life: life)
+    }
+
     static func refundLinks(in ledger: LedgerSnapshot) -> [LedgerEntryID: LedgerEntryID] {
         Dictionary(ledger.entries.compactMap { entry in entry.adjustment.map { (entry.id, $0.originalEntryID) } }, uniquingKeysWith: { first, _ in first })
     }
