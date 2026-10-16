@@ -177,6 +177,7 @@ public actor CalendarCommandService {
         case let .unlinkTransaction(input): return unlinkTransaction(input)
         case let .assignActivityType(input): return await assignActivityType(input)
         case let .assignActivityArea(input): return await assignActivityArea(input)
+        case let .setHeadcount(input): return await setHeadcount(input)
         case let .upsertArea(area): return applyLocal([.upsertArea(area)], activityID: nil)
         case let .assignTag(input): return await assignTag(input, remove: false)
         case let .unassignTag(input): return await assignTag(input, remove: true)
@@ -472,6 +473,23 @@ public actor CalendarCommandService {
         }
         return applyLocal(
             resolved.creation + [.setActivityType(resolved.id, Assigned(typeID, provenance: input.provenance))],
+            activityID: resolved.id
+        )
+    }
+
+    private func setHeadcount(_ input: SetHeadcountInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let headcount = input.headcount else {
+            guard let resolved = await existingActivity(input.target) else { return .applied(AppliedCommand()) }
+            return applyLocal([.clearActivityHeadcount(resolved, by: input.provenance)], activityID: resolved)
+        }
+        let resolved: ResolvedActivity
+        switch await resolveActivity(input.target) {
+        case let .success(value): resolved = value
+        case let .failure(outcome): return outcome
+        }
+        return applyLocal(
+            resolved.creation + [.setActivityHeadcount(resolved.id, Assigned(headcount, provenance: input.provenance))],
             activityID: resolved.id
         )
     }

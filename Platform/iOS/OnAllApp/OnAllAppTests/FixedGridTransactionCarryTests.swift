@@ -21,7 +21,8 @@ private func carry(linkedTo event: CalendarEventKey? = nil, at point: CGPoint) t
 @Test func putDownOnACardLinksToIt() throws {
     var carried = try carry(at: CGPoint(x: 10, y: 10))
     #expect(carried.outcome == .none)
-    #expect(carried.move(to: CGPoint(x: 60, y: 110), cards: cards))
+    let stepped = carried.move(to: CGPoint(x: 60, y: 110), cards: cards)
+    #expect(stepped)
     #expect(carried.outcome == .link(LedgerEntryID(rawValue: "t"), key("lunch")))
 }
 
@@ -32,8 +33,10 @@ private func carry(linkedTo event: CalendarEventKey? = nil, at point: CGPoint) t
 
 @Test func movingWithinOneCardIsNoStep() throws {
     var carried = try carry(at: CGPoint(x: 60, y: 110))
-    #expect(!carried.move(to: CGPoint(x: 70, y: 150), cards: cards))
-    #expect(carried.move(to: CGPoint(x: 10, y: 10), cards: cards))
+    let within = carried.move(to: CGPoint(x: 70, y: 150), cards: cards)
+    #expect(!within)
+    let out = carried.move(to: CGPoint(x: 10, y: 10), cards: cards)
+    #expect(out)
     #expect(carried.outcome == .none)
 }
 
