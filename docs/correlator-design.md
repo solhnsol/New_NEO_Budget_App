@@ -76,7 +76,8 @@ Parser → Account resolution → **Correlator** → Assembler → Dedup → 원
 2. 완료: 처리 저장소 적용. `CandidateProcessingRepository.process(_:observation:correlator:…)`가 저장된 후보들에 대해 판정하고 한 번에 적용한다. 근거만 되는 후보는 `corroborates`로 남고 원장을 바꾸지 않는다. 검토 대기 중이던 짝은 새 행위가 승격될 때 그 근거로 닫힌다(`needsReview` 상태는 그대로이고 `corroborates`가 있으면 닫힌 것으로 본다). 수입으로 먼저 반영된 입금은 새 원장 항목 종류 `reversal`(원래 항목의 정확한 반대 기록, 원래 항목은 남김)로 되돌리고 이체가 그 자리를 대신한다. 같은 알림을 다시 처리하면 처음 판정을 유지한다. 중복 검사(D003)는 근거 전용 후보를 행위로 세지 않는다. 테스트: 세 앱의 한 결제, 이체 양쪽, 카카오 충전, 환불 후보, 재처리, `reversal` 검증을 모든 도착 순서로.
    - D003에 따라 같은 계좌·같은 금액 결제가 5분 안에 같은 앱에서 두 번 오면 두 번째는 여전히 검토로 간다(판정 규칙은 두 행위로 보지만 저장소의 중복 검사가 더 보수적이다).
 3. 남음: 계좌가 해소되지 않은 알림끼리의 금액·시각 짝 **제안**(3절 기본값 표 첫 줄). 지금은 해소 안 된 알림을 규칙에 넣지 않고, 계좌 확인 검토로만 보낸다.
-4. 남음: 계좌 계층에서 상대 키(`counterpart`)를 등록 계좌로 해소해 `transferCounterpart`로 넘기는 연결.
+4. 완료: 계좌 계층 연결. `CorrelationObservation(candidateID:draft:evidence:registry:fallbackSource:)`가 `resolve`로 계좌를, `resolveCounterpart`로 상대가 **등록된 내 계좌**일 때만 `transferCounterpart`를 채운다. 등록 안 된 상대(남의 계좌)는 비워 둔다.
+6. 남음: 앱(`AppLedger`)이 새 처리 경로를 쓰도록 바꾸기. 지금 앱은 데모 원장만 쓰므로 실제 알림 수집을 붙일 때 함께 한다.
 5. 노트북: 실제 데이터(`data/`, 로컬 전용)로 10/9와 같은 7일 재검증.
 
 ## 7. 결정 (2026-10-16, Hans)

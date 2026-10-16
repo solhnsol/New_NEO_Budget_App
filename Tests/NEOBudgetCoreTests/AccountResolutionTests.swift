@@ -387,3 +387,34 @@ import Testing
         #expect(try JSONDecoder().decode(AccountRegistry.self, from: data) == registry)
     }
 }
+
+@Suite struct CorrelationObservationFromAccountsTests {
+    @Test func aKakaoChargeNamingARegisteredAccountCarriesItAsTheTransferCounterpart() throws {
+        let extractor = AccountEvidenceExtractor()
+        var registry = AccountRegistry()
+        try registry.adopt(.account(AccountID(rawValue: "W")), displayName: "생활비", institution: .woori, keys: [
+            InstrumentKey(institution: .woori, identifier: .accountTail("4321"))
+        ])
+        try registry.adopt(.account(AccountID(rawValue: "KW")), displayName: "카카오페이머니", institution: .kakaoPay)
+        try registry.addSourceRule(id: SourceRuleID(rawValue: "kw"), provider: ProviderCatalog.kakaoPay, types: [.kakaoCharge],
+                                   institution: .kakaoPay, kind: .prepaidWallet, binding: .account(AccountID(rawValue: "KW")), createdAtUnixMilliseconds: 0)
+        func charge(_ tail: String) -> RawNotification {
+            RawNotification(id: "k", source: NotificationSource(applicationIdentifier: "x", displayName: "Kakaopay"),
+                            capturedAtUnixMilliseconds: 1_000, title: "10,000원 충전했어요", body: "- 충전계좌 : 우리 \(tail)")
+        }
+        let draft = try TransactionCandidateDraft(
+            rawNotificationID: "k", parserID: "t", parserVersion: "1", ruleID: "wallet-top-up", kind: .walletTopUp, direction: .inflow,
+            amount: Money(minorUnits: 10_000, currency: "KRW"),
+            occurredAt: ObservedTimestamp(unixMilliseconds: 1_000, precision: .second, source: .captureTime), confidence: .high
+        )
+        let mine = CorrelationObservation(candidateID: TransactionCandidateID(rawValue: "c"), draft: draft,
+                                          evidence: extractor.evidence(from: charge("4321")), registry: registry, fallbackSource: "x")
+        #expect(mine.binding == .account(AccountID(rawValue: "KW")))
+        #expect(mine.transferCounterpart == AccountID(rawValue: "W"))
+        #expect(mine.source == ProviderCatalog.kakaoPay.rawValue)
+        // Someone else's account (an unregistered key) is never taken for one of the user's.
+        let other = CorrelationObservation(candidateID: TransactionCandidateID(rawValue: "c"), draft: draft,
+                                           evidence: extractor.evidence(from: charge("9999")), registry: registry, fallbackSource: "x")
+        #expect(other.transferCounterpart == nil)
+    }
+}

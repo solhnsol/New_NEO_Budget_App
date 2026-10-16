@@ -244,3 +244,22 @@ public enum CorrelationDecision: Equatable, Sendable {
     /// Amount and time only: review, with these as the likely partners.
     case suggests([CorrelationMatch])
 }
+
+extension CorrelationObservation {
+    /// What the account layer knows of a notification: where the money moved (`resolve`), and the other side only
+    /// when its key is one of the user's registered accounts (`resolveCounterpart`; someone else's account stays nil).
+    /// A credit card counterpart is not a transfer and is left out.
+    public init(candidateID: TransactionCandidateID, draft: TransactionCandidateDraft, evidence: AccountEvidence?,
+                registry: AccountRegistry, fallbackSource: String) {
+        var binding: ResolvedLedgerBinding?
+        var counterpart: AccountID?
+        if let evidence {
+            if case let .resolved(resolved, _) = registry.resolve(evidence) { binding = resolved }
+            if case let .resolved(.account(account), _)? = registry.resolveCounterpart(evidence), binding != .account(account) {
+                counterpart = account
+            }
+        }
+        self.init(candidateID: candidateID, draft: draft, binding: binding, transferCounterpart: counterpart,
+                  source: evidence?.provider?.rawValue ?? fallbackSource)
+    }
+}
