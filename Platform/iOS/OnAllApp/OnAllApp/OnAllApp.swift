@@ -15,13 +15,13 @@ struct OnAllApp: App {
                 } else if ProcessInfo.processInfo.arguments.contains("-render-grid") || ProcessInfo.processInfo.arguments.contains("-render-continuous") {
                     RenderGridScreen()
                 } else if let model {
-                    DayTimelineScreen(model: model)
+                    RootTabs(model: model)
                 } else {
                     ProgressView()
                 }
                 #else
                 if let model {
-                    DayTimelineScreen(model: model)
+                    RootTabs(model: model)
                 } else {
                     ProgressView()
                 }
