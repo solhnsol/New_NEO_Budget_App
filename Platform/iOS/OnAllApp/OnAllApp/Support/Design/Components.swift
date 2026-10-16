@@ -112,16 +112,20 @@ extension ButtonStyle where Self == SecondaryButtonStyle {
 
 extension View {
     /// Pins a sheet's main button to the bottom, over the screen's gray, so it is always in reach of the thumb.
-    func primaryActionBar<Label: View>(isEnabled: Bool = true, action: @escaping () -> Void, @ViewBuilder label: () -> Label) -> some View {
+    /// `isShown`: whether the screen has a main action right now (the bar takes no room without one).
+    func primaryActionBar<Label: View>(
+        isShown: Bool = true, isEnabled: Bool = true, action: @escaping () -> Void, @ViewBuilder label: () -> Label
+    ) -> some View {
         let label = label()
         return safeAreaInset(edge: .bottom, spacing: 0) {
-            Button(action: action) { label }
-                .buttonStyle(.onAllPrimary)
-                .disabled(!isEnabled)
-                .padding(.horizontal, Theme.Space.xl)
-                .padding(.top, Theme.Space.s)
-                .padding(.bottom, Theme.Space.s)
-                .background(Theme.background)
+            if isShown {
+                Button(action: action) { label }
+                    .buttonStyle(.onAllPrimary)
+                    .disabled(!isEnabled)
+                    .padding(.horizontal, Theme.Space.xl)
+                    .padding(.vertical, Theme.Space.s)
+                    .background(Theme.background)
+            }
         }
     }
 }

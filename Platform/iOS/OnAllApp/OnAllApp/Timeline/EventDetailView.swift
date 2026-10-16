@@ -21,6 +21,7 @@ struct EventDetailView: View {
                 case let .overflow(selection): overflowSections(selection)
                 }
             }
+            .onAllGroupedScreen()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -42,8 +43,10 @@ struct EventDetailView: View {
             row("시간", Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (block.state == .eventMissing ? " · 캘린더에서 삭제됨" : ""))
             ForEach(ExpandedBlockPlan.metaRows(for: block), id: \.label) { meta in row(meta.label, meta.value) }
             if !block.isEditable { row("편집", "읽기 전용") }
-            Button { onEditInfo(block) } label: { Label("활동 정보", systemImage: "square.and.pencil") }
-            Button { onSettle(block) } label: { Label("정산", systemImage: "person.2") }
+        }
+        Section {
+            Button { onEditInfo(block) } label: { actionRow("무엇을, 어디서, 누구와", systemImage: "square.and.pencil") }
+            Button { onSettle(block) } label: { actionRow("정산하기", systemImage: "person.2") }
         }
         allocationSections(block.allocations, spend: block.allocatedSpend, refunds: block.allocatedRefunds)
     }
@@ -67,7 +70,7 @@ struct EventDetailView: View {
             row("시각", Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (item.timePrecision == .approximate ? " (알림 기준)" : ""))
             if let eventTitle { row("연결된 일정", eventTitle) }
         } footer: {
-            Text("거래가 일어난 시각은 일정 시간 밖이라 일정과 별개의 줄로 보입니다. 일정과의 연결은 그대로입니다.")
+            Text("거래 시각이 일정 시간 밖이라 따로 보여요. 일정과의 연결은 그대로예요.")
         }
     }
 
@@ -86,7 +89,7 @@ struct EventDetailView: View {
                 }
             }
         } footer: {
-            Text("공간이 모자라 한 카드로 보인 거래입니다. 서로 관련된 거래라는 뜻은 아닙니다.")
+            Text("자리가 모자라 한 카드로 모아 보인 거래예요. 서로 관련 있다는 뜻은 아니에요.")
         }
     }
 
@@ -97,7 +100,7 @@ struct EventDetailView: View {
             row("시각", Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (marker.timePrecision == .approximate ? " (알림 기준)" : ""))
             row("활동", marker.allocations.isEmpty ? "연결된 활동 없음" : "\(marker.allocations.count)개에 나눔")
         } footer: {
-            if marker.allocations.isEmpty { Text("활동 없는 지출도 정상입니다. 나중에 일정과 연결할 수 있습니다.") }
+            if marker.allocations.isEmpty { Text("활동 없는 지출도 괜찮아요. 나중에 일정과 연결할 수 있어요.") }
         }
     }
 
@@ -120,6 +123,19 @@ struct EventDetailView: View {
     }
 
     private func row(_ label: String, _ value: String) -> some View {
-        LabeledContent(label) { Text(value).multilineTextAlignment(.trailing) }
+        LabeledContent {
+            Text(value).multilineTextAlignment(.trailing).foregroundStyle(Theme.textPrimary)
+        } label: {
+            Text(label).foregroundStyle(Theme.textSecondary)
+        }
+    }
+
+    private func actionRow(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: Theme.Space.m) {
+            IconTile(systemName: systemImage, tint: Theme.accent, size: 32)
+            Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+        }
     }
 }
