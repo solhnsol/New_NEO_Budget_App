@@ -10,7 +10,6 @@ struct SettlementSheet: View {
     let eventKey: CalendarEventKey
     @Environment(\.dismiss) private var dismiss
     @State private var life: LifeState?
-    @State private var newPerson = ""
     /// Hand-set shares, by person, as typed (whole won).
     @State private var fixedText: [PersonID: String] = [:]
     @State private var failure: String?
@@ -22,7 +21,7 @@ struct SettlementSheet: View {
                 if let block {
                     form(block)
                 } else {
-                    ContentUnavailableView("일정을 찾을 수 없습니다", systemImage: "calendar.badge.exclamationmark")
+                    ContentUnavailableView("일정을 찾을 수 없어요", systemImage: "calendar.badge.exclamationmark")
                 }
             }
             .navigationTitle((block?.title).map { $0 + " 정산" } ?? "정산")
@@ -72,64 +71,68 @@ struct SettlementSheet: View {
 
     // MARK: The form
 
-    private func form(_ block: EventBlock) -> some View {
-        let paid = total(block)
-        let plan = paid.flatMap { try? EventSettlementPlan.make(
+    private func makePlan(_ block: EventBlock) -> EventSettlementPlan? {
+        total(block).flatMap { try? EventSettlementPlan.make(
             totalMinorUnits: $0.minorUnits, currency: $0.currency, me: me?.id ?? PersonID(rawValue: "~me"), others: others,
             headcount: activity?.headcount?.value, fixed: fixed
         ) }
+    }
+
+    /// At least the people chosen and the user.
+    private var headcount: (value: Int, least: Int) {
+        let least = others.count + 1
+        return (max(activity?.headcount?.value ?? 0, least), least)
+    }
+
+    private func form(_ block: EventBlock) -> some View {
+        let paid = total(block)
+        let plan = makePlan(block)
+        let isLocked = !obligations.isEmpty
         return Form {
             Section {
-                LabeledContent("결제한 금액") {
-                    Text(paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? "확정되지 않음").monospacedDigit()
-                }
-            } footer: {
-                if paid == nil { Text("일정에 연결된 거래의 금액이 모두 확정되어야 나눌 수 있습니다.") }
+                AmountHero(
+                    label: "결제한 금액",
+                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? "아직 몰라요",
+                    note: paid == nil ? "일정에 연결된 거래 금액이 모두 확정되면 나눌 수 있어요." : nil
+                )
             }
-            if let failure { Section { Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) } }
-            Section("인원") {
-                Stepper(value: Binding(
-                    get: { max(activity?.headcount?.value ?? 0, others.count + 1) },
-                    set: { run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds)))) }
-                ), in: (others.count + 1)...50) {
-                    LabeledContent("나 포함", value: "\(max(activity?.headcount?.value ?? 0, others.count + 1))명")
-                }
-                .disabled(!obligations.isEmpty)
-            }
+            .onAllCardRow()
+            if let failure { Section { Label(failure, systemImage: "exclamationmark.circle.fill").foregroundStyle(Theme.danger).font(Theme.Typo.caption) }.onAllCardRow() }
             Section {
-                ForEach(model.catalog.people.filter { !$0.isSelf }) { person in
-                    let on = others.contains { $0.id == person.id }
-                    Button {
-                        run(ActivityEditing.setParticipant(person.id, on: !on, event: eventKey, now: model.nowMilliseconds))
-                    } label: {
-                        HStack {
-                            Text(person.name).foregroundStyle(.primary)
-                            Spacer()
-                            if on { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
-                        }
-                    }
-                    .disabled(!obligations.isEmpty)
-                }
-                HStack {
-                    TextField("새 사람", text: $newPerson).submitLabel(.done)
-                    Button("추가") { addPerson() }.disabled(ActivityEditing.cleanName(newPerson) == nil || !obligations.isEmpty)
+                PeoplePicker(
+                    people: model.catalog.people, chosen: Set(others.map(\.id)), isLocked: isLocked,
+                    toggle: { id in run(ActivityEditing.setParticipant(id, on: !others.contains { $0.id == id }, event: eventKey, now: model.nowMilliseconds)) },
+                    add: addPerson
+                )
+                HeadcountRow(value: headcount.value, least: headcount.least, isLocked: isLocked) {
+                    run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
                 }
             } header: {
                 Text("함께한 사람")
+            } footer: {
+                if isLocked { Text("정산 요청을 만든 뒤에는 사람과 인원을 바꿀 수 없어요. 바꾸려면 아래에서 다시 나누세요.") }
             }
-            if obligations.isEmpty {
-                if let plan { shareSection(plan) }
-            } else {
+            .onAllCardRow()
+            if isLocked {
                 requestedSection()
+            } else if let plan {
+                shareSection(plan)
             }
+        }
+        .onAllGroupedScreen()
+        .primaryActionBar(isShown: !isLocked && plan != nil, isEnabled: !(plan?.others.isEmpty ?? true) && !isSaving) {
+            if let plan { Task { await request(plan) } }
+        } label: {
+            Text(plan.map { $0.others.isEmpty ? "함께한 사람을 골라 주세요" : "\($0.others.count)명에게 정산 요청 만들기" } ?? "정산 요청 만들기")
         }
     }
 
     private func shareSection(_ plan: EventSettlementPlan) -> some View {
         Section {
             ForEach(plan.others) { share in
-                HStack {
-                    Text(share.name)
+                HStack(spacing: Theme.Space.m) {
+                    PersonAvatar(name: share.name, size: 32)
+                    Text(share.name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
                     Spacer()
                     TextField(Formatting.money(share.minorUnits, currency: plan.currency), text: Binding(
                         get: { fixedText[share.personID] ?? "" },
@@ -137,27 +140,32 @@ struct SettlementSheet: View {
                     ))
                     .keyboardType(.numberPad)
                     .multilineTextAlignment(.trailing)
-                    .monospacedDigit()
+                    .font(Theme.Typo.amount)
                     .frame(maxWidth: 140)
                 }
             }
             if plan.unnamedCount > 0 {
-                LabeledContent("이름 없는 \(plan.unnamedCount)명", value: "각 " + Formatting.money(plan.unnamedShareMinorUnits, currency: plan.currency))
+                HStack(spacing: Theme.Space.m) {
+                    PersonAvatar(name: "?", size: 32)
+                    Text("이름 없는 \(plan.unnamedCount)명").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                    Text("각 " + Formatting.money(plan.unnamedShareMinorUnits, currency: plan.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textSecondary)
+                }
             }
-            LabeledContent("내 몫", value: Formatting.money(plan.myShareMinorUnits, currency: plan.currency))
-            Button {
-                Task { await request(plan) }
-            } label: {
-                Label("정산 요청 만들기", systemImage: "person.2.badge.gearshape")
+            HStack(spacing: Theme.Space.m) {
+                PersonAvatar(name: "나", size: 32, isSelf: true)
+                Text("내 몫").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Text(Formatting.money(plan.myShareMinorUnits, currency: plan.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.accent)
             }
-            .disabled(plan.others.isEmpty || isSaving)
         } header: {
             Text("나눠 낼 금액")
         } footer: {
             Text(plan.unnamedCount > 0
-                 ? "금액을 비워 두면 똑같이 나눕니다. 이름 없는 사람의 몫은 이름을 넣기 전까지 받을 돈으로 잡히지 않습니다."
-                 : "금액을 비워 두면 똑같이 나눕니다.")
+                 ? "금액을 비워 두면 똑같이 나눠요. 이름 없는 사람의 몫은 이름을 넣기 전까지 받을 돈으로 잡지 않아요."
+                 : "금액을 비워 두면 똑같이 나눠요.")
         }
+        .onAllCardRow()
     }
 
     private func requestedSection() -> some View {
@@ -165,20 +173,35 @@ struct SettlementSheet: View {
             ForEach(obligations, id: \.id) { obligation in
                 let name = life?.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
                 let applied = life?.appliedMinorUnits(for: obligation.id) ?? 0
-                LabeledContent {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(Formatting.knowledge(obligation.amount.knowledge, currency: obligation.currency)).monospacedDigit()
-                        Text(statusText(obligation.status, applied: applied, currency: obligation.currency)).font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: Theme.Space.m) {
+                    PersonAvatar(name: name, size: 32)
+                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                        Text(name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                        Text(obligation.direction == .receivable ? "받을 돈" : "줄 돈").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
-                } label: {
-                    Text(obligation.direction == .receivable ? name + "에게 받을 돈" : name + "에게 줄 돈")
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: Theme.Space.xs) {
+                        Text(Formatting.knowledge(obligation.amount.knowledge, currency: obligation.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+                        StatusBadge(text: statusText(obligation.status, applied: applied, currency: obligation.currency), tone: tone(obligation.status))
+                    }
                 }
             }
             if obligations.allSatisfy({ (life?.appliedMinorUnits(for: $0.id) ?? 0) == 0 }) {
-                Button("다시 나누기", role: .destructive) { Task { await cancelRequests() } }
+                Button("다시 나누기") { Task { await cancelRequests() } }
+                    .buttonStyle(SecondaryButtonStyle(tint: Theme.danger))
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
         } header: {
             Text("정산 요청")
+        }
+        .onAllCardRow()
+    }
+
+    private func tone(_ status: ObligationStatus) -> StatusBadge.Tone {
+        switch status {
+        case .open, .partiallySettled: return .caution
+        case .settled: return .accent
+        case .cancelled: return .neutral
         }
     }
 
@@ -193,9 +216,7 @@ struct SettlementSheet: View {
 
     // MARK: Commands
 
-    private func addPerson() {
-        guard let name = ActivityEditing.cleanName(newPerson) else { return }
-        newPerson = ""
+    private func addPerson(_ name: String) {
         Task {
             let person = Person(id: PersonID(rawValue: ActivityEditing.newID(prefix: "person")), displayName: name)
             _ = await model.perform(.upsertPerson(person))
@@ -227,18 +248,18 @@ struct SettlementSheet: View {
         let provenance = ActivityEditing.provenance(now: model.nowMilliseconds)
         for obligation in obligations {
             if case let .rejected(reason)? = await model.perform(.cancelObligation(CancelObligationInput(obligationID: obligation.id, by: provenance))) {
-                failure = "취소하지 못했습니다. (\(reason))"
+                failure = "취소하지 못했어요. (\(reason))"
                 return
             }
         }
     }
 
-    private func fail() { failure = "정산 요청을 저장하지 못했습니다." }
+    private func fail() { failure = "정산 요청을 저장하지 못했어요." }
 
     private func run(_ command: CalendarCommand) {
         Task {
             let outcome = await model.perform(command)
-            if case let .rejected(reason)? = outcome { failure = "저장하지 못했습니다. (\(reason))" } else { failure = nil }
+            if case let .rejected(reason)? = outcome { failure = "저장하지 못했어요. (\(reason))" } else { failure = nil }
         }
     }
 }

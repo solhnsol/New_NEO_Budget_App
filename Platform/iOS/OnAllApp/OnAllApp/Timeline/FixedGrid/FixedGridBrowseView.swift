@@ -1668,8 +1668,8 @@ private struct EditSessionBar: View {
     }
 }
 
-/// Who a new event is with and how many in all, in a row over the keyboard: the people known as chips to toggle, then the headcount (the user
-/// included; never fewer than the people chosen and the user). Saved on the event's activity once it is created, so its settlement starts from them.
+/// Who a new event is with and how many in all, in a row over the keyboard: the people known as chips to toggle (`PersonChip`, as everywhere
+/// people are chosen), then the headcount with the user included, never fewer than the people chosen and the user (`CountStepper`). Saved on the event's activity once it is created, so its settlement starts from them.
 private struct MeetingChips: View {
     let people: [ActivityCatalog.Person]
     @Bindable var editor: FixedGridEditor
@@ -1677,31 +1677,23 @@ private struct MeetingChips: View {
     var body: some View {
         let least = editor.people.count + 1
         let count = max(editor.headcount ?? 0, least)
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                Image(systemName: "person.2").font(.footnote).foregroundStyle(.secondary)
-                ForEach(people) { person in
-                    let chosen = editor.people.contains(person.id)
-                    Button {
-                        if chosen { editor.people.remove(person.id) } else { editor.people.insert(person.id) }
-                    } label: {
-                        Text(person.name).font(.footnote.weight(chosen ? .semibold : .regular)).lineLimit(1)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(chosen ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1), in: Capsule())
-                            .overlay(Capsule().stroke(chosen ? Color.accentColor : .clear, lineWidth: 1))
+        HStack(spacing: Theme.Space.s) {
+            // The count stays put at the end; only the people scroll.
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    Text("누구와").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    if people.isEmpty { Text("사람은 일정의 정산에서 추가할 수 있어요").font(.caption).foregroundStyle(Theme.textTertiary) }
+                    ForEach(people) { person in
+                        let chosen = editor.people.contains(person.id)
+                        PersonChip(name: person.name, isSelected: chosen) {
+                            if chosen { editor.people.remove(person.id) } else { editor.people.insert(person.id) }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(chosen ? .isSelected : [])
                 }
-                HStack(spacing: 2) {
-                    Button { editor.headcount = count - 1 <= least ? nil : count - 1 } label: { Image(systemName: "minus.circle") }
-                        .disabled(count <= least)
-                    Text("\(count)명").font(.footnote.monospacedDigit()).frame(minWidth: 30)
-                    Button { editor.headcount = count + 1 } label: { Image(systemName: "plus.circle") }
-                }
-                .buttonStyle(.borderless)
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("인원 \(count)명")
+            }
+            Rectangle().fill(Theme.divider).frame(width: 1, height: 20)
+            CountStepper(value: count, range: least...50, compact: true, accessibilityName: "나 포함 총 인원") {
+                editor.headcount = $0 <= least ? nil : $0
             }
         }
     }
