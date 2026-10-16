@@ -8,6 +8,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
         guard !notification.id.isEmpty else { throw NotificationParserContractError.invalidRawNotificationID }
         let text = NotificationText.joined(notification)
         let lines = text.split(separator: "\n").map(String.init)
+        if let transit = try transitFare(notification, context: context) { return transit }
         if let reason = negativeSignal(in: text) { return .notTransaction(reason) }
         guard let classification = classify(text) else { return .notTransaction(classifyNonTransaction(text)) }
         let amount: Int64
@@ -48,6 +49,58 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             issues: issues,
             confidence: .high
         ))
+    }
+
+    // MARK: Wallet transit card (English device format: fare in the subtitle, balance in the body)
+
+    private static let transitFarePattern = try! NSRegularExpression(pattern: #"^₩([0-9]+(?:,[0-9]{3})*)\s+for\s+(.+)$"#)
+    private static let transitBalancePattern = try! NSRegularExpression(pattern: #"balance is ₩[0-9]"#)
+
+    /// A ride paid from a prepaid transit card: `₩1,550 for Metro` with `Your new balance is ₩10,000.` The fare is the amount;
+    /// the balance is never read as one. Balance-only and no-charge notices of the same card are not transactions.
+    /// Only the shape `AccountEvidenceExtractor` also reads as `transitFare` counts, so the parser and the account layer agree.
+    private func transitFare(_ notification: RawNotification, context: NotificationParsingContext) throws -> NotificationParseOutcome? {
+        let body = notification.body.map(NotificationText.normalize) ?? ""
+        guard Self.matches(Self.transitBalancePattern, body) else { return nil }
+        let subtitle = notification.subtitle.map(NotificationText.normalize) ?? ""
+        guard let groups = Self.captures(Self.transitFarePattern, subtitle), groups.count == 2,
+              let fare = Int64(groups[0].replacingOccurrences(of: ",", with: "")) else {
+            return .notTransaction(.balanceInquiry)
+        }
+        guard fare > 0 else { return .notTransaction(.balanceInquiry) }
+        var issues: [ParserIssue] = []
+        let timestamp: ObservedTimestamp
+        if let notificationTime = notification.notificationAtUnixMilliseconds {
+            timestamp = ObservedTimestamp(unixMilliseconds: notificationTime, precision: .second, source: .notificationTime)
+        } else {
+            timestamp = ObservedTimestamp(unixMilliseconds: notification.capturedAtUnixMilliseconds, precision: .second, source: .captureTime)
+            issues.append(.timeAbsentFallback)
+        }
+        let title = notification.title.map(NotificationText.normalize).flatMap { $0.isEmpty ? nil : $0 }
+        return .candidate(try TransactionCandidateDraft(
+            rawNotificationID: notification.id,
+            parserID: context.parserID,
+            parserVersion: context.parserVersion,
+            ruleID: "transit-fare",
+            kind: .purchase,
+            direction: .outflow,
+            amount: try Money(minorUnits: fare, currency: "KRW"),
+            occurredAt: timestamp,
+            instrument: InstrumentHint(kind: .transitCard, displayNameRaw: title),
+            counterparty: DraftCounterparty(merchantRaw: groups[1].trimmingCharacters(in: .whitespaces)),
+            evidence: evidence(notification: notification, lines: []),
+            issues: issues,
+            confidence: .high
+        ))
+    }
+
+    private static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {
+        regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
+    }
+
+    private static func captures(_ regex: NSRegularExpression, _ text: String) -> [String]? {
+        guard let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        return (1..<match.numberOfRanges).compactMap { Range(match.range(at: $0), in: text).map { String(text[$0]) } }
     }
 
     private struct Classification {

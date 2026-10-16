@@ -63,7 +63,8 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         if candidate.status == .ready {
             switch try DefaultCandidateDeduplicationValidator().validate(
                 candidate,
-                against: candidates.values.map(\.candidate)
+                // Notifications kept only as evidence of another act are not acts of their own.
+                against: candidates.values.filter { $0.corroborates == nil }.map(\.candidate)
             ) {
             case .accepted:
                 break
@@ -169,6 +170,120 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         )
     }
 
+    public mutating func process(
+        _ candidate: TransactionCandidate,
+        observation: CorrelationObservation,
+        correlator: NotificationCorrelator,
+        expectedCandidateRevision: UInt64,
+        expectedLedgerRevision: UInt64
+    ) throws -> CandidateProcessingResult {
+        guard observation.candidateID == candidate.id else { throw CandidateProcessingError.invalidCorrelationTarget(observation.candidateID) }
+        if let stored = candidates[candidate.id], let earlier = stored.observation {
+            guard earlier == observation else { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
+            // A repeat: the earlier decision stands (judging again against later notifications could differ).
+            if let match = stored.corroborates, stored.promotedEntryID == nil { return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision) }
+            if stored.promotedEntryID != nil { return .alreadyPromoted(candidateRevision: candidateRevision, ledgerRevision: try ledger.snapshot().revision) }
+            return .alreadyStored(candidateRevision: candidateRevision)
+        }
+        let records = candidates.values.compactMap(\.correlationRecord).sorted { $0.candidateID.rawValue < $1.candidateID.rawValue }
+        var state = self
+        let result = try state.apply(correlator.decide(observation, against: records), to: candidate,
+                                     expectedCandidateRevision: expectedCandidateRevision, expectedLedgerRevision: expectedLedgerRevision)
+        if let stored = state.candidates[candidate.id] {
+            state.candidates[candidate.id] = StoredTransactionCandidate(
+                candidate: stored.candidate, promotedEntryID: stored.promotedEntryID, promotionRejection: stored.promotionRejection,
+                corroborates: stored.corroborates, reversalEntryID: stored.reversalEntryID, suggestions: stored.suggestions, observation: observation
+            )
+        }
+        self = state
+        return result
+    }
+
+    private mutating func apply(
+        _ correlation: CorrelationDecision,
+        to candidate: TransactionCandidate,
+        expectedCandidateRevision: UInt64,
+        expectedLedgerRevision: UInt64
+    ) throws -> CandidateProcessingResult {
+        switch correlation {
+        case let .newAct(act):
+            // Work on a copy: the candidate, the candidates it closes and a reversal commit together or not at all.
+            var state = self
+            let result = try state.process(candidate, expectedCandidateRevision: expectedCandidateRevision, expectedLedgerRevision: expectedLedgerRevision)
+            guard case .promoted = result else {
+                self = state
+                return result
+            }
+            for closed in act.closes {
+                guard let stored = state.candidates[closed.candidateID], stored.promotedEntryID == nil else {
+                    throw CandidateProcessingError.invalidCorrelationTarget(closed.candidateID)
+                }
+                state.candidates[closed.candidateID] = stored.linked(to: CorrelationMatch(candidateID: candidate.id, rule: closed.rule))
+            }
+            var ledgerRevision = try state.ledger.snapshot().revision
+            if let replaced = act.replacesIncome {
+                guard let stored = state.candidates[replaced.candidateID], let entryID = stored.promotedEntryID, stored.reversalEntryID == nil,
+                      let original = try state.ledger.snapshot().entries.first(where: { $0.id == entryID }), original.kind == .income else {
+                    throw CandidateProcessingError.invalidCorrelationTarget(replaced.candidateID)
+                }
+                let reversal = LedgerEntry(
+                    id: LedgerEntryID(rawValue: "reversal:" + entryID.rawValue),
+                    kind: .reversal,
+                    occurredAtUnixMilliseconds: candidate.proposedEntry?.occurredAtUnixMilliseconds ?? original.occurredAtUnixMilliseconds,
+                    postings: try original.postings.map { Posting(accountID: $0.accountID, delta: try $0.delta.negated()) },
+                    reverses: entryID
+                )
+                do {
+                    switch try state.ledger.commit(reversal, expectedRevision: ledgerRevision) {
+                    case let .committed(revision), let .alreadyCommitted(revision): ledgerRevision = revision
+                    }
+                } catch let error as LedgerStorageError {
+                    throw CandidateProcessingError.ledger(error)
+                }
+                state.candidates[replaced.candidateID] = stored.linked(
+                    to: CorrelationMatch(candidateID: candidate.id, rule: replaced.rule), reversal: reversal.id
+                )
+            }
+            self = state
+            return .promoted(candidateRevision: candidateRevision, ledgerRevision: ledgerRevision)
+
+        case let .corroborates(match):
+            if candidates[candidate.id] != nil { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
+            guard candidates[match.candidateID] != nil, match.candidateID != candidate.id else {
+                throw CandidateProcessingError.invalidCorrelationTarget(match.candidateID)
+            }
+            try store(StoredTransactionCandidate(candidate: candidate, corroborates: match), expectedCandidateRevision: expectedCandidateRevision)
+            return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision)
+
+        case let .suggests(matches):
+            let review = try TransactionCandidate(
+                id: candidate.id,
+                evidenceIDs: candidate.evidenceIDs,
+                status: .needsReview,
+                issues: candidate.status == .needsReview
+                    ? Array(Set(candidate.issues + [.possibleReturnOfEarlierPurchase])).sorted { $0.rawValue < $1.rawValue }
+                    : [.possibleReturnOfEarlierPurchase],
+                proposedEntry: candidate.proposedEntry,
+                policyVersion: candidate.policyVersion,
+                sourceDraft: candidate.sourceDraft
+            )
+            if candidates[candidate.id] != nil { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
+            try store(StoredTransactionCandidate(candidate: review, suggestions: matches), expectedCandidateRevision: expectedCandidateRevision)
+            return .stored(candidateRevision: candidateRevision)
+        }
+    }
+
+    /// Stores a candidate that does not touch the ledger.
+    private mutating func store(_ stored: StoredTransactionCandidate, expectedCandidateRevision: UInt64) throws {
+        guard expectedCandidateRevision == candidateRevision else {
+            throw CandidateProcessingError.staleCandidateRevision(expected: expectedCandidateRevision, actual: candidateRevision)
+        }
+        guard candidateRevision < UInt64.max else { throw CandidateProcessingError.revisionOverflow }
+        if let owner = evidenceOwner(of: stored.candidate) { throw duplicateEvidenceError(stored.candidate, owner: owner) }
+        candidates[stored.candidate.id] = stored
+        candidateRevision += 1
+    }
+
     private func evidenceOwner(
         of candidate: TransactionCandidate
     ) -> Dictionary<TransactionCandidateID, StoredTransactionCandidate>.Element? {
@@ -197,5 +312,14 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         case .invalidConfiguration: return .invalidConfiguration
         case .invalidEntry: return .invalidEntry
         }
+    }
+}
+
+private extension StoredTransactionCandidate {
+    func linked(to match: CorrelationMatch, reversal: LedgerEntryID? = nil) -> StoredTransactionCandidate {
+        StoredTransactionCandidate(
+            candidate: candidate, promotedEntryID: promotedEntryID, promotionRejection: promotionRejection,
+            corroborates: match, reversalEntryID: reversal ?? reversalEntryID, suggestions: suggestions, observation: observation
+        )
     }
 }

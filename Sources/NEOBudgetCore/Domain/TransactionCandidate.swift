@@ -25,6 +25,8 @@ public enum CandidateIssue: String, Codable, Hashable, Sendable {
     case parserUncertain
     case unsupportedEvent
     case promotionRejected
+    /// A refund or deposit that may return an earlier purchase; the user confirms which (never merged on amount alone).
+    case possibleReturnOfEarlierPurchase
 }
 
 public enum CandidateValidationError: Error, Equatable, Sendable {

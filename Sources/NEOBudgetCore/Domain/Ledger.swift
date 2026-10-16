@@ -189,6 +189,9 @@ public struct LedgerEntry: Codable, Equatable, Sendable {
         case transfer
         case cardPayment
         case adjustment
+        /// Undoes an earlier entry by posting its exact opposite; the original stays in the ledger (nothing is deleted
+        /// or overwritten). Used when an income turns out to be one leg of a transfer between the user's own accounts.
+        case reversal
     }
 
     public let id: LedgerEntryID
@@ -198,6 +201,8 @@ public struct LedgerEntry: Codable, Equatable, Sendable {
     public let liabilityChanges: [LiabilityChange]
     public let budgetImpact: BudgetImpact?
     public let adjustment: AdjustmentLink?
+    /// The entry a `reversal` undoes.
+    public let reverses: LedgerEntryID?
     public let evidenceIDs: [String]
 
     public init(
@@ -208,6 +213,7 @@ public struct LedgerEntry: Codable, Equatable, Sendable {
         liabilityChanges: [LiabilityChange] = [],
         budgetImpact: BudgetImpact? = nil,
         adjustment: AdjustmentLink? = nil,
+        reverses: LedgerEntryID? = nil,
         evidenceIDs: [String] = []
     ) {
         self.id = id
@@ -217,6 +223,7 @@ public struct LedgerEntry: Codable, Equatable, Sendable {
         self.liabilityChanges = liabilityChanges
         self.budgetImpact = budgetImpact
         self.adjustment = adjustment
+        self.reverses = reverses
         self.evidenceIDs = evidenceIDs
     }
 }
@@ -240,4 +247,6 @@ public enum LedgerValidationError: Error, Equatable, Sendable {
     case adjustmentMonthMismatch
     case adjustmentExceedsOriginal(LedgerEntryID)
     case evidenceAlreadyUsed(id: String, entryID: LedgerEntryID)
+    case reversalTargetInvalid(LedgerEntryID)
+    case alreadyReversed(LedgerEntryID)
 }

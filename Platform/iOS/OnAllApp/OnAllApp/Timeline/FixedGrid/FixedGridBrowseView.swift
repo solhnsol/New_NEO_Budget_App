@@ -845,8 +845,23 @@ struct FixedGridBrowseView: View {
         case let .overflow(id): perform(.overflow(id), in: timeline, plan: plan)
         case let .choose(candidates):
             choice = TouchChoice(options: candidates.map { candidate in
-                TouchChoice.Option(id: "\(candidate)", label: FixedGridTouch.label(of: candidate, in: timeline, plan: plan)) { perform(candidate, in: timeline, plan: plan) }
+                TouchChoice.Option(id: "\(candidate)", label: FixedGridTouch.label(of: candidate, in: timeline, plan: plan)) { chose(candidate, in: timeline, plan: plan) }
             })
+        }
+    }
+
+    /// A choice from "무엇을 선택할까요?". The button runs while the dialog is still going away, and a details sheet asked for in that moment
+    /// is dropped (a transaction chosen there opened nothing). So a sheet is asked for once the dialog is gone; a session opens at once.
+    private func chose(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
+        if case let .event(id) = candidate, let block = timeline.blocks.first(where: { $0.id == id }), block.isEditable,
+           FixedGridEditor.refusal(for: block, zone: zone) == nil {
+            perform(candidate, in: timeline, plan: plan)
+            return
+        }
+        guard let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(400))
+            onSelect(selection)
         }
     }
 
