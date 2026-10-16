@@ -461,6 +461,11 @@ final class AppModel {
         return LedgerList.sections(transactions, life: life, zone: dayZone)
     }
 
+    /// Every account's and card's movements, unnetted (the ledger tab's statement view). `nil` when the ledger could not be read.
+    func ledgerStatements() async -> [LedgerStatements.Statement]? {
+        try? await ledger.statements()
+    }
+
     private func observeChanges() {
         guard observer == nil else { return }
         let provider = provider

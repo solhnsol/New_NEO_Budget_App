@@ -3,16 +3,36 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The ledger tab: every spend and refund as a plain list, newest day first. No grid; tapping a row opens its details.
+/// The ledger tab, in two readings of the same ledger:
+/// - **소비**: every spend and refund as a plain list, newest day first, as the timeline shows them. No grid; tapping a row opens its details.
+/// - **계좌·카드**: what really moved on each account and card, unnetted, to compare with the bank, and each card's usage this month.
 struct LedgerScreen: View {
+    enum Mode: Hashable { case spending, accounts }
+
     let model: AppModel
+    @State private var mode = Mode.spending
     @State private var sections: [LedgerDaySection]?
 
     var body: some View {
         NavigationStack {
-            content
-                .navigationTitle("가계부")
-                .refreshable { await load() }
+            Group {
+                switch mode {
+                case .spending: content.refreshable { await load() }
+                case .accounts: AccountsView(model: model)
+                }
+            }
+            .navigationTitle("가계부")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Picker("보기", selection: $mode) {
+                        Text("소비").tag(Mode.spending)
+                        Text("계좌·카드").tag(Mode.accounts)
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 240)
+                }
+            }
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
         .task(id: model.dataGeneration) { await load() }
