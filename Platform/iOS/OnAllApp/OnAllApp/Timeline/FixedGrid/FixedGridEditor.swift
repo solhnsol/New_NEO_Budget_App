@@ -37,6 +37,8 @@ final class FixedGridEditor {
         var calendars: () -> [CalendarDescriptor] = { [] }
         /// Creates an event, then reads the days again (`AppModel.perform`). `nil`: no calendar to save to.
         var create: (CalendarEventDraft) async -> CalendarCommandOutcome? = { _ in nil }
+        /// Records who a new event is with and how many people in all, once it is created (`docs/ledger-behavior.md`: settling later needs no typing).
+        var meet: (CalendarEventKey, [PersonID], Int?) async -> Void = { _, _, _ in }
     }
 
     /// What is said to the person after something they did not see happen (a refusal, a failure, a snap).
@@ -74,6 +76,10 @@ final class FixedGridEditor {
     private(set) var isNew = false
     /// The calendar a new event goes to (chosen with the chips; the first writable one at first).
     private(set) var calendarID: CalendarID?
+    /// Who a new event is with (chosen with the people chips), saved on its activity once it is created.
+    var people: Set<PersonID> = []
+    /// How many people in all, the user included, for a new event (`nil`: the people chosen and the user).
+    var headcount: Int?
     var scopeQuestion: ScopeQuestion?
     private(set) var message: Message?
     private var messages = 0
@@ -311,8 +317,12 @@ final class FixedGridEditor {
         }
         isSaving = true
         let event = CalendarEventDraft(calendarID: calendarID, title: newTitle ?? Self.newTitle, time: .timed(draft.range), timeZoneIdentifier: environment.zone.identifier)
+        let people = people.sorted(), headcount = headcount
         Task { @MainActor [weak self, environment] in
             let outcome = await environment.create(event)
+            if case let .applied(applied)? = outcome, let created = applied.event, !people.isEmpty || headcount != nil {
+                await environment.meet(CalendarEventKey(calendarID: created.calendarID, eventID: created.id), people, headcount)
+            }
             self?.finishCreate(outcome, draft: draft, session: id)
         }
     }
@@ -443,6 +453,7 @@ final class FixedGridEditor {
     private func clear() {
         session = nil; target = nil; draft = nil; original = nil; edge = nil; isDragging = false; rangeAtDragStart = nil
         sentDirty = false; isSaving = false; scopeQuestion = nil; isRenaming = false; isNew = false; calendarID = nil; title = ""
+        people = []; headcount = nil
     }
 
     private static func edge(_ handle: FixedGridEditInteraction.Handle) -> EditDraft.Edge { handle == .start ? .start : .end }

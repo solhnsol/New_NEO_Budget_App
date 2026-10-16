@@ -347,7 +347,7 @@ struct FixedGridBrowseView: View {
 
     private func sessionBar(_ editor: FixedGridEditor) -> some View {
         EditSessionBar(
-            editor: editor, zone: zone, calendars: model.calendars, isCommitting: edit.session?.committing == true,
+            editor: editor, zone: zone, calendars: model.calendars, people: model.catalog.people.filter { !$0.isSelf }, isCommitting: edit.session?.committing == true,
             rename: { edit.send(.tapTitle) }, endRename: { edit.send(.endRename) },
             cancel: { edit.send(.cancel) }, confirm: { edit.send(.confirm) }
         )
@@ -808,7 +808,13 @@ struct FixedGridBrowseView: View {
             save: { await model.save($0) },
             stepped: { Haptics.snap() },
             calendars: { model.calendars },
-            create: { await model.perform(.createEvent(CreateEventInput(draft: $0))) }
+            create: { await model.perform(.createEvent(CreateEventInput(draft: $0))) },
+            meet: { key, people, headcount in
+                for person in people { _ = await model.perform(ActivityEditing.setParticipant(person, on: true, event: key, now: model.nowMilliseconds)) }
+                if let headcount {
+                    _ = await model.perform(.setHeadcount(SetHeadcountInput(target: .event(key), headcount: headcount, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
+                }
+            }
         ))
         self.editor = editor
         edit.editor = { editor.perform($0) }
@@ -1533,6 +1539,8 @@ private struct EditSessionBar: View {
     @Bindable var editor: FixedGridEditor
     let zone: DisplayTimeZone
     let calendars: [CalendarDescriptor]
+    /// Who a new event can be with (the people known, the user left out).
+    let people: [ActivityCatalog.Person]
     let isCommitting: Bool
     let rename: () -> Void
     let endRename: () -> Void
@@ -1548,6 +1556,7 @@ private struct EditSessionBar: View {
                     calendars: calendars, current: editor.isNew ? editor.calendarID : editor.draft?.calendarID,
                     choose: editor.isNew ? { editor.choose($0) } : nil
                 )
+                if editor.isNew { MeetingChips(people: people, editor: editor) }
                 HStack(spacing: 10) {
                     TextField("일정 이름", text: $editor.title)
                         .font(.body.weight(.semibold))
@@ -1623,6 +1632,45 @@ private struct EditSessionBar: View {
         if editor.newTitle != nil { moved.append("이름 바뀜") }
         guard !moved.isEmpty else { return range }
         return range + " · " + moved.joined(separator: " · ")
+    }
+}
+
+/// Who a new event is with and how many in all, in a row over the keyboard: the people known as chips to toggle, then the headcount (the user
+/// included; never fewer than the people chosen and the user). Saved on the event's activity once it is created, so its settlement starts from them.
+private struct MeetingChips: View {
+    let people: [ActivityCatalog.Person]
+    @Bindable var editor: FixedGridEditor
+
+    var body: some View {
+        let least = editor.people.count + 1
+        let count = max(editor.headcount ?? 0, least)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                Image(systemName: "person.2").font(.footnote).foregroundStyle(.secondary)
+                ForEach(people) { person in
+                    let chosen = editor.people.contains(person.id)
+                    Button {
+                        if chosen { editor.people.remove(person.id) } else { editor.people.insert(person.id) }
+                    } label: {
+                        Text(person.name).font(.footnote.weight(chosen ? .semibold : .regular)).lineLimit(1)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(chosen ? Color.accentColor.opacity(0.2) : Color.secondary.opacity(0.1), in: Capsule())
+                            .overlay(Capsule().stroke(chosen ? Color.accentColor : .clear, lineWidth: 1))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(chosen ? .isSelected : [])
+                }
+                HStack(spacing: 2) {
+                    Button { editor.headcount = count - 1 <= least ? nil : count - 1 } label: { Image(systemName: "minus.circle") }
+                        .disabled(count <= least)
+                    Text("\(count)명").font(.footnote.monospacedDigit()).frame(minWidth: 30)
+                    Button { editor.headcount = count + 1 } label: { Image(systemName: "plus.circle") }
+                }
+                .buttonStyle(.borderless)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("인원 \(count)명")
+            }
+        }
     }
 }
 

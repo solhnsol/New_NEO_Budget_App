@@ -7,6 +7,8 @@ struct EventDetailView: View {
     let zoneIdentifier: String
     /// Opens the event's Activity sheet (type, place, people, transactions). Only for an event selection.
     var onEditInfo: (EventBlock) -> Void = { _ in }
+    /// Opens the event's settlement (who was there, how many, who owes what). Only for an event selection.
+    var onSettle: (EventBlock) -> Void = { _ in }
 
     var body: some View {
         NavigationStack {
@@ -41,6 +43,7 @@ struct EventDetailView: View {
             ForEach(ExpandedBlockPlan.metaRows(for: block), id: \.label) { meta in row(meta.label, meta.value) }
             if !block.isEditable { row("편집", "읽기 전용") }
             Button { onEditInfo(block) } label: { Label("활동 정보", systemImage: "square.and.pencil") }
+            Button { onSettle(block) } label: { Label("정산", systemImage: "person.2") }
         }
         allocationSections(block.allocations, spend: block.allocatedSpend, refunds: block.allocatedRefunds)
     }
