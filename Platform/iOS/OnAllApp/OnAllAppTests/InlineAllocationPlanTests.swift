@@ -139,7 +139,7 @@ func blockWith(
 
     let bare = try blockWith([])
     #expect(ExpandedBlockPlan.metaRows(for: bare).map(\.label) == ["캘린더", "활동"])
-    #expect(ExpandedBlockPlan.metaRows(for: bare).last?.value == "아직 정보가 없습니다")
+    #expect(ExpandedBlockPlan.metaRows(for: bare).last?.value == "아직 정보가 없어요")
 }
 
 @Test func anExpandedBlockIsTallEnoughForItsContentAndGrowsOnlyWithWhatItShows() throws {

@@ -100,12 +100,12 @@ final class FixedGridEditor {
 
     static func text(for refusal: EditDraftError) -> String {
         switch refusal {
-        case .allDay: "종일 일정은 여기서 시간을 바꿀 수 없습니다"
-        case .readOnly: "읽기 전용 캘린더의 일정입니다"
-        case .eventMissing: "캘린더에서 사라진 일정입니다"
-        case .spansDays: "여러 날에 걸친 일정은 아직 시간을 바꿀 수 없습니다"
-        case .startNotBeforeEnd, .shorterThanMinimum: "15분보다 짧게 만들 수 없습니다"
-        case .leavesDay: "하루를 넘어가게 바꿀 수 없습니다"
+        case .allDay: "종일 일정은 여기서 시간을 바꿀 수 없어요"
+        case .readOnly: "읽기 전용 캘린더의 일정이에요"
+        case .eventMissing: "캘린더에서 사라진 일정이에요"
+        case .spansDays: "여러 날에 걸친 일정은 아직 시간을 바꿀 수 없어요"
+        case .startNotBeforeEnd, .shorterThanMinimum: "15분보다 짧게 만들 수 없어요"
+        case .leavesDay: "하루를 넘어가게 바꿀 수 없어요"
         }
     }
 
@@ -141,7 +141,7 @@ final class FixedGridEditor {
             send(.confirm)
         case let .ended(id, reason):
             guard id == session else { return }
-            if reason == .commitFailedAfterRelease { say("날짜를 옮기기 전 변경을 저장하지 못했습니다", problem: true) }
+            if reason == .commitFailedAfterRelease { say("날짜를 옮기기 전에 바꾼 내용을 저장하지 못했어요", problem: true) }
             clear()
         case .freeze, .retarget, .unfreeze:
             break
@@ -153,7 +153,7 @@ final class FixedGridEditor {
         session = id
         self.target = target
         if target.isNew { return beginNew(id, target: target) }
-        guard let block = environment.block(target) else { return cancelSoon(id, "일정을 찾지 못했습니다") }
+        guard let block = environment.block(target) else { return cancelSoon(id, "일정을 찾지 못했어요") }
         do {
             draft = try EditDraft(block: block, timeZone: environment.zone, generation: environment.generation())
             original = EventSaveOriginal(block: block)
@@ -165,7 +165,7 @@ final class FixedGridEditor {
 
     /// A new event: a draft of an event that is not in the calendar (no title yet, its time where it was put down), for the first calendar that can be written.
     private func beginNew(_ id: Int, target: FixedGridEditInteraction.Target) {
-        guard let calendar = environment.calendars().first(where: \.isWritable) else { return cancelSoon(id, "일정을 만들 수 있는 캘린더가 없습니다") }
+        guard let calendar = environment.calendars().first(where: \.isWritable) else { return cancelSoon(id, "일정을 만들 수 있는 캘린더가 없어요") }
         let start = environment.zone.dayBounds(target.day).start
         guard let range = try? TimedRange(startUnixMilliseconds: start + Int64(target.startMinute) * 60_000, endUnixMilliseconds: start + Int64(target.endMinute) * 60_000)
         else { return cancelSoon(id, Self.text(for: EditDraftError.startNotBeforeEnd)) }
@@ -311,7 +311,7 @@ final class FixedGridEditor {
     /// Creates the new event as the draft has it: the typed name (else "새 일정"), the chosen calendar, the draft's time.
     private func create(_ draft: EditDraft, session id: Int) {
         guard let calendarID else {
-            say("일정을 만들 수 있는 캘린더가 없습니다", problem: true)
+            say("일정을 만들 수 있는 캘린더가 없어요", problem: true)
             send(.commitFailed(session: id))
             return
         }
@@ -334,13 +334,13 @@ final class FixedGridEditor {
         case .applied?:
             send(.commitFinished(session: id, committed(start: draft.startDate, end: draft.endDate, day: target.day)))
         case let .partiallyApplied(_, failure)?:
-            say("일정은 만들었지만 연결된 정보를 저장하지 못했습니다 (\(failure))", problem: true)
+            say("일정은 만들었지만 연결된 정보를 저장하지 못했어요 (\(failure))", problem: true)
             send(.commitFinished(session: id, committed(start: draft.startDate, end: draft.endDate, day: target.day)))
         case .rejected?, .conflict?, .providerFailure?:
-            say("일정을 만들지 못했습니다. 완료를 눌러 다시 시도하세요", problem: true)
+            say("일정을 만들지 못했어요. 완료를 눌러 다시 시도해 주세요", problem: true)
             send(.commitFailed(session: id))
         case nil:
-            say("캘린더에 연결되지 않아 저장할 수 없습니다", problem: true)
+            say("캘린더에 연결되지 않아 저장할 수 없어요", problem: true)
             send(.commitFailed(session: id))
         }
     }
@@ -375,8 +375,8 @@ final class FixedGridEditor {
         switch result {
         case let .saved(receipt)?:
             isSaving = false
-            if let failure = receipt.localFailure { say("일정은 저장했지만 연결된 정보를 갱신하지 못했습니다 (\(failure))", problem: true) }
-            else if !receipt.matchesProposal { say("저장된 시간이 조정되었습니다", problem: false) }
+            if let failure = receipt.localFailure { say("일정은 저장했지만 연결된 정보를 고치지 못했어요 (\(failure))", problem: true) }
+            else if !receipt.matchesProposal { say("저장하면서 시간이 조금 바뀌었어요", problem: false) }
             send(.commitFinished(session: id, committed(start: receipt.start, end: receipt.end, day: target.day)))
         case .unchanged?:
             isSaving = false
@@ -390,23 +390,23 @@ final class FixedGridEditor {
             send(.cancel)                                               // saving it again cannot help: the draft goes, the calendar is shown
         case let .failed(failure)?:
             isSaving = false
-            say(failure.retry != nil ? "저장하지 못했습니다. 완료를 눌러 다시 시도하세요" : "저장하지 못했습니다. 캘린더를 다시 읽은 뒤 시도하세요", problem: true)
+            say(failure.retry != nil ? "저장하지 못했어요. 완료를 눌러 다시 시도해 주세요" : "저장하지 못했어요. 캘린더를 다시 불러온 뒤 시도해 주세요", problem: true)
             send(.commitFailed(session: id))
         case nil:
             isSaving = false
-            say("캘린더에 연결되지 않아 저장할 수 없습니다", problem: true)
+            say("캘린더에 연결되지 않아 저장할 수 없어요", problem: true)
             send(.commitFailed(session: id))
         }
     }
 
     static func text(for refusal: EventSaveRefusal) -> String {
         switch refusal {
-        case .targetGone: "다른 곳에서 삭제된 일정이라 저장하지 않았습니다"
-        case .targetChanged: "다른 곳에서 바뀐 일정이라 저장하지 않았습니다. 지금 시간을 보여 줍니다"
-        case .notEditable: "이 일정은 바꿀 수 없습니다"
-        case .scopeNotOffered, .invalid(.dateChangeRequiresThisOccurrence): "반복 일정 전체에는 이 변경을 적용할 수 없습니다"
-        case .invalid(.durationBelowMinimum): "15분보다 짧게 만들 수 없습니다"
-        case .invalid: "저장할 수 없는 변경입니다"
+        case .targetGone: "다른 곳에서 지운 일정이라 저장하지 않았어요"
+        case .targetChanged: "다른 곳에서 바뀐 일정이라 저장하지 않았어요. 지금 시간을 보여 드려요"
+        case .notEditable: "이 일정은 바꿀 수 없어요"
+        case .scopeNotOffered, .invalid(.dateChangeRequiresThisOccurrence): "반복 일정 전체에는 이 변경을 적용할 수 없어요"
+        case .invalid(.durationBelowMinimum): "15분보다 짧게 만들 수 없어요"
+        case .invalid: "저장할 수 없는 변경이에요"
         }
     }
 
@@ -432,8 +432,8 @@ final class FixedGridEditor {
     var conflictNote: String? {
         guard !isSaving else { return nil }
         switch draft?.conflict {
-        case .changed?: return "다른 곳에서 바뀐 일정입니다. 저장하면 거부됩니다"
-        case .deleted?: return "다른 곳에서 삭제된 일정입니다"
+        case .changed?: return "다른 곳에서 바뀐 일정이에요. 지금 저장하면 반영되지 않아요"
+        case .deleted?: return "다른 곳에서 지운 일정이에요"
         default: return nil
         }
     }

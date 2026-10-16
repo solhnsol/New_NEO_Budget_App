@@ -169,7 +169,7 @@ private func inside(_ frame: CGRect, _ bounds: CGRect = area) -> Bool { bounds.i
     #expect(hint(true, true).contains("위로") && hint(true, true).contains("아래로"))
     #expect(!hint(false, true).contains("아래로 쓸면") && hint(false, true).contains("늦게"))
     #expect(!hint(true, false).contains("위로 쓸면") && hint(true, false).contains("일찍"))
-    #expect(hint(false, false) == "지금은 바꿀 수 없습니다")
+    #expect(hint(false, false) == "지금은 바꿀 수 없어요")
 }
 
 // MARK: Controlled

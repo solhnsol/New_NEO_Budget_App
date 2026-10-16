@@ -33,6 +33,11 @@ tools/dev/check.sh full
 | `claude/project-thread-yu6o5o` | 좌우로 천천히 끌어 날짜를 옮기는 동안 거래 줄 글자·카드 위 제목 탭(헤더)·짧아진 제목이 나타났다 사라지지 않는다. 정지했을 때 보이던 것이 그대로 따라 움직이고, 가운데 날(0.3–0.7 구간)만 서서히 바뀐다. | `tools/dev/check.sh ui -demo -browse-temporal` → 거래 많은 날에서 천천히 끌기, 중간에 멈췄다 되돌리기 |
 | `claude/project-thread-yu6o5o` | **직접 확인:** 상단 주간 달력을 옆으로 밀어 다음/이전 주로 넘기면, 떠나는 검은 공이 그 주와 함께 밀려 나가며 사라지고 새 주가 미끄러져 들어온다(제자리에서 사라지거나 반대로 튀지 않는다). 날 탭, 그리드 스와이프 때 공·캡슐 움직임은 예전과 같다. | Hans가 시뮬레이터나 실기기에서 직접 |
 | `claude/project-thread-5trncm` | 인자 없이 켜면 6주치 더미 일정과 소비가 열리고(오늘 기준 4주 전–2주 후), `-live`로 켜면 기기 캘린더와 실제 장부가 열린다. 앱 테스트는 예전 샘플 하루를 그대로 본다. | `tools/dev/check.sh ui` (인자 없이), `tools/dev/check.sh ui -live` |
+| `claude/project-thread-2bhmma` (UI 점검) | 앱이 빌드되고 앱 테스트가 통과한다(새 `FormattingTests` 포함). 화면 코드는 클라우드에서 컴파일하지 못했다. 새 파일: `Assets.xcassets`(강조색), `Model/AppModel+Locate.swift`. | `tools/dev/check.sh full` |
+| `claude/project-thread-2bhmma` (UI 점검) | 정산 시트: 사람 금액 칸에 결제한 금액보다 큰 수를 치면 줄과 칸이 그대로 남고, 빨간 "직접 적은 금액이 결제한 N원보다 많아요"와 회색 "나눠 낼 금액을 고쳐 주세요" 버튼이 보인다. 고치면 원래대로. 거래가 없는 일정은 "아직 없어요"와 연결 안내, 환불이 더 큰 일정은 "나눌 금액이 없어요". "다시 나누기"는 확인 창을 거친다. | 데모 일정 상세 → 정산하기 |
+| `claude/project-thread-2bhmma` (UI 점검) | 강조색이 한 가지 파랑(#3182F6)이다: 고정 그리드의 편집 테두리·핸들, 주간 달력의 오늘·선택 표시가 탭 바·버튼과 같은 파랑. 다크 모드도. | `tools/dev/check.sh ui -demo` |
+| `claude/project-thread-2bhmma` (UI 점검) | 가계부 거래 상세의 "분류"가 `food` 대신 "식비"처럼 한국어. 환불이 더 큰 날의 날짜 줄 합계가 파란 "+N원". | `tools/dev/check.sh ui -demo -demo-txn` → 가계부 탭 |
+| `claude/project-thread-2bhmma` (UI 점검) | "무엇을, 어디서, 누구와"에서 새 장소 이름을 치고 키보드의 완료를 누르면 바로 추가된다. 저장 실패·편집 불가 안내가 해요체이고 빨강/파랑이 디자인 토큰 색이다. | 데모 일정 상세 → 무엇을, 어디서, 누구와 |
 
 ## 확인 완료 (2026-10-16, 노트북)
 

@@ -178,5 +178,5 @@ private final class Fixture {
     let readOnly = try await Fixture(calendars: [CalendarDescriptor(id: shared, title: "공유", isWritable: false)])
     readOnly.router.send(.enter(.new(day: day, startMinute: 9 * 60, endMinute: 10 * 60)))
     await readOnly.settle { readOnly.router.session == nil }
-    #expect(readOnly.router.session == nil && readOnly.editor.message?.text == "일정을 만들 수 있는 캘린더가 없습니다")
+    #expect(readOnly.router.session == nil && readOnly.editor.message?.text == "일정을 만들 수 있는 캘린더가 없어요")
 }

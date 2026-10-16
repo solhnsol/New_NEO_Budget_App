@@ -164,7 +164,7 @@ final class AppModel {
         do {
             try await makeService()
         } catch {
-            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+            phase = .failed("일정과 거래를 불러오지 못했어요")
             return
         }
         await bindSpendingByTime()
@@ -211,7 +211,7 @@ final class AppModel {
             let granted = try await eventKit.requestFullAccess()
             if granted { await start() } else { phase = .denied }
         } catch {
-            phase = .failed("캘린더 접근을 요청하지 못했습니다.")
+            phase = .failed("캘린더 접근을 요청하지 못했어요")
         }
     }
 
@@ -295,7 +295,7 @@ final class AppModel {
             phase = .denied
         } catch {
             guard mine == dataGeneration else { return }
-            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+            phase = .failed("일정과 거래를 불러오지 못했어요")
         }
     }
 
@@ -343,7 +343,7 @@ final class AppModel {
         switch failure {
         case nil: phase = .ready
         case CalendarProviderFailure.accessUnavailable?: phase = .denied
-        default: phase = shown.count == 2 || !failsScreen ? .ready : .failed("일정과 거래를 불러오지 못했습니다.")
+        default: phase = shown.count == 2 || !failsScreen ? .ready : .failed("일정과 거래를 불러오지 못했어요")
         }
     }
 
