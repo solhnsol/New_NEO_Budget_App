@@ -22,9 +22,9 @@ struct DayTimelineScreen: View {
         defer { BrowseProbe.end(probe) }
         return NavigationStack {
             content
-                .navigationTitle(model.isDemo ? "데모" : "")
+                .navigationTitle(model.isDemo && !DemoFull.isOn ? "데모" : "")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar(model.isDemo ? .visible : .hidden, for: .navigationBar)
+                .toolbar(model.isDemo && !DemoFull.isOn ? .visible : .hidden, for: .navigationBar)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active, model.phase == .ready { Task { await model.reload() } }

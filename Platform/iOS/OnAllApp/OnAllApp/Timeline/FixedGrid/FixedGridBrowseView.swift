@@ -63,7 +63,6 @@ struct FixedGridBrowseView: View {
     /// How far the keyboard reaches up over the grid (the edit bar rides on it), and where the grid is on screen.
     @State private var keyboardOverlap: CGFloat = 0
     @State private var gridFrame: CGRect = .zero
-    @State private var noticeEmphasis = false
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
     @State private var room = Room()
@@ -169,7 +168,6 @@ struct FixedGridBrowseView: View {
             VStack(spacing: 0) {
                 headerStrip(width: outer.size.width)
                 Divider()
-                EditingNotice(emphasised: noticeEmphasis)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
                 editSlot
@@ -680,8 +678,7 @@ struct FixedGridBrowseView: View {
             // An event's details (until a long press zooms onto the event and shows them there).
             if move.phase == .resting, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) { onSelect(.event(block)) }
         case .notice:
-            // Anything else draws attention to what the grid does not do yet.
-            emphasiseNotice()
+            break
         case .createDraft:
             room.createPresses += 1
             pickUpNewEvent(at: point)
@@ -1093,14 +1090,6 @@ struct FixedGridBrowseView: View {
             return
         }
         if let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) { onSelect(selection) }
-    }
-
-    private func emphasiseNotice() {
-        noticeEmphasis = true
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(1.6))
-            noticeEmphasis = false
-        }
     }
 
     // MARK: Moving the days
@@ -1901,25 +1890,6 @@ private struct GutterTimeMark: View {
                 .offset(y: y - 8)
         }
         .accessibilityHidden(true)
-    }
-}
-
-/// The line that says what this view does not do.
-private struct EditingNotice: View {
-    let emphasised: Bool
-
-    var body: some View {
-        Label(BrowseAxisMode.editingNotice, systemImage: "lock.fill")
-            .font(.caption2)
-            .lineLimit(3)
-            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-            .foregroundStyle(emphasised ? Color.primary : Color.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 12).padding(.vertical, 4)
-            .background(emphasised ? Color.orange.opacity(0.25) : Color.secondary.opacity(0.08))
-            .animation(.easeInOut(duration: 0.2), value: emphasised)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(BrowseAxisMode.editingNotice)
     }
 }
 
