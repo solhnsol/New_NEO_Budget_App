@@ -157,6 +157,18 @@ public struct AssignActivityTypeInput: Hashable, Sendable {
     }
 }
 
+public struct SetHeadcountInput: Hashable, Sendable {
+    public let target: ActivityTarget
+    /// The total number of people, the user included. `nil` clears it (the named participants and the user count).
+    public let headcount: Int?
+    public let provenance: AssignmentProvenance
+    public init(target: ActivityTarget, headcount: Int?, provenance: AssignmentProvenance) {
+        self.target = target
+        self.headcount = headcount
+        self.provenance = provenance
+    }
+}
+
 public struct AssignActivityAreaInput: Hashable, Sendable {
     public let target: ActivityTarget
     /// `nil` clears the area.
@@ -494,6 +506,7 @@ public enum CalendarCommand: Hashable, Sendable {
     case unlinkTransaction(UnlinkTransactionInput)
     case assignActivityType(AssignActivityTypeInput)
     case assignActivityArea(AssignActivityAreaInput)
+    case setHeadcount(SetHeadcountInput)
     /// Adds a place (or renames one) so it can be chosen for an activity.
     case upsertArea(Area)
     case assignTag(AssignTagInput)

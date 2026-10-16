@@ -21,6 +21,7 @@ public enum LifeValidationError: Error, Hashable, Sendable {
     case presetImmutable(ActivityTypeID)
     case invalidConfidence
     case userAssignmentProtected
+    case invalidHeadcount(Int)
 
     // People
     case unknownPerson(PersonID)
@@ -123,6 +124,9 @@ public enum LifeChange: Hashable, Sendable {
     case removeActivityTag(ActivityID, TagID, by: AssignmentProvenance)
     case addParticipant(ActivityID, ParticipantAssignment)
     case removeParticipant(ActivityID, PersonID, by: AssignmentProvenance)
+    /// The total number of people, the user included (`Activity.headcount`); at least 1.
+    case setActivityHeadcount(ActivityID, Assigned<Int>)
+    case clearActivityHeadcount(ActivityID, by: AssignmentProvenance)
 
     /// Adds or updates one portion of a transaction. `transactionTotal` and `flow` describe the immutable
     /// ledger entry and must match any earlier allocation of the same transaction.
@@ -405,6 +409,23 @@ public struct LifeState: Codable, Equatable, Sendable {
             if let existing = activity.activityType {
                 guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
                 activity.activityType = nil
+                activities[id] = activity
+            }
+
+        case let .setActivityHeadcount(id, assigned):
+            var activity = try existingActivity(id)
+            guard assigned.value >= 1 else { throw LifeValidationError.invalidHeadcount(assigned.value) }
+            if let existing = activity.headcount, !assigned.provenance.mayReplace(existing.provenance) {
+                throw LifeValidationError.userAssignmentProtected
+            }
+            activity.headcount = assigned
+            activities[id] = activity
+
+        case let .clearActivityHeadcount(id, by):
+            var activity = try existingActivity(id)
+            if let existing = activity.headcount {
+                guard by.mayReplace(existing.provenance) else { throw LifeValidationError.userAssignmentProtected }
+                activity.headcount = nil
                 activities[id] = activity
             }
 

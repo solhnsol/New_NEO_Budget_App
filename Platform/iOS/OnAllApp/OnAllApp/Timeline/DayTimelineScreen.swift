@@ -7,6 +7,7 @@ struct DayTimelineScreen: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: TimelineSelection?
     @State private var infoEvent: CalendarEventKey?
+    @State private var settleEvent: CalendarEventKey?
     /// How far a swipe has carried the two days sideways. Owned here so the week strip above follows it together with the grid.
     @State private var swipeOffset: CGFloat = 0
     /// Where a swipe in progress would land (-1, 0, +1 days), for the week strip, which changes at that moment and not with the finger.
@@ -182,10 +183,17 @@ struct DayTimelineScreen: View {
                     try? await Task.sleep(for: .milliseconds(400))
                     infoEvent = block.eventKey
                 }
+            }, onSettle: { block in
+                selection = nil
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(400))
+                    settleEvent = block.eventKey
+                }
             })
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
+        .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         // A rename on the fixed grid brings the keyboard up over the grid; the screen keeps its layout (the grid's partition is planned for its room).
         .ignoresSafeArea(.keyboard)
         .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: zoneIdentifier))

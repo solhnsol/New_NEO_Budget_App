@@ -452,6 +452,25 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
+    /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
+    /// transactions are still listed, without allocations.
+    func ledgerSections() async -> [LedgerDaySection]? {
+        guard let transactions = try? await ledger.transactions() else { return nil }
+        let life = (try? await service?.lifeSnapshot().state) ?? .empty
+        return LedgerList.sections(transactions, life: life, zone: dayZone)
+    }
+
+    /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
+    func lifeState() async -> LifeState? {
+        try? await service?.lifeSnapshot().state
+    }
+
+    /// Every account's and card's movements, unnetted (the ledger tab's statement view). `nil` when the ledger could not be read.
+    func ledgerStatements() async -> [LedgerStatements.Statement]? {
+        try? await ledger.statements()
+    }
+
     private func observeChanges() {
         guard observer == nil else { return }
         let provider = provider

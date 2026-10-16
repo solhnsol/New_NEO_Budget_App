@@ -85,6 +85,10 @@ public struct Activity: Codable, Hashable, Sendable {
     public var tags: [TagAssignment]
     /// Who took part. A participant is a `Person`; calendar attendees are not assumed to be the same people.
     public var participants: [ParticipantAssignment]
+    /// How many people took part in all, the user included, when the user said so. It can be more than the named participants plus the user
+    /// (a dinner for four where only two names are known): a share is then counted over everyone, and the unnamed people owe nothing until named.
+    /// `nil`: the named participants and the user.
+    public var headcount: Assigned<Int>?
     public let createdAtUnixMilliseconds: Int64
 
     public init(
@@ -94,6 +98,7 @@ public struct Activity: Codable, Hashable, Sendable {
         area: Assigned<AreaID>? = nil,
         tags: [TagAssignment] = [],
         participants: [ParticipantAssignment] = [],
+        headcount: Assigned<Int>? = nil,
         createdAtUnixMilliseconds: Int64
     ) {
         self.id = id
@@ -102,6 +107,7 @@ public struct Activity: Codable, Hashable, Sendable {
         self.area = area
         self.tags = tags
         self.participants = participants.sorted { $0.personID < $1.personID }
+        self.headcount = headcount
         self.createdAtUnixMilliseconds = createdAtUnixMilliseconds
     }
 
