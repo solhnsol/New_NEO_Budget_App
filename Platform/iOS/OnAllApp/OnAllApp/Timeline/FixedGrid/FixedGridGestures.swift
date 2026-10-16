@@ -10,7 +10,7 @@ import NEOBudgetCalendar
 /// |---|---|---|
 /// | a handle of the chosen event | — | handle pan (drag), handle tap; nothing else |
 /// | the chosen event's title | — | tap: rename; scroll, pinch |
-/// | an event, line, overflow card | tap: select (at rest: an event opens a session), long press (an event: its details), date swipe, scroll, pinch | tap: choose another; scroll, pinch |
+/// | an event, line, overflow card | tap: select (at rest: an event opens a session), long press (an event: its details; a line: picks up its transaction), date swipe, scroll, pinch | tap: choose another; scroll, pinch |
 /// | empty grid | long press (create: a new event follows the finger), date swipe, scroll, pinch | tap: end editing; scroll, pinch |
 /// | the hour gutter | date swipe, scroll, pinch | scroll, pinch |
 ///
@@ -127,12 +127,15 @@ enum FixedGridGestures {
         case notice
         /// A new event picked up on empty grid.
         case createDraft
+        /// A transaction picked up from its line, to be put down on an event (`FixedGridTransactionCarry`). The line's id is the transaction's.
+        case pickUpTransaction(String)
     }
 
     static func longPress(start: Start, mode: Mode) -> LongPressMeaning {
         switch (mode, start) {
         case (.browse, .empty): return .createDraft
         case (.browse, .content(.event(let id))): return .details(id)
+        case (.browse, .content(.line(let id))): return .pickUpTransaction(id)
         case (.browse, .content): return .notice
         default: return .none
         }

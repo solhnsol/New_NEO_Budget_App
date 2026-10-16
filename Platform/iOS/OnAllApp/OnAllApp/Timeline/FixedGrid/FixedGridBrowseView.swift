@@ -1,5 +1,6 @@
 import Combine
 import NEOBudgetCalendar
+import NEOBudgetCore
 import SwiftUI
 import UIKit
 
@@ -44,6 +45,8 @@ struct FixedGridBrowseView: View {
     @State private var choice: TouchChoice?
     /// A new event carried by the finger after a long press on empty grid (until it lifts).
     @State private var placing: FixedGridCreatePlacement?
+    /// A transaction carried by the finger after a long press on its line, to be put down on an event (until it lifts).
+    @State private var carrying: FixedGridTransactionCarry?
     /// The edit session (`FixedGridEditInteraction`; a long press on an editable event opens one). The screen sends it the grid's touches and the selected
     /// day, and carries out its grid commands (freeze, retarget, unfreeze); the rest go to the parts that edit (`editor`).
     @State private var edit = FixedGridEditRouter()
@@ -155,6 +158,7 @@ struct FixedGridBrowseView: View {
         _ = (position, planningVersion, model.dataRevision, axisTick)   // this screen re-evaluates when the days move, planning ahead lands, the kept days change or the axis eases
         _ = (editor?.draft?.range, editor?.edge)                         // … and when the edited time or the chosen handle changes (the grid draws the draft card)
         _ = placing                                                      // … and while a new event is carried by the finger
+        _ = carrying                                                     // … or a transaction
         return GeometryReader { outer in
             VStack(spacing: 0) {
                 headerStrip(width: outer.size.width)
@@ -460,6 +464,7 @@ struct FixedGridBrowseView: View {
             .overlay(alignment: .topLeading) { editHandles() }
             .overlay(alignment: .topLeading) { draggedEdgeMark() }
             .overlay(alignment: .topLeading) { placementPreview(partition: frame.shown) }
+            .overlay(alignment: .topLeading) { carryPreview() }
         )
     }
 
@@ -674,6 +679,58 @@ struct FixedGridBrowseView: View {
         case .createDraft:
             room.createPresses += 1
             pickUpNewEvent(at: point)
+        case let .pickUpTransaction(id):
+            pickUpTransaction(id, at: point)
+        }
+    }
+
+    /// A long press on a transaction's line: the transaction comes off the grid and follows the finger; the event card under it is outlined.
+    private func pickUpTransaction(_ id: String, at point: CGPoint) {
+        guard move.phase == .resting, edit.session == nil, let found = touched(at: point),
+              let display = found.plan.lines.first(where: { $0.id == id })?.display else { return }
+        let transactionID = LedgerEntryID(rawValue: id)
+        let linked = found.timeline.blocks.first { $0.allocations.contains { $0.transactionID == transactionID } }?.eventKey
+        carrying = FixedGridTransactionCarry(
+            transactionID: transactionID, title: display.title, amount: display.amount, flow: display.flow, linkedEvent: linked, at: point, cards: eventCards()
+        )
+        Haptics.pickUp()
+    }
+
+    /// The finger carrying a transaction moved or lifted. Lifted on an event's card: the transaction belongs to that event. Anywhere else, or cancelled (a
+    /// second finger made it a pinch): nothing changes.
+    private func carryTransaction(_ phase: GridGestureHooks.Phase, at point: CGPoint) {
+        guard var carry = carrying else { return }
+        switch phase {
+        case .began: break
+        case .moved:
+            if carry.move(to: point, cards: eventCards()) { Haptics.snap() }
+            carrying = carry
+        case .ended:
+            carry.move(to: point, cards: eventCards())
+            carrying = nil
+            if case let .link(transaction, event) = carry.outcome {
+                Haptics.enterEdit()
+                Task { _ = await model.perform(ActivityEditing.link(transaction, event: event, now: Int64(Date().timeIntervalSince1970 * 1_000))) }
+            }
+        case .cancelled:
+            carrying = nil
+        }
+    }
+
+    /// The event cards on screen, in grid coordinates, back to front (for where a carried transaction would go).
+    private func eventCards() -> [FixedGridTransactionCarry.Card] {
+        let width = room.width, viewport = pinch.viewportHeight
+        guard viewport > 1, width > Self.gutter else { return [] }
+        let geometry = geometry(width: width)
+        let frame = frame(zoom: pinch.zoom, viewport: viewport, width: width)
+        let first = Int(position.rounded(.down))
+        return (first...(first + Self.visibleColumns)).flatMap { epoch -> [FixedGridTransactionCarry.Card] in
+            guard let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) else { return [] }
+            let columnX = geometry.x(ofDay: Double(epoch), at: position)
+            let plan = plan(timeline, column: column, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
+            return plan.events.map { item in
+                FixedGridTransactionCarry.Card(eventKey: item.block.eventKey, title: item.block.title, frame: item.drawnFrame.offsetBy(dx: columnX, dy: 0))
+            }
         }
     }
 
@@ -700,6 +757,7 @@ struct FixedGridBrowseView: View {
     /// The finger carrying a new event moved or lifted. Lifted: an edit session opens on the event where it is, with its name being typed (the calendars to
     /// choose from above it; its handles change its length). Cancelled (a second finger made it a pinch): nothing.
     private func carry(_ phase: GridGestureHooks.Phase, at point: CGPoint) {
+        if carrying != nil { return carryTransaction(phase, at: point) }
         guard var placement = placing else { return }
         switch phase {
         case .began: break
@@ -874,6 +932,25 @@ struct FixedGridBrowseView: View {
             ZStack(alignment: .topLeading) {
                 PlacementCard(colorHex: calendar?.colorHex, frame: card, time: DraftCard.clock(EventSaveTime.date(start), zone: zone) + " – " + DraftCard.clock(EventSaveTime.date(end), zone: zone))
                 GutterTimeMark(text: DraftCard.clock(EventSaveTime.date(start), zone: zone), y: card.minY, gutter: Self.gutter, lineTo: card.minX)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// A carried transaction: its card under the finger, and the event it would go into outlined.
+    @ViewBuilder
+    private func carryPreview() -> some View {
+        if let carrying {
+            ZStack(alignment: .topLeading) {
+                if let target = carrying.target {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.accentColor, lineWidth: carrying.willLink ? 3 : 1)
+                        .frame(width: target.frame.width, height: target.frame.height)
+                        .offset(x: target.frame.minX, y: target.frame.minY)
+                }
+                CarriedTransactionCard(title: carrying.title, amount: carrying.amount, flow: carrying.flow, into: carrying.willLink ? carrying.target?.title : nil)
+                    .fixedSize()
+                    .offset(x: carrying.finger.x - 40, y: carrying.finger.y - 64)    // above the finger, so it is seen
             }
             .allowsHitTesting(false)
         }
@@ -1636,6 +1713,29 @@ private struct DraftCard: View {
         formatter.dateFormat = "a h:mm"
         formatters[zone.identifier] = formatter
         return formatter
+    }
+}
+
+/// The transaction a long press carries: its name and amount, and the event it would go into.
+private struct CarriedTransactionCard: View {
+    let title: String?
+    let amount: Money
+    let flow: TransactionFlow
+    /// The event it goes into if put down now (`nil`: nowhere).
+    let into: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Text(title ?? "거래").font(.caption.weight(.semibold)).lineLimit(1)
+                Text((flow == .refund ? "+" : "") + Formatting.money(amount.minorUnits, currency: amount.currency)).font(.caption.monospacedDigit())
+            }
+            Text(into.map { "→ " + $0 } ?? "일정 위에 놓으세요").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .shadow(color: .black.opacity(0.2), radius: 6, y: 3)
+        .accessibilityHidden(true)
     }
 }
 
