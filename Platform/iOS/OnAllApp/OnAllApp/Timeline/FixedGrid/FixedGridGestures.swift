@@ -11,7 +11,7 @@ import NEOBudgetCalendar
 /// | a handle of the chosen event | — | handle pan (drag), handle tap; nothing else |
 /// | the chosen event's title | — | tap: rename; scroll, pinch |
 /// | an event, line, overflow card | tap: select (at rest: an event opens a session), long press (an event: its details), date swipe, scroll, pinch | tap: choose another; scroll, pinch |
-/// | empty grid | long press, date swipe, scroll, pinch | tap: end editing; long press (future: create); scroll, pinch |
+/// | empty grid | long press (create: a new event follows the finger), date swipe, scroll, pinch | tap: end editing; scroll, pinch |
 /// | the hour gutter | date swipe, scroll, pinch | scroll, pinch |
 ///
 /// In editing the days never move (the time partition is frozen for the session) and a drag from a handle is never a scroll or a date swipe. While a pinch
@@ -66,7 +66,7 @@ enum FixedGridGestures {
         case (.browse, .empty): return recognizer != .tap && recognizer != .handlePan
         case (.browse, .content): return recognizer != .handlePan
         case (.editing, .gutter): return [.scroll, .pinch].contains(recognizer)
-        case (.editing, .empty): return [.scroll, .pinch, .tap, .longPress].contains(recognizer)
+        case (.editing, .empty): return [.scroll, .pinch, .tap].contains(recognizer)
         case (.editing, .content): return [.scroll, .pinch, .tap].contains(recognizer)
         }
     }
@@ -118,25 +118,22 @@ enum FixedGridGestures {
         }
     }
 
-    /// What a long press means. On an event in browse it opens the event's details (to become a zoom onto it); elsewhere it only draws attention to the
-    /// line that says what the grid does not do yet, and what it will mean is named.
+    /// What a long press means. On empty grid in browse it picks up a new event (`FixedGridCreatePlacement`: the card follows the finger until it lifts, then
+    /// an edit session opens on it to name it, choose its calendar and change its length); on an event it opens the event's details (to become a zoom onto
+    /// it); on anything else it only draws attention to the line that says what the grid does.
     enum LongPressMeaning: Equatable {
         case none
         case details(BlockID)
-        /// `future`: what it will mean once it is here (`nil`: nothing planned for it, a transaction).
-        case notice(future: Future?)
-        /// Future, editing: a new event dragged out on empty grid.
+        case notice
+        /// A new event picked up on empty grid.
         case createDraft
-
-        enum Future: Equatable { case createDraft }
     }
 
     static func longPress(start: Start, mode: Mode) -> LongPressMeaning {
         switch (mode, start) {
-        case (.browse, .empty): return .notice(future: .createDraft)
+        case (.browse, .empty): return .createDraft
         case (.browse, .content(.event(let id))): return .details(id)
-        case (.browse, .content): return .notice(future: nil)
-        case (.editing, .empty): return .createDraft
+        case (.browse, .content): return .notice
         default: return .none
         }
     }

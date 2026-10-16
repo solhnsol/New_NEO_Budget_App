@@ -18,7 +18,7 @@ private let editing = G.Mode.editing(target)
     let event = G.Start.content(.event(BlockID(rawValue: "x")))
     let line = G.Start.content(.line("t"))
     func owners(_ start: G.Start, _ mode: G.Mode) -> Set<G.Recognizer> { Set(G.Recognizer.allCases.filter { G.receives($0, start: start, mode: mode) }) }
-    // Browse: everything moves the days, scrolls and zooms; taps select what is under them; long presses go to the notice; no handles.
+    // Browse: everything moves the days, scrolls and zooms; taps select what is under them; long presses create (empty), open details or the notice; no handles.
     #expect(owners(.empty, .browse) == [.dateSwipe, .scroll, .pinch, .longPress])
     #expect(owners(event, .browse) == [.dateSwipe, .scroll, .pinch, .tap, .longPress])
     #expect(owners(line, .browse) == [.dateSwipe, .scroll, .pinch, .tap, .longPress])
@@ -27,7 +27,7 @@ private let editing = G.Mode.editing(target)
     // Editing: a handle is the handle's only (its drag never scrolls, swipes or zooms); elsewhere scroll and pinch go on, the days do not move.
     #expect(owners(.handle(.resizeStart), editing) == [.handlePan, .tap])
     #expect(owners(.handle(.resizeEnd), editing) == [.handlePan, .tap])
-    #expect(owners(.empty, editing) == [.scroll, .pinch, .tap, .longPress])
+    #expect(owners(.empty, editing) == [.scroll, .pinch, .tap])
     #expect(owners(event, editing) == [.scroll, .pinch, .tap])
     #expect(owners(.gutter, editing) == [.scroll, .pinch])
     for mode in [G.Mode.browse, editing] { for start in [G.Start.empty, event, line, .gutter] { #expect(!owners(start, mode).contains(.handlePan)) } }
@@ -67,10 +67,10 @@ private let editing = G.Mode.editing(target)
     #expect(G.tap(start: .handle(.resizeEnd), mode: editing, daysAtRest: true) == .handle(.resizeEnd))
     #expect(G.tap(start: .content(event), mode: editing, daysAtRest: true) == .chooseOther(event))
     #expect(G.tap(start: .empty, mode: editing, daysAtRest: true) == .endEditing)
-    #expect(G.longPress(start: .empty, mode: .browse) == .notice(future: .createDraft))
+    #expect(G.longPress(start: .empty, mode: .browse) == .createDraft)
     #expect(G.longPress(start: .content(event), mode: .browse) == .details(BlockID(rawValue: "x")))
-    #expect(G.longPress(start: .content(.line("t")), mode: .browse) == .notice(future: nil))
-    #expect(G.longPress(start: .empty, mode: editing) == .createDraft)
+    #expect(G.longPress(start: .content(.line("t")), mode: .browse) == .notice)
+    #expect(G.longPress(start: .empty, mode: editing) == .none)                                  // a tap outside ends the session first
     #expect(G.longPress(start: .content(event), mode: editing) == .none)
 }
 
