@@ -9,6 +9,8 @@ public enum IntakeStatus: Equatable, Sendable {
     /// Waiting for the user (an unknown account, a withdrawal nothing explains, a refund without its purchase...).
     case waiting([CandidateIssue])
     case notTransaction(NotTransactionReason)
+    /// It arrived before the imported history's cutover: the act is already one of the imported rows.
+    case coveredByImport
     case unreadable(NotificationParseFailure)
     /// Processing threw. The notification is kept and is tried again on the next rebuild.
     case failed
@@ -27,23 +29,33 @@ public struct RuleQuestion: Equatable, Identifiable, Sendable {
     public var id: String { notificationID }
 }
 
-/// The real ledger as a replay: every received notification, in arrival order, through `NotificationIntake` over the
-/// user's account setup. Received notifications and the setup are the durable inputs; the processing repository is
-/// derived and rebuilt from them whenever the setup changes, so an account confirmed today also binds the
-/// notifications that arrived before it.
+/// The real ledger as a replay: first an imported history (`ImportedHistory`, if the user has one), then every received
+/// notification, in arrival order, through `NotificationIntake` over the user's account setup. Notifications from before
+/// the history's cutover are kept but not replayed: their acts are the imported rows. Received notifications, the
+/// imported history and the setup are the durable inputs; the processing repository is derived and rebuilt from them
+/// whenever the setup changes, so an account confirmed today also binds the notifications that arrived before it.
 public struct IntakeLedger {
     public private(set) var notifications: [RawNotification]
     public private(set) var setup: IntakeSetup
     public private(set) var repository: InMemoryCandidateProcessingRepository
     private var outcomes: [String: NotificationIntakeOutcome]
     public let intake: NotificationIntake
+    public let history: ImportedHistory?
+    /// What the history became (nil without one). The setup already holds its accounts.
+    public let importPlan: ImportPlan?
 
-    public init(notifications: [RawNotification], setup: IntakeSetup, intake: NotificationIntake) throws {
+    public init(notifications: [RawNotification], setup: IntakeSetup, intake: NotificationIntake, history: ImportedHistory? = nil) throws {
         self.notifications = []
+        self.history = history
+        let plan = try history.map(ActualImportPlanner.plan)
+        self.importPlan = plan
+        var setup = setup
+        if let plan { try setup.importAccounts(plan) }
         self.setup = setup
         self.repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
         self.outcomes = [:]
         self.intake = intake
+        try seedHistory()
         try replay(notifications)
     }
 
@@ -54,9 +66,36 @@ public struct IntakeLedger {
         let fresh = incoming.filter { known.insert($0.id).inserted }
         for notification in fresh {
             notifications.append(notification)
-            ingest(notification)
+            if !isCoveredByImport(notification) { ingest(notification) }
         }
         return fresh
+    }
+
+    /// The imported rows that still wait for the user, newest first: money in with no explanation, purchases with no
+    /// category or name, transfers and withdrawals nothing explains. Each is in the state its notification would have been
+    /// in had it just arrived and nobody handled it.
+    public var pendingImports: [PendingImport] {
+        guard let importPlan else { return [] }
+        let snapshot = try? repository.processingSnapshot()
+        var result = importPlan.pending
+        for candidate in importPlan.candidates where candidate.status == .ready {
+            guard snapshot?.candidates[candidate.id]?.promotedEntryID == nil else { continue }
+            if let index = result.firstIndex(where: { $0.candidateID == candidate.id }) {
+                result[index] = result[index].settingInLedger(false)
+            } else if let draft = candidate.sourceDraft {
+                result.append(PendingImport(
+                    candidateID: candidate.id, accountName: "", title: draft.counterparty.merchantRaw, amount: draft.amount,
+                    signedMinorUnits: 0, occurredAtUnixMilliseconds: draft.occurredAt.unixMilliseconds, reasons: [.notRecorded], inLedger: false
+                ))
+            }
+        }
+        return result.sorted { ($0.occurredAtUnixMilliseconds, $0.id) > ($1.occurredAtUnixMilliseconds, $1.id) }
+    }
+
+    /// Imported balances against the balances Actual had, account by account (empty without a history).
+    public func importReconciliation() -> [AccountReconciliation] {
+        guard let importPlan, let snapshot = try? repository.processingSnapshot() else { return [] }
+        return importPlan.reconcile(with: snapshot.ledger, pending: pendingImports)
     }
 
     public mutating func confirmAsNew(_ id: AccountCandidateID, displayName: String, kind: NewTargetKind, makeID: () -> String) throws {
@@ -118,6 +157,7 @@ public struct IntakeLedger {
     }
 
     public func status(of notificationID: String) -> IntakeStatus {
+        if let notification = notifications.first(where: { $0.id == notificationID }), isCoveredByImport(notification) { return .coveredByImport }
         guard let outcome = outcomes[notificationID] else { return .failed }
         switch outcome {
         case let .notTransaction(reason): return .notTransaction(reason)
@@ -139,7 +179,23 @@ public struct IntakeLedger {
         repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
         outcomes = [:]
         notifications = []
+        try seedHistory()
         try replay(all)
+    }
+
+    /// The imported rows go in first, in date order, one by one through the same atomic promotion a notification uses. They are
+    /// never run through the correlator: Actual's rows are what the user already settled.
+    private mutating func seedHistory() throws {
+        guard let importPlan else { return }
+        for candidate in importPlan.candidates {
+            let snapshot = try repository.processingSnapshot()
+            _ = try? repository.process(candidate, expectedCandidateRevision: snapshot.candidateRevision, expectedLedgerRevision: snapshot.ledger.revision)
+        }
+    }
+
+    private func isCoveredByImport(_ notification: RawNotification) -> Bool {
+        guard let cutover = importPlan?.cutoverUnixMilliseconds else { return false }
+        return (notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds) < cutover
     }
 
     private mutating func replay(_ all: [RawNotification]) throws {

@@ -182,6 +182,9 @@ final class AppModel {
             if let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) {
                 initialLife = DemoLife.initialState(events: events)
             }
+        } else if let imported = await ledger.importedLife(now: Self.nowMilliseconds()) {
+            // Settlements from an imported Actual ledger start the calendar side with their receivables already paid.
+            initialLife = imported
         }
         let service = CalendarCommandService(
             provider: provider,
@@ -502,6 +505,16 @@ final class AppModel {
     func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
 
     func registeredAccounts() async -> [AccountProfile] { await ledger.registeredAccounts() }
+
+    /// Imported rows that still wait for the user, newest first.
+    func pendingImports() async -> [PendingImport] { await ledger.pendingImports() }
+
+    /// Brings in an Actual Budget ledger file (`imported-history.json`). `nil` if the file could not be used.
+    func importHistory(_ data: Data) async -> ImportSummary? {
+        guard let summary = try? await ledger.importHistory(data) else { return nil }
+        await ledgerDidChange()
+        return summary
+    }
 
     /// Applies the user's answer about an account and replays the ledger with it. `false` if it could not be applied.
     @discardableResult

@@ -32,10 +32,15 @@ actor AppLedger {
 
     /// The real ledger: everything the Shortcut delivered so far, replayed over the saved account setup.
     init(store: NotificationStore, zone: DisplayTimeZone) throws {
+        let setup = try store.setup()
+        // A history that cannot be read is left out rather than keeping the whole ledger from opening.
+        let history = try? store.history()
         let ledger = try IntakeLedger(
-            notifications: try store.notifications(), setup: try store.setup(),
-            intake: NotificationIntake(timeZoneIdentifier: zone.identifier)
+            notifications: try store.notifications(), setup: setup,
+            intake: NotificationIntake(timeZoneIdentifier: zone.identifier), history: history
         )
+        // Importing registers the history's accounts in the setup; keep them.
+        if ledger.setup != setup { try store.save(setup: ledger.setup) }
         backing = .live(ledger, store)
         source = UpdatableTransactionSource(LedgerTransactionSource(processing: try ledger.repository.processingSnapshot()))
         decoder = ShortcutNotificationDecoder(timeZone: TimeZone(identifier: zone.identifier) ?? .current)
@@ -94,6 +99,36 @@ actor AppLedger {
     func registeredAccounts() -> [AccountProfile] {
         guard case let .live(ledger, _) = backing else { return [] }
         return ledger.setup.registry.profiles.filter(\.isActive)
+    }
+
+    // MARK: Imported history
+
+    /// Imported rows that still wait for the user (`IntakeLedger.pendingImports`), newest first. Empty without a history.
+    func pendingImports() -> [PendingImport] {
+        guard case let .live(ledger, _) = backing else { return [] }
+        return ledger.pendingImports
+    }
+
+    /// The meaning the imported settlements add around the ledger (receivables and the deposits that paid them), to start the
+    /// calendar side from. `nil` without a history or when it holds no settlement.
+    func importedLife(now: Int64) -> LifeState? {
+        guard case let .live(ledger, _) = backing, let plan = ledger.importPlan, !plan.settlements.isEmpty else { return nil }
+        return try? ImportedSettlementSeed.life(from: plan, at: now)
+    }
+
+    /// Replaces the imported history with `data` (the file's bytes) and replays the ledger. Returns what was imported.
+    func importHistory(_ data: Data) throws -> ImportSummary {
+        guard case .live(let current, let store) = backing else { throw AppLedgerError.notLive }
+        let history = try store.save(historyData: data)
+        let ledger = try IntakeLedger(notifications: current.notifications, setup: current.setup, intake: current.intake, history: history)
+        try store.save(setup: ledger.setup)
+        backing = .live(ledger, store)
+        try refreshSource()
+        let reconciliation = ledger.importReconciliation()
+        return ImportSummary(
+            rows: history.transactions.count, accounts: history.accounts.count, pending: ledger.pendingImports.count,
+            mismatchedAccounts: reconciliation.filter { !$0.matches }.map(\.accountName)
+        )
     }
 
     // MARK: Receiving
@@ -167,6 +202,16 @@ actor AppLedger {
 enum AppLedgerError: Error {
     /// Notifications go only to the real ledger, never to the demo or the sample.
     case notLive
+}
+
+/// What an import brought in, for the confirmation the user reads.
+struct ImportSummary: Sendable {
+    let rows: Int
+    let accounts: Int
+    /// Rows that wait for the user (`PendingImport`).
+    let pending: Int
+    /// Accounts whose balance after the import differs from the balance Actual had, beyond what waits in review.
+    let mismatchedAccounts: [String]
 }
 
 struct InboxItem: Identifiable, Sendable {

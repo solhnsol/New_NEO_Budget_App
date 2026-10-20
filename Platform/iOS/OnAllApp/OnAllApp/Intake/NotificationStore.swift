@@ -18,6 +18,23 @@ struct NotificationStore: Sendable {
 
     func setup() throws -> IntakeSetup { try read(IntakeSetup.self, from: "setup.json") ?? IntakeSetup() }
 
+    /// The imported Actual Budget ledger (`imported-history.json`), if the user gave the app one. Real financial data, kept only here.
+    func history() throws -> ImportedHistory? {
+        let url = directory.appendingPathComponent("imported-history.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return try ImportedHistory.decode(Data(contentsOf: url))
+    }
+
+    /// Checks that `data` is an imported history, then replaces the saved one with it.
+    func save(historyData data: Data) throws -> ImportedHistory {
+        let history = try ImportedHistory.decode(data)
+        try data.write(
+            to: directory.appendingPathComponent("imported-history.json"),
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+        return history
+    }
+
     func save(notifications: [RawNotification]) throws { try write(notifications, to: "notifications.json") }
 
     func save(setup: IntakeSetup) throws { try write(setup, to: "setup.json") }
