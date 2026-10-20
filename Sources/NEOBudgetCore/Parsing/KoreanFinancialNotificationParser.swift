@@ -9,6 +9,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
         let text = NotificationText.joined(notification)
         let lines = text.split(separator: "\n").map(String.init)
         if let transit = try transitFare(notification, context: context) { return transit }
+        if let tap = try walletCardPayment(notification, context: context) { return tap }
         if let reason = negativeSignal(in: text) { return .notTransaction(reason) }
         guard let classification = classify(text) else { return .notTransaction(classifyNonTransaction(text)) }
         let amount: Int64
@@ -94,6 +95,53 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
         ))
     }
 
+    // MARK: Wallet card payment (merchant and region in the subtitle, the won amount alone in the body)
+
+    private static let walletAmountOnly = try! NSRegularExpression(pattern: #"^₩([0-9]+(?:,[0-9]{3})*)$"#)
+    /// The region Wallet appends to the merchant (`<상호>, 서울특별시`). Only a trailing Korean province or city name is
+    /// removed, so a comma inside a merchant name survives.
+    private static let walletRegionSuffix = try! NSRegularExpression(
+        pattern: #",\s*(?:서울|부산|대구|인천|광주|대전|울산)(?:특별시|광역시)$|,\s*세종특별자치시$|,\s*(?:경기|강원|충청[남북]|전라[남북]|경상[남북])도$|,\s*(?:강원|전북)특별자치도$|,\s*제주특별자치도$"#
+    )
+
+    /// A card payment shown by Wallet: title `현대카드`, subtitle `<상호>, <지역>`, body `₩1,200`. The card's kind (credit or
+    /// check) is not in the message, so the hint carries only the name. Same shape `AccountEvidenceExtractor` reads as `walletCardTap`.
+    private func walletCardPayment(_ notification: RawNotification, context: NotificationParsingContext) throws -> NotificationParseOutcome? {
+        let title = notification.title.map(NotificationText.normalize) ?? ""
+        let subtitle = notification.subtitle.map(NotificationText.normalize) ?? ""
+        let body = notification.body.map(NotificationText.normalize) ?? ""
+        guard title.contains("카드"), let groups = Self.captures(Self.walletAmountOnly, body), groups.count == 1 else { return nil }
+        guard !subtitle.isEmpty else { return nil }
+        guard let amount = Int64(groups[0].replacingOccurrences(of: ",", with: "")) else { return .failed(.amountUnparseable) }
+        guard amount > 0 else { return .failed(.amountUnparseable) }
+        let merchant = Self.walletRegionSuffix
+            .stringByReplacingMatches(in: subtitle, range: NSRange(subtitle.startIndex..., in: subtitle), withTemplate: "")
+            .trimmingCharacters(in: .whitespaces)
+        var issues: [ParserIssue] = [.instrumentHintMissing]
+        let timestamp: ObservedTimestamp
+        if let notificationTime = notification.notificationAtUnixMilliseconds {
+            timestamp = ObservedTimestamp(unixMilliseconds: notificationTime, precision: .second, source: .notificationTime)
+        } else {
+            timestamp = ObservedTimestamp(unixMilliseconds: notification.capturedAtUnixMilliseconds, precision: .second, source: .captureTime)
+            issues.append(.timeAbsentFallback)
+        }
+        return .candidate(try TransactionCandidateDraft(
+            rawNotificationID: notification.id,
+            parserID: context.parserID,
+            parserVersion: context.parserVersion,
+            ruleID: "wallet-card-payment",
+            kind: .purchase,
+            direction: .outflow,
+            amount: try Money(minorUnits: amount, currency: "KRW"),
+            occurredAt: timestamp,
+            instrument: InstrumentHint(kind: .unknown, displayNameRaw: title),
+            counterparty: DraftCounterparty(merchantRaw: merchant.isEmpty ? nil : merchant),
+            evidence: evidence(notification: notification, lines: []),
+            issues: merchant.isEmpty ? issues + [.merchantMissing] : issues,
+            confidence: .high
+        ))
+    }
+
     private static func matches(_ regex: NSRegularExpression, _ text: String) -> Bool {
         regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil
     }
@@ -131,6 +179,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             return .pending
         }
         if containsAny(text, ["송금 요청", "송금요청", "송금을 받아주세요", "입금 요청"]) { return .request }
+        if containsAny(text, ["사고예방", "해외사용 확인"]) { return .authentication }
         if containsAny(text, ["이체한도", "이체 한도", "한도 변경", "한도변경"]) { return .configurationChange }
         return nil
     }
