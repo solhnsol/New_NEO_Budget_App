@@ -10,20 +10,16 @@ struct EventActivitySheet: View {
     let eventKey: CalendarEventKey
     @Environment(\.dismiss) private var dismiss
     @State private var newArea = ""
-    @State private var newPerson = ""
     @State private var failure: String?
 
-    /// The event and the day it is on, among the days on screen.
-    private var located: (block: EventBlock, timeline: DayTimeline)? {
-        for day in model.visibleTimelines { if let block = day.blocks.first(where: { $0.eventKey == eventKey }) { return (block, day) } }
-        return nil
-    }
+    /// The event and the day it is on (`AppModel.locate`).
+    private var located: (block: EventBlock, timeline: DayTimeline)? { model.locate(eventKey) }
     private var block: EventBlock? { located?.block }
 
     var body: some View {
         NavigationStack {
             Group {
-                if let located { form(located.block, located.timeline) } else { ContentUnavailableView("일정을 찾을 수 없습니다", systemImage: "calendar.badge.exclamationmark") }
+                if let located { form(located.block, located.timeline) } else { ContentUnavailableView("일정을 찾을 수 없어요", systemImage: "calendar.badge.exclamationmark") }
             }
             .navigationTitle(block?.title ?? "일정")
             .navigationBarTitleDisplayMode(.inline)
@@ -38,8 +34,9 @@ struct EventActivitySheet: View {
                 LabeledContent("시간", value: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: timeline.timeZoneIdentifier))
                 if let calendar = block.calendarTitle { LabeledContent("캘린더", value: calendar) }
             }
-            if let failure { Section { Label(failure, systemImage: "exclamationmark.triangle").foregroundStyle(.red).font(.footnote) } }
-            Section("활동 유형") {
+            .onAllCardRow()
+            if let failure { Section { Label(failure, systemImage: "exclamationmark.circle.fill").foregroundStyle(Theme.danger).font(Theme.Typo.caption) }.onAllCardRow() }
+            Section("무엇을 했나요") {
                 Picker("유형", selection: Binding(
                     get: { activity?.activityType?.rawValue ?? "" },
                     set: { value in run(ActivityEditing.setType(value.isEmpty ? nil : ActivityTypeID(rawValue: value), event: eventKey, now: model.nowMilliseconds)) }
@@ -48,7 +45,8 @@ struct EventActivitySheet: View {
                     ForEach(model.catalog.types) { type in Text(type.name).tag(type.id) }
                 }
             }
-            Section("장소") {
+            .onAllCardRow()
+            Section("어디서") {
                 Picker("장소", selection: Binding(
                     get: { activity?.areaID?.rawValue ?? "" },
                     set: { value in run(ActivityEditing.setArea(value.isEmpty ? nil : AreaID(rawValue: value), event: eventKey, now: model.nowMilliseconds)) }
@@ -62,47 +60,40 @@ struct EventActivitySheet: View {
                     run(ActivityEditing.setArea(area.id, event: eventKey, now: model.nowMilliseconds))
                 }
             }
-            Section("참여자") {
-                ForEach(model.catalog.people) { person in
-                    let on = activity?.participantIDs.contains(person.id) ?? false
-                    Button {
-                        run(ActivityEditing.setParticipant(person.id, on: !on, event: eventKey, now: model.nowMilliseconds))
-                    } label: {
-                        HStack {
-                            Text(person.isSelf ? "\(person.name) (나)" : person.name).foregroundStyle(.primary)
-                            Spacer()
-                            if on { Image(systemName: "checkmark").foregroundStyle(Color.accentColor) }
+            .onAllCardRow()
+            Section("누구와") {
+                let chosen = Set(activity?.participantIDs ?? [])
+                PeoplePicker(
+                    people: model.catalog.people, chosen: chosen,
+                    toggle: { id in run(ActivityEditing.setParticipant(id, on: !chosen.contains(id), event: eventKey, now: model.nowMilliseconds)) },
+                    add: { name in
+                        Task {
+                            let person = Person(id: PersonID(rawValue: ActivityEditing.newID(prefix: "person")), displayName: name)
+                            await model.perform(.upsertPerson(person))
+                            run(ActivityEditing.setParticipant(person.id, on: true, event: eventKey, now: model.nowMilliseconds))
                         }
                     }
-                    .accessibilityAddTraits(on ? .isSelected : [])
-                }
-                addRow("새 사람", text: $newPerson) { name in
-                    let person = Person(id: PersonID(rawValue: ActivityEditing.newID(prefix: "person")), displayName: name)
-                    await model.perform(.upsertPerson(person))
-                    run(ActivityEditing.setParticipant(person.id, on: true, event: eventKey, now: model.nowMilliseconds))
-                }
+                )
             }
+            .onAllCardRow()
             transactionSections(block, timeline)
         }
+        .onAllGroupedScreen()
     }
 
     @ViewBuilder
     private func transactionSections(_ block: EventBlock, _ timeline: DayTimeline) -> some View {
         Section {
             if block.allocations.isEmpty {
-                Text("연결된 거래가 없습니다. 일정에 연결하지 않은 거래도 정상입니다.").font(.footnote).foregroundStyle(.secondary)
+                Text("아직 연결된 거래가 없어요. 일정과 연결하지 않은 거래도 괜찮아요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
             ForEach(AllocationOrdering.byTime(block.allocations), id: \.allocationID) { item in
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(item.title ?? "거래")
-                        Text(Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: timeline.timeZoneIdentifier))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
+                HStack(spacing: Theme.Space.m) {
+                    transactionLabel(item.title, at: item.occurredAtUnixMilliseconds, timeline)
                     Spacer()
-                    Text(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency)).monospacedDigit()
+                    Text(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency)).font(Theme.Typo.amount)
                     Button("해제") { run(ActivityEditing.unlink(item.transactionID, now: model.nowMilliseconds)) }
-                        .buttonStyle(.borderless).font(.footnote)
+                        .buttonStyle(.onAllSecondary)
                 }
             }
         } header: {
@@ -110,42 +101,50 @@ struct EventActivitySheet: View {
         } footer: {
             if let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds) { Text("합계 \(total)") }
         }
+        .onAllCardRow()
         let candidates = ActivityEditing.linkCandidates(for: block, in: timeline)
         if !candidates.isEmpty {
             Section("연결할 수 있는 거래") {
                 ForEach(candidates, id: \.transactionID) { marker in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(marker.title ?? "거래")
-                            Text(Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: timeline.timeZoneIdentifier))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                    HStack(spacing: Theme.Space.m) {
+                        transactionLabel(marker.title, at: marker.occurredAtUnixMilliseconds, timeline)
                         Spacer()
-                        Text(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency)).monospacedDigit()
+                        Text(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency)).font(Theme.Typo.amount)
                         Button("연결") { run(ActivityEditing.link(marker.transactionID, event: eventKey, now: model.nowMilliseconds)) }
-                            .buttonStyle(.borderless).font(.footnote)
+                            .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
                     }
                 }
             }
+            .onAllCardRow()
+        }
+    }
+
+    private func transactionLabel(_ title: String?, at time: Int64, _ timeline: DayTimeline) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+            Text(title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+            Text(Formatting.time(time, zoneIdentifier: timeline.timeZoneIdentifier)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
         }
     }
 
     private func addRow(_ label: String, text: Binding<String>, add: @escaping (String) async -> Void) -> some View {
-        HStack {
-            TextField(label, text: text).submitLabel(.done)
-            Button("추가") {
-                guard let name = ActivityEditing.cleanName(text.wrappedValue) else { return }
-                text.wrappedValue = ""
-                Task { await add(name) }
-            }
-            .disabled(ActivityEditing.cleanName(text.wrappedValue) == nil)
+        // Return on the keyboard adds, the same as the button.
+        let submit: () -> Void = {
+            guard let name = ActivityEditing.cleanName(text.wrappedValue) else { return }
+            text.wrappedValue = ""
+            Task { await add(name) }
+        }
+        return HStack {
+            TextField(label, text: text).submitLabel(.done).onSubmit(submit)
+            Button("추가", action: submit)
+                .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
+                .disabled(ActivityEditing.cleanName(text.wrappedValue) == nil)
         }
     }
 
     private func run(_ command: CalendarCommand) {
         Task {
             let outcome = await model.perform(command)
-            if case let .rejected(reason)? = outcome { failure = "저장하지 못했습니다. (\(reason))" } else { failure = nil }
+            if case let .rejected(reason)? = outcome { failure = "저장하지 못했어요. (\(reason))" } else { failure = nil }
         }
     }
 }

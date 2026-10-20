@@ -139,9 +139,13 @@ public struct LinkTransactionInput: Hashable, Sendable {
 public struct UnlinkTransactionInput: Hashable, Sendable {
     public let transactionID: LedgerEntryID
     public let by: AssignmentProvenance
-    public init(transactionID: LedgerEntryID, by: AssignmentProvenance) {
+    /// Records that the transaction belongs to no activity instead of leaving it unallocated, so automation (such as `TimeBinding`) never
+    /// puts it back. What a user taking a transaction out of an event means.
+    public let keepOut: Bool
+    public init(transactionID: LedgerEntryID, by: AssignmentProvenance, keepOut: Bool = false) {
         self.transactionID = transactionID
         self.by = by
+        self.keepOut = keepOut
     }
 }
 
@@ -153,6 +157,18 @@ public struct AssignActivityTypeInput: Hashable, Sendable {
     public init(target: ActivityTarget, typeID: ActivityTypeID?, provenance: AssignmentProvenance) {
         self.target = target
         self.typeID = typeID
+        self.provenance = provenance
+    }
+}
+
+public struct SetHeadcountInput: Hashable, Sendable {
+    public let target: ActivityTarget
+    /// The total number of people, the user included. `nil` clears it (the named participants and the user count).
+    public let headcount: Int?
+    public let provenance: AssignmentProvenance
+    public init(target: ActivityTarget, headcount: Int?, provenance: AssignmentProvenance) {
+        self.target = target
+        self.headcount = headcount
         self.provenance = provenance
     }
 }
@@ -494,6 +510,7 @@ public enum CalendarCommand: Hashable, Sendable {
     case unlinkTransaction(UnlinkTransactionInput)
     case assignActivityType(AssignActivityTypeInput)
     case assignActivityArea(AssignActivityAreaInput)
+    case setHeadcount(SetHeadcountInput)
     /// Adds a place (or renames one) so it can be chosen for an activity.
     case upsertArea(Area)
     case assignTag(AssignTagInput)

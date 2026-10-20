@@ -771,3 +771,26 @@ expect_equals: PF-DEB-002 결과 (거래 필드 동일)
 - 음수 잔액 표기 정책(PF-BAL-004, PF-WDR 5절 edge).
 - `merchantMissing` vs 템플릿 불일치 의심의 구분 기준(PF-MER).
 - 이 matrix의 hard/soft 등급과 confidence 감점값은 **초기 제안**이며, 실제 알림 샘플을 가져오면 fixture와 함께 조정한다.
+
+## 24. 실제 알림에서 확인된 형식 (`PF-WLT`, 가상 상호로 고정)
+
+실사용(-live) 준비 중 서버의 미파싱 알림에서 확인한 형식. 상호는 모두 가상이다. 테스트: `KoreanFinancialNotificationParserTests`의 `wallet*`/`foreignCurrency*`.
+
+```yaml
+# PF-WLT-001 Wallet 카드 결제 (iOS 지갑 앱 알림)
+in: {app: Wallet, title: "현대카드", subtitle: "가상편의점테스트점, 서울특별시", body: "₩1,200"}
+expect: {candidate, ruleID: wallet-card-payment, kind: purchase, outflow, amount: {1200, KRW},
+         merchant: "가상편의점테스트점", instrument: {kind: unknown, displayName: "현대카드"}, issues: [instrumentHintMissing(soft)]}
+# 끝의 ", <시도>"만 지역 접미사로 잘라낸다. 상호 안의 쉼표는 보존. 지역이 없으면 부제 전체가 상호.
+# 신용(MM)/체크(M CHECK) 구분은 알림에 없다 → kind unknown, 어떤 계좌인지는 사용자 결정(AccountEvidence.walletCardTap은 보조 알림이라 자동 binding 없음).
+
+# PF-WLT-002 "“MM” is ready for Apple Pay." → notTransaction(unrecognized)
+
+# PF-WLT-003 현대 체크 해외승인 (USD)
+in: {app: 현대카드, body: "<이름> 님, 현대 체크 해외승인 \r\nUSD 98.55 10/12 21:25 \r\nTEST*MERCHANT"}
+expect: failed(unsupportedCurrency)   # 외화를 원화 장부에 넣지 않는다. 명시적 미지원. 외화 지원은 §12 PF-FXC와 함께 정책 결정 필요.
+
+# PF-WLT-004 "[사고예방] 해외사용 확인 알림" → notTransaction(authentication)
+```
+
+알려진 한계: Toss `입금됐어요 / <계좌> 잔액을 확인해보세요.`처럼 금액이 없는 입금 알림은 `failed(amountMissing)`으로 남는다(입금은 사실이지만 금액이 없어 후보를 만들 수 없음). Wallet 결제와 같은 결제의 현대카드 앱 승인 알림이 함께 오면 교차 앱 중복 처리는 correlator 몫이다.

@@ -166,13 +166,41 @@ final class FixedGridBrowseModel {
         layoutWidth: CGFloat, textScale: CGFloat, metrics: EventPresentation.Metrics?, preparations: DayPlanPreparations,
         presentationPartition: TemporalGridPartition? = nil
     ) -> DayRenderPlan {
-        DayRenderPlan(
-            prepared: preparations.prepared(timeline: timeline, role: source.role, layout: decision.layout),
+        let prepared = preparations.prepared(timeline: timeline, role: source.role, layout: decision.layout)
+        let titleWidth: (String) -> CGFloat = { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+        let moving = DayRenderPlan(
+            prepared: prepared,
             geometry: axis(for: timeline.day, partition: partition, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
             metrics: metrics, maximumInlineRows: Self.maximumInlineRows,
-            presentationGeometry: presentationPartition.map { axis(for: timeline.day, partition: $0, zone: zone) }, titleWidth: { decision.titleWidths[$0] ?? DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+            presentationGeometry: presentationPartition.map { axis(for: timeline.day, partition: $0, zone: zone) }, titleWidth: titleWidth
         )
+        // Between two whole days: what is written is what the decision shows at rest (`holdingVisibility`); the plan at rest stays the same for the whole move.
+        guard let presentationPartition, presentationPartition != partition else { return moving }
+        let key = RestPlanKey(timeline: timeline, role: source.role, layout: decision.layout, partition: presentationPartition, layoutWidth: layoutWidth, textScale: textScale)
+        let rest: DayRenderPlan
+        if let index = restPlans.firstIndex(where: { $0.key == key }) {
+            rest = restPlans[index].plan
+        } else {
+            rest = DayRenderPlan(
+                prepared: prepared, geometry: axis(for: timeline.day, partition: presentationPartition, zone: zone), layoutWidth: layoutWidth, textScale: textScale,
+                metrics: metrics, maximumInlineRows: Self.maximumInlineRows, titleWidth: titleWidth
+            )
+            restPlans.append((key, rest))
+            if restPlans.count > 8 { restPlans.removeFirst(restPlans.count - 8) }
+        }
+        return moving.holdingVisibility(of: rest, textScale: textScale)
     }
+
+    /// What a day's plan at rest was made from (`renderPlan` keeps the last few: the days on screen keep theirs for a whole move).
+    private struct RestPlanKey: Equatable {
+        let timeline: DayTimeline
+        let role: DayRole?
+        let layout: AdaptiveLayout?
+        let partition: TemporalGridPartition
+        let layoutWidth: CGFloat
+        let textScale: CGFloat
+    }
+    private var restPlans: [(key: RestPlanKey, plan: DayRenderPlan)] = []
 
     /// Engine runs a frame asked for (a decision missing when it was drawn), as against those made between frames by the planning ahead.
     private(set) var drawingEngineRuns = 0

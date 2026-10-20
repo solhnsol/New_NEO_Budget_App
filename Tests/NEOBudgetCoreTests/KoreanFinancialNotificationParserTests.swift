@@ -272,3 +272,37 @@ private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateD
     )
     if case let .candidate(draft) = outcome { #expect(draft.ruleID != "transit-fare") }
 }
+
+// MARK: Wallet card payments (synthetic merchants)
+
+@Test func walletCardPaymentIsAPurchaseWithTheMerchantWithoutItsRegion() throws {
+    let draft = try parsedDraft(rawNotification(title: "현대카드", subtitle: "가상편의점테스트점, 서울특별시", body: "₩1,200"))
+    #expect(draft.kind == .purchase && draft.direction == .outflow && draft.ruleID == "wallet-card-payment")
+    #expect(draft.amount == (try parserWon(1_200)))
+    #expect(draft.counterparty.merchantRaw == "가상편의점테스트점")
+    #expect(draft.instrument.kind == .unknown && draft.instrument.displayNameRaw == "현대카드")
+    #expect(!draft.hasHardIssues)
+}
+
+@Test func walletCardPaymentKeepsCommasInsideTheMerchantAndStripsOnlyARegion() throws {
+    let inner = try parsedDraft(rawNotification(title: "현대카드", subtitle: "가상상점, 본점 - 테스트, 경기도", body: "₩75,000"))
+    #expect(inner.counterparty.merchantRaw == "가상상점, 본점 - 테스트")
+    #expect(inner.amount == (try parserWon(75_000)))
+    let noRegion = try parsedDraft(rawNotification(title: "현대카드", subtitle: "코페이_2 - 가상볼링장", body: "₩19,500"))
+    #expect(noRegion.counterparty.merchantRaw == "코페이_2 - 가상볼링장")
+}
+
+@Test func walletNoticesThatAreNotPaymentsStayNotTransactions() throws {
+    let parser = KoreanFinancialNotificationParser()
+    #expect(try parser.parse(rawNotification(title: "Wallet", body: "“MM” is ready for Apple Pay."), context: parserContext()) == .notTransaction(.unrecognized))
+    // An amount alone with no merchant, or a card title with a non-amount body, is not read as a payment.
+    #expect(try parser.parse(rawNotification(title: "현대카드", body: "₩1,200"), context: parserContext()) == .notTransaction(.unrecognized))
+}
+
+@Test func foreignCurrencyCheckApprovalIsExplicitlyUnsupportedAndASafetyNoticeIsNotATransaction() throws {
+    let parser = KoreanFinancialNotificationParser()
+    #expect(try parser.parse(
+        rawNotification(title: nil, body: "테스트 님, 현대 체크 해외승인 \r\nUSD 98.55 10/12 21:25 \r\nTEST*MERCHANT"), context: parserContext()
+    ) == .failed(.unsupportedCurrency))
+    #expect(try parser.parse(rawNotification(title: nil, body: "[사고예방] 해외사용 확인 알림"), context: parserContext()) == .notTransaction(.authentication))
+}

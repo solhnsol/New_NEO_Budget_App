@@ -18,6 +18,10 @@ struct TemporalGridPartition: Equatable, Sendable {
     let boundaries: [Double]
     /// The height of the whole grid: `viewportHeight * zoomScale`. All cells are `totalHeight / slotCount` tall.
     let totalHeight: CGFloat
+    /// Set only on a partition between two others (`interpolated`): the two ends and how far along. The mapping is then the straight blend of the two
+    /// ends' y for each time, so a card's top and bottom both move in a straight line with `progress` (see `interpolated`). Empty or two entries.
+    private let blendEnds: [TemporalGridPartition]
+    private let blendProgress: Double
 
     var slotCount: Int { boundaries.count - 1 }
     var slotHeight: CGFloat { totalHeight / CGFloat(slotCount) }
@@ -36,6 +40,15 @@ struct TemporalGridPartition: Equatable, Sendable {
         guard Self.violation(boundaries: boundaries, totalHeight: totalHeight) == nil else { return nil }
         self.boundaries = boundaries
         self.totalHeight = totalHeight
+        self.blendEnds = []
+        self.blendProgress = 0
+    }
+
+    private init(boundaries: [Double], totalHeight: CGFloat, blendEnds: [TemporalGridPartition], blendProgress: Double) {
+        self.boundaries = boundaries
+        self.totalHeight = totalHeight
+        self.blendEnds = blendEnds
+        self.blendProgress = blendProgress
     }
 
     init?(wholeMinutes: [MinuteOfDay], totalHeight: CGFloat) {
@@ -75,6 +88,10 @@ struct TemporalGridPartition: Equatable, Sendable {
 
     /// Where a time is drawn. Clamped to the day. Exact for any `Double` minute: 17 minutes are 17 minutes, 4.25 are 4.25.
     func timeToY(_ minute: Double) -> CGFloat {
+        if blendEnds.count == 2 {
+            let p = CGFloat(blendProgress)
+            return (1 - p) * blendEnds[0].timeToY(minute) + p * blendEnds[1].timeToY(minute)
+        }
         let clamped = min(max(minute, 0), Double(Self.minutesPerDay))
         let slot = slot(containingMinute: clamped)
         let length = boundaries[slot + 1] - boundaries[slot]
@@ -88,6 +105,15 @@ struct TemporalGridPartition: Equatable, Sendable {
     func yToTime(_ y: CGFloat) -> Double {
         if y <= 0 { return 0 }
         if y >= totalHeight { return Double(Self.minutesPerDay) }
+        if blendEnds.count == 2 {
+            // The blend of two increasing maps is increasing: find the time by halving (a blend is only on screen while days move).
+            var low = 0.0, high = Double(Self.minutesPerDay)
+            for _ in 0..<40 {
+                let mid = (low + high) / 2
+                if timeToY(mid) < y { low = mid } else { high = mid }
+            }
+            return (low + high) / 2
+        }
         let slot = slot(atY: y)
         let fraction = Double((y - CGFloat(slot) * slotHeight) / slotHeight)
         return boundaries[slot] + fraction * (boundaries[slot + 1] - boundaries[slot])
@@ -103,23 +129,32 @@ struct TemporalGridPartition: Equatable, Sendable {
 
     /// The same cells and the same times, every cell taller by the same ratio. `zoomScale >= 1` and `totalHeight = viewportHeight * zoomScale`.
     func zoomed(viewportHeight: CGFloat, zoomScale: CGFloat) -> TemporalGridPartition {
-        TemporalGridPartition(boundaries: boundaries, totalHeight: viewportHeight * max(1, zoomScale))!
+        let height = viewportHeight * max(1, zoomScale)
+        guard blendEnds.count == 2 else { return TemporalGridPartition(boundaries: boundaries, totalHeight: height)! }
+        return TemporalGridPartition(
+            boundaries: boundaries, totalHeight: height,
+            blendEnds: blendEnds.map { $0.zoomed(viewportHeight: viewportHeight, zoomScale: zoomScale) }, blendProgress: blendProgress
+        )
     }
 
     // MARK: Interpolation
 
-    /// The partition `progress` of the way from `from` to `to`: each boundary moves in a straight line, and nothing is rounded.
-    /// The lines of the grid stay where they are (`slotHeight` is shared), the times under them slide. Because both ends are strictly
-    /// increasing, so is every blend, and no cell gets shorter than the shorter of its two ends.
+    /// The partition `progress` of the way from `from` to `to`. Every time is drawn at the straight blend of the y it has in the two ends, so a card's
+    /// top and its bottom move together and in a straight line with `progress`, whichever cells they lie in (blending the boundaries instead made a
+    /// card swell and shrink and its two edges move out of step). `boundaries` is still the straight blend of the two ends' boundaries: the cells
+    /// (`slotHeight` is shared) and the times named for them. The mapping stays continuous and strictly increasing, because both ends are.
     static func interpolated(from: TemporalGridPartition, to: TemporalGridPartition, progress: Double) -> TemporalGridPartition? {
         guard from.slotCount == to.slotCount, from.totalHeight == to.totalHeight else { return nil }
         let p = min(max(progress, 0), 1)
+        if p == 0 { return from }
+        if p == 1 { return to }
         let blended = zip(from.boundaries, to.boundaries).map { (1 - p) * $0 + p * $1 }
         // Pin the ends exactly: (1-p)*0 + p*0 and (1-p)*1440 + p*1440 are exact only up to rounding.
         var pinned = blended
         pinned[0] = 0
         pinned[pinned.count - 1] = Double(minutesPerDay)
-        return TemporalGridPartition(boundaries: pinned, totalHeight: from.totalHeight)
+        guard TemporalGridPartition.violation(boundaries: pinned, totalHeight: from.totalHeight) == nil else { return nil }
+        return TemporalGridPartition(boundaries: pinned, totalHeight: from.totalHeight, blendEnds: [from, to], blendProgress: p)
     }
 
     // MARK: Whole minutes and the existing axis

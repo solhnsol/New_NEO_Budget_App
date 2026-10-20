@@ -90,6 +90,38 @@ public actor CalendarCommandService {
         ))
     }
 
+    /// Binds spending that happened during an event to that event (`TimeBinding`), for the events and transactions between `from` and `to`.
+    /// Each binding is an automated allocation of the whole transaction, so a user decision is never replaced. Returns how many were bound.
+    @discardableResult
+    public func bindByTime(from: Int64, to: Int64, calendarIDs: Set<CalendarID>? = nil) async throws -> Int {
+        let events = try await provider.events(from: from, to: to, calendarIDs: calendarIDs)
+        let life = try repository.snapshot().state
+        let proposals = TimeBinding.proposals(events: events, transactions: transactions.transactions(occurringFrom: from, to: to), life: life)
+        var bound = 0
+        for proposal in proposals {
+            let provenance = AssignmentProvenance.automated(origin: TimeBinding.origin, confidence: 1, at: now())
+            if case .applied = await linkTransaction(LinkTransactionInput(transactionID: proposal.transactionID, target: .event(proposal.event), provenance: provenance)) {
+                bound += 1
+            }
+        }
+        return bound
+    }
+
+    /// Puts each unallocated refund into the activity its purchase belongs to (`TimeBinding.refundProposals`), as automation. `refundOf` maps a
+    /// refund to its purchase, as the ledger links them. Returns how many were placed.
+    @discardableResult
+    public func bindRefunds(refundOf: [LedgerEntryID: LedgerEntryID]) async throws -> Int {
+        let life = try repository.snapshot().state
+        let refunds = transactions.transactions(withIDs: Set(refundOf.keys))
+        var bound = 0
+        for proposal in TimeBinding.refundProposals(refunds: refunds, refundOf: refundOf, life: life) {
+            let provenance = AssignmentProvenance.automated(origin: TimeBinding.refundOrigin, confidence: 1, at: now())
+            let input = LinkTransactionInput(transactionID: proposal.transactionID, target: .activity(proposal.activityID), provenance: provenance)
+            if case .applied = await linkTransaction(input) { bound += 1 }
+        }
+        return bound
+    }
+
     public func weekStrip(containing day: LocalDate, firstWeekday: Int = 0, visibleCalendarIDs: Set<CalendarID>? = nil) async throws -> [WeekStripDay] {
         let timeZone = configuration.displayTimeZone
         let offset = ((day.weekday - firstWeekday) % 7 + 7) % 7
@@ -174,9 +206,10 @@ public actor CalendarCommandService {
         case let .editEvent(input): return await editEvent(input)
         case let .deleteEvent(input): return await deleteEvent(input)
         case let .linkTransaction(input): return await linkTransaction(input)
-        case let .unlinkTransaction(input): return unlinkTransaction(input)
+        case let .unlinkTransaction(input): return await unlinkTransaction(input)
         case let .assignActivityType(input): return await assignActivityType(input)
         case let .assignActivityArea(input): return await assignActivityArea(input)
+        case let .setHeadcount(input): return await setHeadcount(input)
         case let .upsertArea(area): return applyLocal([.upsertArea(area)], activityID: nil)
         case let .assignTag(input): return await assignTag(input, remove: false)
         case let .unassignTag(input): return await assignTag(input, remove: true)
@@ -369,9 +402,17 @@ public actor CalendarCommandService {
         ))
     }
 
-    /// Removes every allocation of the transaction, returning it to unallocated.
-    private func unlinkTransaction(_ input: UnlinkTransactionInput) -> CalendarCommandOutcome {
+    /// Removes every allocation of the transaction, returning it to unallocated, or with `keepOut` to a decision that it belongs to no activity.
+    private func unlinkTransaction(_ input: UnlinkTransactionInput) async -> CalendarCommandOutcome {
         guard configuration.assignmentPolicy.accepts(input.by) else { return .rejected(.provenanceRejected) }
+        if input.keepOut {
+            guard let marker = transactions.transaction(input.transactionID) else { return .rejected(.transactionNotFound) }
+            return await setAllocations(SetAllocationsInput(
+                transactionID: input.transactionID,
+                parts: [AllocationPartInput(target: .nonActivity, amount: .exact(marker.amount.minorUnits))],
+                provenance: input.by
+            ))
+        }
         guard let state = try? repository.snapshot().state else { return .rejected(.storageUnavailable) }
         let existing = state.allocationSet(for: input.transactionID)?.allocations ?? []
         guard !existing.isEmpty else { return .applied(AppliedCommand()) }
@@ -472,6 +513,23 @@ public actor CalendarCommandService {
         }
         return applyLocal(
             resolved.creation + [.setActivityType(resolved.id, Assigned(typeID, provenance: input.provenance))],
+            activityID: resolved.id
+        )
+    }
+
+    private func setHeadcount(_ input: SetHeadcountInput) async -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        guard let headcount = input.headcount else {
+            guard let resolved = await existingActivity(input.target) else { return .applied(AppliedCommand()) }
+            return applyLocal([.clearActivityHeadcount(resolved, by: input.provenance)], activityID: resolved)
+        }
+        let resolved: ResolvedActivity
+        switch await resolveActivity(input.target) {
+        case let .success(value): resolved = value
+        case let .failure(outcome): return outcome
+        }
+        return applyLocal(
+            resolved.creation + [.setActivityHeadcount(resolved.id, Assigned(headcount, provenance: input.provenance))],
             activityID: resolved.id
         )
     }

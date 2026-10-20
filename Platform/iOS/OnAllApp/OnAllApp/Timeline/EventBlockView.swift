@@ -119,6 +119,28 @@ struct EventTitleLayer: View {
     var startIsCovered = false
 
     var body: some View {
+        ZStack(alignment: .topLeading) {
+            if presentation.title > 0 { fullTitle }
+            if presentation.compactTitle > 0 { compactTitle }
+        }
+    }
+
+    /// A card too thin for the title writes it in small type, in the middle of the card's height and cut at the card's width; nothing about it
+    /// moves aside for another title (there is no room in a thin card to move it to).
+    private var compactTitle: some View {
+        let size = 12 * EventPresentation.Metrics.compactShare * scale
+        let line = ceil(size * 1.25)
+        return Text(block.title)
+            .font(.system(size: size, weight: .semibold)).lineLimit(1)
+            .padding(.horizontal, Self.horizontalPadding)
+            .frame(width: max(0, frame.width), height: line, alignment: .leading)
+            .opacity(presentation.compactTitle)
+            .offset(x: frame.minX, y: frame.minY + (frame.height - line) / 2)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+
+    private var fullTitle: some View {
         HStack(spacing: 3) {
             if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)

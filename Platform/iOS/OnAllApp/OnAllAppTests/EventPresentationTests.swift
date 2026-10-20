@@ -197,6 +197,20 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
     #expect(placed(on: 0.7, readFrom: nil).events.first?.presentation == placed(on: 0.7, readFrom: 0.7).events.first?.presentation)   // none: as before
 }
 
+@Test func whileTheDaysMoveALineIsWrittenAsTheDayWritesItAtRestWhereverTheAxisPutsIt() throws {
+    let tl = try timeline([], [try spend("a", minute: 600), try spend("b", minute: 610)])
+    func placed(on ppm: CGFloat) -> DayRenderPlan {
+        DayRenderPlan(timeline: tl, role: nil, layout: nil, geometry: TimelineGeometry(totalMinutes: 1440, pointsPerMinute: ppm), layoutWidth: layoutWidth, titleWidth: { _ in 40 })
+    }
+    let rest = placed(on: 3), squeezed = placed(on: 0.2)                                   // 30 points apart at rest, 2 on the way
+    #expect(rest.lines.count == 2 && rest.lines.allSatisfy { $0.reveal >= 1 })
+    #expect(squeezed.lines.contains { $0.reveal < 1 })                                      // on its own, the squeezed axis would hide one
+    let held = squeezed.holdingVisibility(of: rest, textScale: 1)
+    #expect(held.lines.map(\.reveal) == rest.lines.map(\.reveal))                          // written as at rest
+    #expect(held.lines.map(\.frame.minY) == squeezed.lines.map(\.frame.minY))              // placed where the moving axis has it
+    #expect(held.lines.map(\.frame.minX) == rest.lines.map(\.frame.minX))
+}
+
 // MARK: Through the plan: same event at every height
 
 @Test func oneEventAtEveryHeightIsTheSameEventAtTheSameAxisPosition() throws {
@@ -295,5 +309,22 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
         let item = try #require(p.events.first), line = try #require(p.lines.first)
         let title = CGRect(x: item.frame.minX + 6, y: item.frame.minY, width: 150, height: 19)
         if line.reveal > 0 { #expect(!title.intersects(line.frame.insetBy(dx: 0, dy: 4))) }
+    }
+}
+
+
+@Test func aCardThinnerThanTheTitleWritesItSmallThenNotAtAll() {
+    let m = EventPresentation.Metrics.standard()
+    #expect(m.compactNeed < m.titleNeed)
+    let none = EventPresentation.make(height: m.compactNeed - 0.5, metrics: m)
+    #expect(none.compactTitle == 0 && none.title == 0)
+    let small = EventPresentation.make(height: m.compactNeed + m.ramp, metrics: m)
+    #expect(small.compactTitle == 1 && small.title == 0 && small.writesTitle)
+    let full = EventPresentation.make(height: m.titleNeed + m.ramp, metrics: m)
+    #expect(full.title == 1 && full.compactTitle == 0)
+    // Between the two the small title gives way as the title comes in; never both whole.
+    for step in 0...20 {
+        let p = EventPresentation.make(height: m.compactNeed + CGFloat(step), metrics: m)
+        #expect(p.title + p.compactTitle <= 1.0001)
     }
 }

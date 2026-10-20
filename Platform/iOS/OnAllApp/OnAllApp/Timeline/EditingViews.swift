@@ -17,7 +17,7 @@ struct FeedbackBanner: View {
         }
         .padding(12)
         .foregroundStyle(.white)
-        .background(feedback.tone == .error ? Color.red : Color.blue, in: RoundedRectangle(cornerRadius: 12))
+        .background(feedback.tone == .error ? Theme.danger : Theme.accent, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
         .padding(.horizontal, 16)
         .shadow(radius: 6, y: 2)
         .accessibilityElement(children: .combine)

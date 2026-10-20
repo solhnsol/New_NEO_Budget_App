@@ -12,8 +12,13 @@ public struct NotificationCorrelator: Sendable {
     /// How far apart two notifications of one act may be. Not a wait: nothing is held back for this long.
     public let matchToleranceMilliseconds: Int64
 
-    public init(matchToleranceMilliseconds: Int64 = 600_000) {
+    /// How far apart a Wallet card payment and the card issuer's own alert of it may be. Observed pairs differ by under
+    /// 15 seconds (the Wallet alert second); two minutes keeps a same-amount repeat at one shop a separate payment.
+    public let walletTapToleranceMilliseconds: Int64
+
+    public init(matchToleranceMilliseconds: Int64 = 600_000, walletTapToleranceMilliseconds: Int64 = 120_000) {
         self.matchToleranceMilliseconds = matchToleranceMilliseconds
+        self.walletTapToleranceMilliseconds = walletTapToleranceMilliseconds
     }
 
     public func decide(_ incoming: CorrelationObservation, against records: [CorrelationRecord]) -> CorrelationDecision {
@@ -57,6 +62,16 @@ public struct NotificationCorrelator: Sendable {
             }
             if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .sameInstrumentAcrossProviders) }
         }
+        // A Wallet card payment (no account of its own) of a payment the card issuer's app already reported.
+        if Self.isWalletTap(incoming.draft), let issuer = Self.issuerSource(of: incoming.draft) {
+            let partners = committed.filter { record in
+                record.draft.kind == .purchase && !Self.isWalletTap(record.draft)
+                    && (record.source == issuer || records.contains { $0.corroborates == record.candidateID && $0.source == issuer })
+                    && samePayment(record.draft, incoming.draft, tolerance: walletTapToleranceMilliseconds)
+                    && !claimed(record, by: .walletTap, in: records)
+            }
+            if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .walletTap) }
+        }
         // The other leg of a transfer already recorded from its first leg.
         if let binding = incoming.binding, case let .account(account) = binding {
             let partners = committed.filter { record in
@@ -80,6 +95,14 @@ public struct NotificationCorrelator: Sendable {
         if incoming.draft.kind == .purchase, case let .account(account)? = incoming.binding,
            let withdrawal = nearest(pending.filter { $0.draft.kind == .withdrawal && $0.binding == .account(account) && sameMoney($0, incoming) }, to: incoming) {
             result.append(CorrelationMatch(candidateID: withdrawal.candidateID, rule: .cardWithdrawal))
+        }
+        // The issuer's own alert arriving after the Wallet payment of it, which waited because Wallet names no account.
+        if incoming.draft.kind == .purchase, incoming.binding != nil,
+           let tap = nearest(pending.filter { record in
+               Self.isWalletTap(record.draft) && Self.issuerSource(of: record.draft) == incoming.source
+                   && samePayment(record.draft, incoming.draft, tolerance: walletTapToleranceMilliseconds)
+           }, to: incoming) {
+            result.append(CorrelationMatch(candidateID: tap.candidateID, rule: .walletTap))
         }
         // A transfer leg naming the account of a withdrawal that waited for review (a Kakao Pay charge after the bank's withdrawal).
         if let counterpart = incoming.transferCounterpart, isTransferLeg(incoming),
@@ -126,6 +149,31 @@ public struct NotificationCorrelator: Sendable {
 
     private func claimed(_ record: CorrelationRecord, by rule: CorrelationRule, in records: [CorrelationRecord]) -> Bool {
         records.contains { $0.corroborates == record.candidateID && $0.corroborationRule == rule }
+    }
+
+    /// Same amount, a merchant name one of which contains the other, and close in time.
+    private func samePayment(_ lhs: TransactionCandidateDraft, _ rhs: TransactionCandidateDraft, tolerance: Int64) -> Bool {
+        guard lhs.amount == rhs.amount else { return false }
+        let (difference, overflow) = lhs.occurredAt.unixMilliseconds.subtractingReportingOverflow(rhs.occurredAt.unixMilliseconds)
+        guard !overflow, difference != .min, abs(difference) <= tolerance else { return false }
+        guard let left = Self.shopKey(lhs), let right = Self.shopKey(rhs) else { return false }
+        return left.contains(right) || right.contains(left)
+    }
+
+    private static func isWalletTap(_ draft: TransactionCandidateDraft) -> Bool {
+        draft.ruleID == KoreanFinancialNotificationParser.walletCardPaymentRuleID
+    }
+
+    /// The provider whose own app reports the card named in a Wallet payment.
+    private static func issuerSource(of tap: TransactionCandidateDraft) -> String? {
+        tap.instrument.displayNameRaw?.contains("현대카드") == true ? ProviderCatalog.hyundaiCard.rawValue : nil
+    }
+
+    /// Letters and digits only, so `코페이_2 - 스카이락 볼링장` and `스카이락볼링장` compare as one shop; too short a name never matches.
+    private static func shopKey(_ draft: TransactionCandidateDraft) -> String? {
+        guard let raw = draft.counterparty.merchantRaw else { return nil }
+        let key = String(NotificationText.normalize(raw).lowercased().filter { $0.isLetter || $0.isNumber })
+        return key.count >= 2 ? key : nil
     }
 
     private func sameMoney(_ record: CorrelationRecord, _ incoming: CorrelationObservation) -> Bool {
@@ -207,6 +255,8 @@ public enum CorrelationRule: String, Codable, Sendable {
     case sameInstrumentAcrossProviders
     /// The two legs of a transfer between the user's own accounts.
     case transferLegs
+    /// A Wallet card payment and the card issuer's own alert of the same payment (Wallet names no account; the issuer's app does).
+    case walletTap
     /// A refund without an original reference and a recent purchase of the same name: suggested, never merged.
     case refundSuggestion
 }

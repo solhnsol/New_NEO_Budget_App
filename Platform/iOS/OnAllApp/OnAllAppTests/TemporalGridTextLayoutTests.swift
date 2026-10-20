@@ -61,7 +61,7 @@ private func resolved(_ day: AllocationDay, _ partition: TemporalGridPartition, 
     let scenario = F.demoTransRun()
     let (entities, placed, plan) = resolved(scenario.days[3], partition(scenario, main: 2), scale: 1)    // the overlapping morning cluster
     #expect(placed.events.count == 5 && entities.events.count == 5)
-    #expect(entities.events.allSatisfy { $0.indent <= 1 })                   // indented at most one step, never a lane
+    #expect(entities.events.allSatisfy { $0.indent <= EventOverlapAnalysis.maximumIndent })   // indented by depth, never a lane
     #expect(plan.titlesShown.count < placed.events.count)                   // some are left out where they would collide ...
     #expect(plan.titlesShown.count >= 1)
     #expect(placed.events.allSatisfy { $0.height > 0 })                      // ... but every card stays, at its exact span

@@ -8,7 +8,8 @@ import Observation
 /// to whoever implements them; nothing here knows their types, and they answer with events (`draftChanged`, `commitFinished`, `commitFailed`).
 ///
 /// One session at a time, on one event:
-/// - **enter** (a tap on an editable event): the grid freezes (`freeze`); no handle is chosen.
+/// - **enter** (a tap on an editable event, or a new event put down by a long press): the grid freezes (`freeze`); no handle is chosen. A new event's session
+///   is changed from the start (there is something to save: the event itself), so leaving it any way but cancel creates it.
 /// - **rename** (a tap on the chosen event's title): the title is edited with the keyboard (`rename(true)`); a chosen handle is let go. A handle touched
 ///   or a tap outside ends the renaming first (`rename(false)`), the new title kept; done saves the title with the time.
 /// - **handles**: a tap chooses a handle (its time bubble) or lets it go; a drag makes it the dragged one, and lets it go when it ends (no bubble during or
@@ -30,10 +31,21 @@ struct FixedGridEditInteraction: Equatable {
         let eventKey: CalendarEventKey
         let startMinute: Int
         let endMinute: Int
+        /// A new event, not in the calendar yet (`FixedGridCreatePlacement`): created on confirm, nothing written on cancel. Its block and key stand for it
+        /// (no calendar's event has them).
+        let isNew: Bool
 
-        init(day: LocalDate, blockID: BlockID, eventKey: CalendarEventKey, startMinute: Int, endMinute: Int) {
-            self.day = day; self.blockID = blockID; self.eventKey = eventKey; self.startMinute = startMinute; self.endMinute = endMinute
+        init(day: LocalDate, blockID: BlockID, eventKey: CalendarEventKey, startMinute: Int, endMinute: Int, isNew: Bool = false) {
+            self.day = day; self.blockID = blockID; self.eventKey = eventKey; self.startMinute = startMinute; self.endMinute = endMinute; self.isNew = isNew
         }
+
+        /// A new event put down on `day` at these elapsed minutes.
+        static func new(day: LocalDate, startMinute: Int, endMinute: Int) -> Target {
+            Target(day: day, blockID: newBlockID, eventKey: newEventKey, startMinute: startMinute, endMinute: endMinute, isNew: true)
+        }
+
+        static let newBlockID = BlockID(rawValue: "onall.new-event")
+        static let newEventKey = CalendarEventKey(calendarID: CalendarID(rawValue: ""), eventID: CalendarEventID(rawValue: "onall.new-event"))
 
         init(day: LocalDate, block: EventBlock) {
             self.init(day: day, blockID: block.id, eventKey: block.eventKey, startMinute: block.startMinute, endMinute: block.endMinute)
@@ -187,7 +199,7 @@ struct FixedGridEditInteraction: Equatable {
         case .confirm: return confirm()
         case let .draftChanged(id, dirty):
             guard var session, session.id == id, !session.committing else { return [] }
-            session.isDirty = dirty
+            session.isDirty = dirty || session.target.isNew
             self.session = session
             return []
         case let .commitFinished(id, committed): return commitFinished(id, committed)
@@ -201,7 +213,7 @@ struct FixedGridEditInteraction: Equatable {
             return tapEvent(target)
         }
         sessions += 1
-        session = Session(id: sessions, target: target)
+        session = Session(id: sessions, target: target, isDirty: target.isNew)
         return [.freeze(session: sessions, target), .began(session: sessions, target)]
     }
 

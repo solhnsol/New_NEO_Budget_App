@@ -67,6 +67,11 @@ struct DayRenderPlan {
         /// Its dot and leader, at the column's edge on the row's height: drawn wherever the row is, so a touch there is the line's (unless a card is
         /// drawn there and the line's own row does not reach it).
         var markFrame: CGRect = .zero
+        /// The colour of the event this transaction is linked to (its chip is outlined in it); `nil` when it is linked to nothing on this day.
+        var linkColorHex: String? = nil
+        /// For a linked transaction outside its event's time: the event's stripe carried on from the card's nearer edge to the transaction's
+        /// time, so it reads as that event's. `nil` when there is no such event card on this day.
+        var tail: Tail? = nil
 
         /// Whether a touch at `point` is this line's. Where no card is drawn: on its row or its dot. Over a card: on its row while any of its text is
         /// written, else only where its row and its dot meet, so the card under the unwritten text (its rows too) is touched as the card.
@@ -74,6 +79,13 @@ struct DayRenderPlan {
             guard overCard else { return frame.contains(point) || markFrame.contains(point) }
             return reveal > 0 ? frame.contains(point) : frame.intersection(markFrame).contains(point)
         }
+    }
+
+    /// A dashed line at `x` from `fromY` (the card's edge) to `toY` (the transaction's time), in the linked event's colour.
+    struct Tail: Equatable {
+        let x: CGFloat
+        let fromY: CGFloat
+        let toY: CGFloat
     }
 
     struct OverflowItem {
@@ -292,13 +304,30 @@ struct DayRenderPlan {
         // How each event looks, from its height alone. `presentationGeometry`: the axis the heights are read from when it is not the one the cards are placed on (the days
         // moving: cards are placed on the blend of two partitions, but what is written in them is what the decision they come from makes of the cards at rest, so a card
         // that the blend squeezes or stretches on its way neither loses its rows nor shows rows it never has).
+        // A card's rows stop where an event that begins inside it is drawn over it (its title is written there): the rows go first, as they do for a lower card.
         var presentations: [BlockID: EventPresentation] = [:]
+        var presentationInputs: [BlockID: (height: CGFloat, rowRoom: CGFloat?)] = [:]
         for block in blocks {
             var height = frames[block.id]?.height ?? 0
+            let axis: any TimeAxisMapping
             if let basis = presentationGeometry, expanded != block.id, block.id != focused {
                 height = max(0, basis.y(bottomOfSpanFrom: block.startMinute, to: block.endMinute) - basis.y(minute: block.startMinute))
+                axis = basis
+            } else {
+                axis = geometry
             }
-            presentations[block.id] = EventPresentation.make(height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows)
+            var rowRoom: CGFloat?
+            if let own = frames[block.id], block.id != expanded, block.id != focused {
+                let inner = blocks.filter { other in
+                    guard other.id != block.id, other.startMinute > block.startMinute, other.startMinute < block.endMinute, let frame = frames[other.id] else { return false }
+                    return frame.minX < own.maxX && frame.maxX > own.minX
+                }
+                rowRoom = inner.map { axis.y(minute: $0.startMinute) - axis.y(minute: block.startMinute) }.min()
+            }
+            presentationInputs[block.id] = (height, rowRoom)
+            presentations[block.id] = EventPresentation.make(
+                height: height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows, rowRoom: rowRoom
+            )
         }
 
         // Titles written inside cards are kept apart by moving them down their column; an event without room for one has none to place.
@@ -314,6 +343,14 @@ struct DayRenderPlan {
             minimumHeight: 1, focused: focused, rowHeight: DayContentLayout.titleRowHeight * scale,
             titlesOnly: true
         )
+        // A title moved down its card takes its rows down with it: they still stop above the end time's line (and where an inner event begins).
+        for block in blocks {
+            guard let dy = places[block.id]?.dy, dy > 0, block.id != expanded, block.id != focused, let input = presentationInputs[block.id] else { continue }
+            presentations[block.id] = EventPresentation.make(
+                height: input.height, insideCount: prepared.insideAll[block.id]?.count ?? 0, metrics: metrics, maximumRows: maximumInlineRows,
+                rowRoom: max(0, min(input.rowRoom ?? input.height, input.height) - dy)
+            )
+        }
 
         // Events, back to front.
         let ordered = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
@@ -333,7 +370,7 @@ struct DayRenderPlan {
             eventItems.append(EventItem(
                 block: block, placement: placed, frame: frame, drawnFrame: drawn,
                 touchFrame: drawn.insetBy(dx: 0, dy: -touchMissing / 2), title: place, presentation: presentation,
-                header: nil, showsTitleInCard: presentation.showsTitle || id == focused,
+                header: nil, showsTitleInCard: presentation.writesTitle || id == focused,
                 insideRows: inside, shownRows: shown, hiddenRows: presentation.hiddenRows,
                 titleMaxWidth: {
                     switch placed?.titleResolution {
@@ -365,7 +402,12 @@ struct DayRenderPlan {
 
         // Where an event's title is written, a row keeps to the right part the engine left it; if even that meets the title, its text waits.
         func titleRects(wide: Bool) -> [CGRect] {
-            eventItems.filter { $0.header == nil && $0.showsTitleInCard && $0.presentation.showsTitle }.map { item in
+            eventItems.filter { $0.header == nil && $0.showsTitleInCard && $0.presentation.writesTitle }.map { item in
+                if !item.presentation.showsTitle {
+                    // The small title of a thin card: the card's own height is its row.
+                    let width = wide ? item.frame.width : min(item.frame.width, titleWidth(item.block.title) * EventPresentation.Metrics.compactShare + EventTitleLayer.horizontalPadding)
+                    return CGRect(x: item.frame.minX, y: item.drawnFrame.minY, width: width, height: item.drawnFrame.height)
+                }
                 let width = wide ? item.frame.width : min(titleWidth(item.block.title), item.titleMaxWidth ?? .infinity)
                 return CGRect(x: item.frame.minX + item.title.dx, y: item.frame.minY + item.title.dy, width: wide ? width : width + EventTitleLayer.horizontalPadding, height: (EventTitleLayer.rowHeight + 2) * scale)
             }
@@ -428,20 +470,30 @@ struct DayRenderPlan {
             return item
         }
 
-        // A header is an auxiliary place for an event's title, attached to the same event: the engine's, or a small tab for a card too
-        // thin to write in. Only where it covers nothing; a line (E0) never gets one.
+        // A linked transaction's chip takes its event's colour; outside the event's time, the event's stripe runs on to it.
+        let cardsByEvent = Dictionary(eventItems.map { ($0.block.id.rawValue, $0) }, uniquingKeysWith: { first, _ in first })
+        lineItems = lineItems.map { line in
+            guard let link = line.link, let card = cardsByEvent[link.eventID] else { return line }
+            var copy = line
+            copy.linkColorHex = card.block.calendarColorHex ?? "#3182F6"
+            if let anchor = line.anchorY {
+                let frame = card.drawnFrame
+                if anchor < frame.minY - 1 { copy.tail = Tail(x: frame.minX + 1.5, fromY: frame.minY, toY: anchor) }
+                else if anchor > frame.maxY + 1 { copy.tail = Tail(x: frame.minX + 1.5, fromY: frame.maxY, toY: anchor) }
+            }
+            return copy
+        }
+
+        // A header is an auxiliary place for an event's title, attached to the same event: the engine's, for a title that meets a line. Only
+        // where it covers nothing, and only for a card tall enough for its title: a thinner card writes its title small inside itself (or not at
+        // all), never in a tab above it.
         var occupied: [CGRect] = eventItems.map(\.drawnFrame) + lineItems.filter { $0.reveal > 0 }.map(\.frame) + overflowItems.map(\.frame)
-        let headerHeight = parameters.headerRow * scale
         for index in eventItems.indices.sorted(by: { eventItems[$0].frame.minY < eventItems[$1].frame.minY }) {
             let item = eventItems[index]
-            guard item.presentation.level > .line, item.block.id != expanded else { continue }
+            guard item.presentation.showsTitle, item.block.id != expanded, let spec = item.placement?.header else { continue }
             let own = item.drawnFrame
-            var rect: CGRect?
-            if let spec = item.placement?.header { rect = CGRect(x: own.minX, y: own.minY - spec.height, width: own.width, height: spec.height) }
-            else if !item.presentation.showsTitle, item.block.id != focused {
-                rect = CGRect(x: own.minX, y: own.minY - headerHeight, width: min(own.width, titleWidth(item.block.title) + 24), height: headerHeight)
-            }
-            guard let rect, rect.minY >= 0 else { continue }
+            let rect = CGRect(x: own.minX, y: own.minY - spec.height, width: own.width, height: spec.height)
+            guard rect.minY >= 0 else { continue }
             guard !occupied.contains(where: { $0 != own && $0.intersects(rect.insetBy(dx: 0, dy: 0.5)) }) else { continue }
             eventItems[index].header = rect
             eventItems[index].showsTitleInCard = false
@@ -453,6 +505,47 @@ struct DayRenderPlan {
         overflows = overflowItems
         conflicts = prepared.conflicts
         hitOrder = (focused ?? expanded).map { content.hitOrder(focused: $0) } ?? prepared.defaultHitOrder
+    }
+
+    /// This plan, with what it shows held to `rest`: the same day under the same decision, placed on the partition that decision has at rest. While the days move
+    /// the cards are placed on the blend of two partitions, so how far apart things are changes with the position; what is written (a line's text, its width, a
+    /// header, a shortened title) is what the day shows at rest, so nothing comes and goes because the time between two things is squeezed on the way.
+    /// Only where things are drawn follows the moving axis.
+    func holdingVisibility(of rest: DayRenderPlan, textScale: CGFloat) -> DayRenderPlan {
+        let scale = max(0.5, textScale)
+        var held = self
+        var restLines: [String: LineItem] = [:]
+        for line in rest.lines { restLines[line.id] = line }
+        held.lines = lines.map { line in
+            guard let kept = restLines[line.id] else { return line }
+            var copy = line
+            copy.reveal = kept.reveal
+            copy.frame = CGRect(x: kept.frame.minX, y: line.frame.minY, width: kept.frame.width, height: line.frame.height)
+            copy.touchFrame = CGRect(x: kept.touchFrame.minX, y: line.touchFrame.minY, width: kept.touchFrame.width, height: line.touchFrame.height)
+            return copy
+        }
+        var restOverflows: [String: OverflowItem] = [:]
+        for overflow in rest.overflows { restOverflows[overflow.id] = overflow }
+        held.overflows = overflows.map { overflow in
+            guard let kept = restOverflows[overflow.id] else { return overflow }
+            var copy = overflow
+            copy.reveal = kept.reveal
+            copy.frame = CGRect(x: kept.frame.minX, y: overflow.frame.minY, width: kept.frame.width, height: overflow.frame.height)
+            copy.touchFrame = CGRect(x: kept.touchFrame.minX, y: overflow.touchFrame.minY, width: kept.touchFrame.width, height: overflow.touchFrame.height)
+            return copy
+        }
+        var restEvents: [BlockID: EventItem] = [:]
+        for item in rest.events { restEvents[item.block.id] = item }
+        held.events = events.map { item in
+            guard let kept = restEvents[item.block.id] else { return item }
+            var copy = item
+            copy.titleMaxWidth = kept.titleMaxWidth
+            copy.header = kept.header.map { CGRect(x: $0.minX, y: item.drawnFrame.minY - $0.height, width: $0.width, height: $0.height) }
+            copy.showsTitleInCard = kept.showsTitleInCard
+            copy.rowsFrame = Self.rowsFrame(card: item.drawnFrame, titleOffset: item.title.dy, hasHeader: copy.header != nil, presentation: item.presentation, scale: scale)
+            return copy
+        }
+        return held
     }
 
     /// Where a card of `presentation` writes its inside rows: below the title's room (or the header's thin edge), one row per shown transaction

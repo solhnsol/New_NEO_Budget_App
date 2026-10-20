@@ -157,3 +157,16 @@ private let scenarios: [AxisStabilityScenario] = [F.stabilizationRuns[2], F.grid
     print("AXIS  tick layout per frame: \(String(format: "%.4f", ms)) ms (25 ticks, Debug)")
     #expect(ms < 1)
 }
+
+@Test func hoursOnTheGridsLinesKeepTheirLabelsBeforeOtherHours() throws {
+    // Hans (2026-10-16): the labels on the grid's own lines are the axis's main ones. Given first, they win the room an hour of higher
+    // importance would otherwise take: in a squeezed morning 9 and 10 are too close for both labels; 9 wins by importance, 10 when 10 is
+    // on a line of the grid.
+    let partition = try #require(TemporalGridPartition(wholeMinutes: [0, 480, 720, 1440], totalHeight: 120))
+    let metrics = HourAxis.Metrics()
+    let plain = HourAxis.layout(partition: partition, metrics: metrics)
+    let lines = HourAxis.layout(partition: partition, metrics: metrics, first: [0, 8, 12, 24, 10])
+    #expect(plain[9].labelOpacity > plain[10].labelOpacity)
+    #expect(lines[10].labelOpacity > plain[10].labelOpacity && lines[10].labelOpacity > lines[9].labelOpacity)
+    #expect(HourAxis.layout(partition: partition, metrics: metrics, first: []) == plain)
+}

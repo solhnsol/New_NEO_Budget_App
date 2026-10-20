@@ -3,6 +3,7 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import NEOBudgetEventKit
 import NEOBudgetInMemoryCalendar
+import NEOBudgetInMemoryStorage
 import Observation
 
 /// One day of the strip around the two visible days. `timeline` is `nil` until it has been read.
@@ -122,14 +123,14 @@ final class AppModel {
         selectedDay = dayZone.localDate(of: Self.nowMilliseconds())
     }
 
-    /// The device calendar and the app ledger. The ledger is empty until ingestion and durable storage exist, unless
-    /// `withSampleLedger` seeds the synthetic day (launch argument `-ledger-sample`) to check real calendar data
-    /// against ledger-derived transactions.
+    /// The device calendar and the real ledger (the notifications the Shortcut delivered), unless `withSampleLedger`
+    /// seeds the synthetic day (launch argument `-ledger-sample`) to check real calendar data against ledger-derived
+    /// transactions.
     static func live(withSampleLedger: Bool = false) throws -> AppModel {
         let zone = try DisplayTimeZone(identifier: TimeZone.current.identifier)
         let provider = try EventKitCalendarProvider(dayZoneIdentifier: zone.identifier)
         let today = zone.localDate(of: nowMilliseconds())
-        let ledger = withSampleLedger ? try SampleLedger.make(today: today, zone: zone) : try AppLedger()
+        let ledger = withSampleLedger ? try SampleLedger.make(today: today, zone: zone) : try LiveLedger.shared()
         return AppModel(provider: provider, eventKit: provider, dayZone: zone, ledger: ledger, isDemo: false, prepare: nil)
     }
 
@@ -147,6 +148,7 @@ final class AppModel {
 
     func start() async {
         if let prepare { await prepare() }
+        observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
             case .notDetermined:
@@ -162,9 +164,10 @@ final class AppModel {
         do {
             try await makeService()
         } catch {
-            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+            phase = .failed("일정과 거래를 불러오지 못했어요")
             return
         }
+        await bindSpendingByTime()
         await reload()
         observeChanges()
     }
@@ -208,7 +211,7 @@ final class AppModel {
             let granted = try await eventKit.requestFullAccess()
             if granted { await start() } else { phase = .denied }
         } catch {
-            phase = .failed("캘린더 접근을 요청하지 못했습니다.")
+            phase = .failed("캘린더 접근을 요청하지 못했어요")
         }
     }
 
@@ -292,7 +295,7 @@ final class AppModel {
             phase = .denied
         } catch {
             guard mine == dataGeneration else { return }
-            phase = .failed("일정과 거래를 불러오지 못했습니다.")
+            phase = .failed("일정과 거래를 불러오지 못했어요")
         }
     }
 
@@ -340,7 +343,7 @@ final class AppModel {
         switch failure {
         case nil: phase = .ready
         case CalendarProviderFailure.accessUnavailable?: phase = .denied
-        default: phase = shown.count == 2 || !failsScreen ? .ready : .failed("일정과 거래를 불러오지 못했습니다.")
+        default: phase = shown.count == 2 || !failsScreen ? .ready : .failed("일정과 거래를 불러오지 못했어요")
         }
     }
 
@@ -445,7 +448,9 @@ final class AppModel {
         let result = await savePipeline.save(request)
         switch result {
         case .unchanged, .needsScope: break
-        case .saved, .refused, .failed: await reload()          // a refusal or failure may mean the calendar changed: show what it holds now
+        case .saved, .refused, .failed:                         // a refusal or failure may mean the calendar changed: show what it holds now
+            await bindSpendingByTime()
+            await reload()
         }
         return result
     }
@@ -458,7 +463,111 @@ final class AppModel {
     func ledgerSections() async -> [LedgerDaySection]? {
         guard let transactions = try? await ledger.transactions() else { return nil }
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
-        return LedgerList.sections(transactions, life: life, zone: dayZone)
+        let refundOf = (try? await ledger.refundLinks()) ?? [:]
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
+    }
+
+    /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
+    func unclassifiedDeposits(since: Int64) async -> [LedgerDeposit] {
+        guard let service, let life = try? await service.lifeSnapshot().state else { return [] }
+        return ((try? await ledger.unclassifiedDeposits(life: life)) ?? []).filter { $0.occurredAtUnixMilliseconds >= since }
+    }
+
+    /// Puts a deposit on a purchase as a settlement (`DepositMerge`), then shows the result.
+    func merge(_ plan: DepositMerge.Plan) async -> Bool {
+        guard let service else { return false }
+        let applied = await DepositMerge.apply(
+            plan, provenance: ActivityEditing.provenance(now: nowMilliseconds), newID: { ActivityEditing.newID(prefix: $0) }
+        ) { await service.perform($0) }
+        await reload()
+        return applied
+    }
+
+    /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
+    func lifeState() async -> LifeState? {
+        try? await service?.lifeSnapshot().state
+    }
+
+    /// Every account's and card's movements, unnetted (the ledger tab's statement view). `nil` when the ledger could not be read.
+    func ledgerStatements() async -> [LedgerStatements.Statement]? {
+        try? await ledger.statements()
+    }
+
+    // MARK: Received notifications
+
+    /// Received notifications, newest first, with where each ended up. Empty in the demo.
+    func inbox() async -> [InboxItem] { await ledger.inbox() }
+
+    /// Accounts and cards the notifications mention that the user has not answered for yet.
+    func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
+
+    func registeredAccounts() async -> [AccountProfile] { await ledger.registeredAccounts() }
+
+    /// Applies the user's answer about an account and replays the ledger with it. `false` if it could not be applied.
+    @discardableResult
+    func answer(_ question: AccountQuestion, with answer: AccountAnswer) async -> Bool {
+        do {
+            switch answer {
+            case let .newAccount(name, kind): try await ledger.confirmAsNew(question.id, displayName: name, kind: kind)
+            case let .existing(binding): try await ledger.link(question.id, to: binding)
+            case .notMine: try await ledger.dismiss(question.id)
+            }
+        } catch {
+            return false
+        }
+        await ledgerDidChange()
+        return true
+    }
+
+    func ruleQuestion(for notificationID: String) async -> RuleQuestion? { await ledger.ruleQuestion(for: notificationID) }
+
+    /// Messages like the question's belong to `binding`, or to a new account. `false` if it could not be applied (for
+    /// one, when another account at the same institution could have sent the same message).
+    @discardableResult
+    func answer(_ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?) async -> Bool {
+        do {
+            try await ledger.answer(question, binding: binding, newAccount: newAccount)
+        } catch {
+            return false
+        }
+        await ledgerDidChange()
+        return true
+    }
+
+    /// The ledger changed (a notification arrived, an account was answered): the timeline and the ledger tab read it again.
+    func ledgerDidChange() async {
+        if service != nil {
+            await bindSpendingByTime()
+            await reload()
+        } else {
+            dataGeneration += 1
+        }
+    }
+
+    /// Spending that happened during an event goes into it (`docs/ledger-behavior.md`, 1), and a refund goes where its purchase went (2). Each month
+    /// that still has spending in no event is matched against its events, as automation, so the user's own decisions (including taking a
+    /// transaction out) always stand. Run when the service starts, when the ledger changes and when the calendar changes; a transaction already
+    /// decided is never looked at again.
+    func bindSpendingByTime() async {
+        guard let service, let transactions = try? await ledger.transactions() else { return }
+        let life = (try? await service.lifeSnapshot().state) ?? .empty
+        let months = Set(transactions
+            .filter { $0.flow == .spend && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .compactMap { marker -> LocalDate? in
+                let day = dayZone.localDate(of: marker.occurredAtUnixMilliseconds)
+                return try? LocalDate(year: day.year, month: day.month, day: 1)
+            })
+        for month in months.sorted() {
+            guard let next = try? LocalDate(year: month.month == 12 ? month.year + 1 : month.year, month: month.month % 12 + 1, day: 1) else { continue }
+            _ = try? await service.bindByTime(from: dayZone.dayBounds(month).start, to: dayZone.dayBounds(next).start)
+        }
+        // A refund follows its purchase into the event, wherever in time it came back.
+        if let refundOf = try? await ledger.refundLinks(), !refundOf.isEmpty { _ = try? await service.bindRefunds(refundOf: refundOf) }
+    }
+
+    private func observeLedger() {
+        guard !isDemo else { return }
+        LiveLedger.didReceive = { [weak self] in await self?.ledgerDidChange() }
     }
 
     private func observeChanges() {
@@ -467,6 +576,7 @@ final class AppModel {
         observer = Task { [weak self] in
             for await _ in await provider.changes() {
                 try? await Task.sleep(for: .milliseconds(300))
+                await self?.bindSpendingByTime()
                 await self?.reload()
             }
         }

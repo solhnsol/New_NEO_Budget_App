@@ -33,7 +33,7 @@ enum DemoData {
                 CalendarDescriptor(id: school, title: "학교", colorHex: "#3FA66B"),
                 CalendarDescriptor(id: holidays, title: "구독 캘린더", colorHex: "#8E8E93", isWritable: false),
             ],
-            events: readOnlyEvents,
+            events: DemoFull.isOn ? [] : readOnlyEvents,
             supportedRecurrenceScopes: [.thisOccurrence, .allInSeries],
             dayZone: zone
         )
@@ -130,7 +130,12 @@ enum DemoData {
             draft(school, "회의 가", d6, (10, 50), (11, 5)), draft(school, "회의 나", d6, (11, 5), (11, 20)), draft(life, "Date", d6, (12, 0), (22, 0)),
             draft(appointments, "Legs + Pull", d7, (10, 0), (11, 30)), draft(school, "산업용생성AI ", d7, (12, 0), (13, 0)), draft(school, "SENA Meeting", d7, (13, 0), (14, 0)), draft(school, "로지스틱이론", d7, (14, 0), (16, 0)),
         ]
-        let drafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-trans") ? transDrafts
+        let fullDrafts = DemoFull.events(today: today).map { event in
+            draft(event.calendar == .school ? school : event.calendar == .appointments ? appointments : life,
+                  event.title, event.day, event.from, event.to, location: event.location)
+        }
+        let drafts: [CalendarEventDraft] = DemoFull.isOn ? fullDrafts
+            : ProcessInfo.processInfo.arguments.contains("-demo-trans") ? transDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-txn-lite") ? Array(txnDrafts.prefix(3))
             : ProcessInfo.processInfo.arguments.contains("-demo-txn") ? txnDrafts
             : ProcessInfo.processInfo.arguments.contains("-demo-dense") ? denseDrafts
@@ -216,6 +221,7 @@ enum DemoLinks {
     ]
 
     static func apply(service: CalendarCommandService, provider: any CalendarProvider, zone: DisplayTimeZone, day: LocalDate) async {
+        if DemoFull.isOn { return await applyFull(service: service, provider: provider, zone: zone, today: day) }
         let bounds = zone.dayBounds(day)
         guard let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) else { return }
         for link in links {
@@ -227,6 +233,37 @@ enum DemoLinks {
             }
         }
         await classify(service: service)
+    }
+
+    /// The full demo: each spend that belongs to an event is linked to it on its own day, and every spend is classified.
+    private static func applyFull(service: CalendarCommandService, provider: any CalendarProvider, zone: DisplayTimeZone, today: LocalDate) async {
+        let provenance = AssignmentProvenance.user(at: 1, evidenceVersion: nil)
+        let now = Int64(Date().timeIntervalSince1970 * 1_000)
+        var eventsByDay: [LocalDate: [CalendarEvent]] = [:]
+        for spend in DemoFull.spends(today: today, zone: zone, now: now) {
+            let transaction = SampleLedger.entryID(for: spend.raw)
+            if let title = spend.event {
+                if eventsByDay[spend.day] == nil {
+                    let bounds = zone.dayBounds(spend.day)
+                    eventsByDay[spend.day] = (try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil)) ?? []
+                }
+                if let event = eventsByDay[spend.day]?.first(where: { $0.title == title }) {
+                    _ = await service.perform(.linkTransaction(LinkTransactionInput(transactionID: transaction, target: .event(event.key), provenance: provenance)))
+                }
+            }
+            guard let category = spend.category else { continue }
+            if spend.event == nil {
+                _ = await service.perform(.setAllocations(SetAllocationsInput(
+                    transactionID: transaction, parts: [AllocationPartInput(target: .nonActivity, amount: .exact(spend.won))], provenance: provenance
+                )))
+            }
+            guard let set = (try? await service.lifeSnapshot().state)?.allocationSet(for: transaction) else { continue }
+            for allocation in set.allocations {
+                _ = await service.perform(.setCategory(SetCategoryInput(
+                    target: .allocation(allocation.id), assignment: .classified(CanonicalCategoryID(rawValue: category), provenance)
+                )))
+            }
+        }
     }
 
     /// `-demo-txn`: some of the transactions are classified, so their rows show a category icon (the others keep the plain dot).

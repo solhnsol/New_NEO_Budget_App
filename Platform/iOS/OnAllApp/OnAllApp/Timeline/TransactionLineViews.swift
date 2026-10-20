@@ -36,6 +36,8 @@ struct LeaderMark: View {
     let scale: CGFloat
     /// 0 … 1: how much of the line out to the text there is (the dot at the time is always there).
     var lineOpacity: CGFloat = 1
+    /// The linked event's colour for the dot; grey for a transaction linked to nothing here.
+    var dotColor: Color? = nil
 
     var body: some View {
         let s = scale
@@ -50,7 +52,7 @@ struct LeaderMark: View {
                 path.addLine(to: end)
             }
             .stroke(Color.secondary.opacity(0.6 * lineOpacity), style: StrokeStyle(lineWidth: 0.75, lineJoin: .round, dash: dashed ? [2, 2] : []))
-            Circle().fill(Color.secondary.opacity(0.8))
+            Circle().fill(dotColor ?? Color.secondary.opacity(0.8))
                 .frame(width: LeaderLayout.dotSize * s, height: LeaderLayout.dotSize * s)
                 .position(start)
         }
@@ -74,8 +76,10 @@ struct CategoryMark: View {
     }
 }
 
-/// One transaction on its own line, at the time it happened, written like a line of the calendar's own text: a dot and a line out of the
-/// timeline, then its name and its amount. Both are ordinary text at full contrast: a transaction is never drawn as if it were disabled.
+/// One transaction on its own line, at the time it happened: a dot and a line out of the timeline, then a chip with its category icon, name
+/// and amount. The chip is a white rounded card like the app's other buttons, so it reads as something to tap (it opens the transaction) and
+/// to hold (it is carried to an event). A transaction linked to an event is outlined in the event's colour and its dot takes that colour; one
+/// linked to nothing is grey. Both are ordinary text at full contrast: a transaction is never drawn as if it were disabled.
 struct TransactionLineView: View {
     let item: DayRenderPlan.LineItem
     let scale: CGFloat
@@ -87,26 +91,36 @@ struct TransactionLineView: View {
     var body: some View {
         let display = item.display
         let refund = display?.flow == .refund
+        let linkColor = item.linkColorHex.flatMap { Color(hex: $0) }
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
         HStack(spacing: 0) {
             Color.clear.frame(width: LeaderLayout.lineEnd * scale)
-            CategoryMark(category: display?.categoryID, scale: scale)
-            Color.clear.frame(width: LeaderLayout.textGap * scale)
-            // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
-            let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
-            let nameRoom = item.frame.maxX - edge - 8 - LeaderLayout.textStart(scale) - 10 - CGFloat(amount.count) * 7 * scale - (item.link != nil ? 12 : 0)
-            if nameRoom >= 30 * scale {
-                if item.link != nil { Image(systemName: "link").font(.system(size: 8 * scale)).foregroundStyle(.secondary).padding(.trailing, 3) }
-                Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(.primary).lineLimit(1)
+            HStack(spacing: 0) {
+                CategoryMark(category: display?.categoryID, scale: scale)
+                Color.clear.frame(width: LeaderLayout.textGap * scale)
+                // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
+                let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
+                let nameRoom = item.frame.maxX - edge - 14 - LeaderLayout.textStart(scale) - 10 - CGFloat(amount.count) * 7 * scale
+                if nameRoom >= 30 * scale {
+                    Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
+                Spacer(minLength: 2)
+                amountText(display, refund: refund)
             }
-            Spacer(minLength: 2)
-            amountText(display, refund: refund)
+            .padding(.leading, 3 * scale).padding(.trailing, 7 * scale)
+            .frame(height: max(0, item.frame.height - 4 * scale))
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: linkColor == nil ? 0.75 : 1.2))
+            .shadow(color: Color.black.opacity(overEvent ? 0.12 : 0.06), radius: 1.5, y: 0.5)
         }
-        .padding(.trailing, 6)
-        .halo(overEvent)
+        .padding(.trailing, 2)
         .revealed(item.reveal)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .overlay(alignment: .topLeading) {
-            LeaderMark(dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale, lineOpacity: item.reveal)
+            LeaderMark(
+                dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale,
+                lineOpacity: item.reveal, dotColor: linkColor
+            )
         }
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
@@ -118,7 +132,7 @@ struct TransactionLineView: View {
         if let display {
             Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
                 .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
-                .foregroundStyle(refund ? Color.green : Color.primary)
+                .foregroundStyle(refund ? Theme.accent : Theme.textPrimary)
                 .lineLimit(1).fixedSize()
         }
     }
@@ -129,6 +143,28 @@ struct TransactionLineView: View {
         text += Formatting.money(display.amount.minorUnits, currency: display.amount.currency)
         if let label = item.linkedEventTitle { text += ", 연결된 일정 \(label)" }
         return text
+    }
+}
+
+/// The linked event's stripe carried on from its card to a transaction of it that happened outside its time: a thin dashed line in the
+/// event's colour down (or up) the card's left edge to the transaction's time, then across to the transaction's dot.
+struct TransactionTailView: View {
+    let tail: DayRenderPlan.Tail
+    let colorHex: String?
+    /// Where the transaction's dot is (the day's own column's left edge).
+    var dotX: CGFloat
+    var opacity: Double = 1
+
+    var body: some View {
+        let color = colorHex.flatMap { Color(hex: $0) } ?? Theme.accent
+        Path { path in
+            path.move(to: CGPoint(x: tail.x, y: tail.fromY))
+            path.addLine(to: CGPoint(x: tail.x, y: tail.toY))
+            path.addLine(to: CGPoint(x: dotX, y: tail.toY))
+        }
+        .stroke(color.opacity(0.7 * opacity), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round, dash: [3, 2.5]))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -158,7 +194,7 @@ struct OverflowCardView: View {
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Self.accessibilityText(item))
-        .accessibilityHint("거래 목록을 엽니다")
+        .accessibilityHint("거래 목록을 열어요")
     }
 
     /// The total under the count, or the kinds when there is no single total.

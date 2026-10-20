@@ -298,3 +298,28 @@ private func lifeWithTags() throws -> LifeState {
     _ = await h.service.perform(.assignActivityArea(clear))
     do { let life = await h.life(); #expect(life.activities[id]?.area == nil) }
 }
+
+// MARK: Headcount
+
+@Test func headcountIsStoredOnTheEventsActivityAndCanBeCleared() async throws {
+    let h = harness()
+    let set = SetHeadcountInput(target: .event(dateKey), headcount: 4, provenance: userProvenance())
+    let outcome = await h.service.perform(.setHeadcount(set))
+    let id = try #require(activityID(of: outcome))
+    do { let life = await h.life(); #expect(life.activities[id]?.headcount?.value == 4) }
+
+    #expect(await h.service.perform(.setHeadcount(SetHeadcountInput(target: .event(dateKey), headcount: 0, provenance: userProvenance())))
+        == .rejected(.lifeValidation(.invalidHeadcount(0))))
+
+    _ = await h.service.perform(.setHeadcount(SetHeadcountInput(target: .event(dateKey), headcount: nil, provenance: userProvenance())))
+    do { let life = await h.life(); #expect(life.activities[id]?.headcount == nil) }
+}
+
+@Test func clearingAHeadcountNeverCreatesAnActivity() async throws {
+    let h = harness()
+    guard case .applied = await h.service.perform(.setHeadcount(SetHeadcountInput(target: .event(tripKey), headcount: nil, provenance: userProvenance()))) else {
+        Issue.record("expected applied"); return
+    }
+    let life = await h.life()
+    #expect(life.activities.isEmpty)
+}
