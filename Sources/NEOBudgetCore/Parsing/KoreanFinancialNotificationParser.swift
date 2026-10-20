@@ -97,6 +97,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
 
     // MARK: Wallet card payment (merchant and region in the subtitle, the won amount alone in the body)
 
+    public static let walletCardPaymentRuleID = "wallet-card-payment"
     private static let walletAmountOnly = try! NSRegularExpression(pattern: #"^₩([0-9]+(?:,[0-9]{3})*)$"#)
     /// The region Wallet appends to the merchant (`<상호>, 서울특별시`). Only a trailing Korean province or city name is
     /// removed, so a comma inside a merchant name survives.
@@ -129,7 +130,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             rawNotificationID: notification.id,
             parserID: context.parserID,
             parserVersion: context.parserVersion,
-            ruleID: "wallet-card-payment",
+            ruleID: Self.walletCardPaymentRuleID,
             kind: .purchase,
             direction: .outflow,
             amount: try Money(minorUnits: amount, currency: "KRW"),
@@ -295,11 +296,14 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
         return InstrumentHint(kind: .unknown)
     }
 
+    /// The first line of a Hyundai Card app alert (`<이름> 님, 현대 MM 승인`); the merchant is the line after the amount.
+    private static let issuerApprovalHeader = try! NSRegularExpression(pattern: #"현대\s*[A-Za-z가-힣0-9]+\s*(?:해외)?(?:승인|취소)\s*$"#)
+
     private func parseCounterparty(_ lines: [String], direction: TransactionDirection) -> DraftCounterparty {
         let labels = ["승인번호", "거래번호", "거래ID", "원승인번호", "원거래번호", "잔액"]
         let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제"]
         let candidate = lines.first {
-            !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0)
+            !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0) && !Self.matches(Self.issuerApprovalHeader, $0)
         }
         return direction == .outflow ? DraftCounterparty(merchantRaw: candidate) : DraftCounterparty(payeeRaw: candidate)
     }
