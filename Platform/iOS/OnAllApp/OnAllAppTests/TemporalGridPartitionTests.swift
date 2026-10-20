@@ -164,6 +164,47 @@ private let other = TemporalGridPartition(wholeMinutes: [0, 60, 120, 180, 240, 3
     #expect(worst < 6)       // 600 pt grid; a jump of a whole-minute rounding would still be small, so this guards against whole-cell jumps
 }
 
+@Test func everyTimeMovesInAStraightLineWithTheProgressSoACardNeverSwellsAndShrinks() throws {
+    // Top and bottom of cards that lie in different cells, in the same cell, and across a line: each edge's y is exactly the straight blend of its two end ys.
+    for (top, bottom) in [(0.0, 30.0), (95.0, 400.0), (590.0, 617.0), (700.0, 1300.0), (1410.0, 1440.0)] {
+        for step in 0...20 {
+            let p = Double(step) / 20
+            let blend = try #require(TemporalGridPartition.interpolated(from: sample, to: other, progress: p))
+            for minute in [top, bottom] {
+                let straight = (1 - CGFloat(p)) * sample.timeToY(minute) + CGFloat(p) * other.timeToY(minute)
+                #expect(abs(blend.timeToY(minute) - straight) < 1e-6)
+            }
+        }
+    }
+    // The height of a card changes monotonically from its start height to its end height (no swell, no shrink on the way).
+    let start = sample.timeToY(617) - sample.timeToY(600)
+    let end = other.timeToY(617) - other.timeToY(600)
+    var previous = start
+    for step in 1...50 {
+        let blend = try #require(TemporalGridPartition.interpolated(from: sample, to: other, progress: Double(step) / 50))
+        let height = blend.timeToY(617) - blend.timeToY(600)
+        #expect(end >= start ? height >= previous - 1e-6 : height <= previous + 1e-6)
+        previous = height
+    }
+}
+
+@Test func aBlendStaysAnInverseMappingAndSurvivesZoom() throws {
+    let blend = try #require(TemporalGridPartition.interpolated(from: sample, to: other, progress: 0.37))
+    for zoom in [CGFloat(1), 2.5] {
+        let zoomed = blend.zoomed(viewportHeight: 600, zoomScale: zoom)
+        #expect(abs(zoomed.totalHeight - 600 * zoom) < 1e-9)
+        var previous: CGFloat = -1
+        for minute in stride(from: 0.0, through: 1440.0, by: 7) {
+            let y = zoomed.timeToY(minute)
+            #expect(y > previous)
+            previous = y
+            #expect(abs(zoomed.yToTime(y) - minute) < 1e-4)
+        }
+        let straight = 0.63 * sample.zoomed(viewportHeight: 600, zoomScale: zoom).timeToY(617) + 0.37 * other.zoomed(viewportHeight: 600, zoomScale: zoom).timeToY(617)
+        #expect(abs(zoomed.timeToY(617) - straight) < 1e-6)
+    }
+}
+
 // MARK: The existing axis
 
 @Test func aPlannedPartitionIsAnExactTimelineAxisAndABlendIsOnlyApproximate() throws {
