@@ -39,6 +39,13 @@ struct LedgerScreen: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 240)
                 }
+                ToolbarItem(placement: .topBarLeading) {
+                    NavigationLink {
+                        SettingsView(model: model)
+                    } label: {
+                        Label("설정", systemImage: "gearshape")
+                    }
+                }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
