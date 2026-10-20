@@ -81,7 +81,8 @@ enum DepositMerge {
     /// Records the plan: the sender (made if new), what they owed for the purchase (unless an open request already says so), and the deposit
     /// settling it. Stops at the first refusal and says which step it was; what was recorded before it stays (a person or a request is harmless).
     static func apply(
-        _ plan: Plan, provenance: AssignmentProvenance, newID: (String) -> String, perform: (CalendarCommand) async -> CalendarCommandOutcome?
+        _ plan: Plan, provenance: AssignmentProvenance, newID: (String) -> String, perform: (CalendarCommand) async -> CalendarCommandOutcome?,
+        isolation: isolated (any Actor)? = #isolation        // runs where the caller is, so the caller's own closures need not be Sendable
     ) async -> Bool {
         var personID = plan.personID
         if personID == nil {
