@@ -87,13 +87,12 @@ struct LedgerScreen: View {
                                 .listRowBackground(Theme.surface)
                                 .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
+                        // A row, not a footer: a list footer is drawn on the system background and leaves black bands around it in dark mode.
+                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                            .listRowSeparator(.hidden).listRowBackground(Theme.surface)
+                            .listRowInsets(EdgeInsets(top: 0, leading: Theme.Space.xl, bottom: Theme.Space.m, trailing: Theme.Space.l))
                     } header: {
                         Text("정리할 입금").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary).textCase(nil)
-                    } footer: {
-                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, Theme.Space.s)
-                            .background(Theme.surface)
                     }
                 }
                 ForEach(sections) { section in
