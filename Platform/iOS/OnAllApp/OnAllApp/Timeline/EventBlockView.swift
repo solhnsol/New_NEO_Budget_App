@@ -267,7 +267,7 @@ struct EventBlockView: View {
     }
 }
 
-/// "거래 3건 · 12,300원" as one pill; the count alone where the total does not fit.
+/// "3건 · 12,300원" as one pill; the total alone, then the count alone, where it does not fit.
 private struct SummaryCount: View {
     let count: Int
     let total: String?
@@ -275,8 +275,10 @@ private struct SummaryCount: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            if let total { pill("거래 \(count)건 · \(total)") }
-            pill("거래 \(count)건")
+            // The total is what matters, so it is what stays when room is short: count and total, then the total alone, then the count.
+            if let total { pill("\(count)건 · \(total)") }
+            if let total { pill(total) }
+            pill("\(count)건")
             Color.clear.frame(width: 0)
         }
     }
