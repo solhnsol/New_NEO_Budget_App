@@ -84,6 +84,7 @@ struct LedgerScreen: View {
                             DepositRow(deposit: deposit, zoneIdentifier: model.dayZone.identifier)
                                 .draggable(deposit.id.rawValue)
                                 .listRowSeparator(.hidden)
+                                .listRowBackground(Theme.surface)
                                 .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
@@ -107,6 +108,7 @@ struct LedgerScreen: View {
                                 return true
                             }
                             .listRowSeparator(.hidden)
+                            .listRowBackground(Theme.surface)
                             .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
