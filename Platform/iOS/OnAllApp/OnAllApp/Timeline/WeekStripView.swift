@@ -11,6 +11,8 @@ import SwiftUI
 /// when that changes: the circle fades out where it was and grows in on the new day from its centre, and the capsule follows as a liquid
 /// (its left end, under the circle, quickly; its right end a moment later). If that day is in another week, the strip pages over to it at
 /// the same time, so the circle and capsule move with the days. Swiping the strip itself changes the week.
+/// When the week changes (a swipe on the strip), nothing morphs across pages: the old circle and capsule stay on their days and leave with
+/// the week, and the new ones simply appear on the new week.
 struct WeekStripView: View {
     let cells: [LocalDate: WeekStripDay]
     let selected: LocalDate
@@ -48,7 +50,13 @@ struct WeekStripView: View {
     @State private var tapsBlockedUntil = Date.distantPast
     @State private var capsuleOpacity = 1.0
 
-    private struct Ghost: Identifiable { let id = UUID(); let day: Int; let isToday: Bool }
+    /// Whether the circle that has just appeared grows in (a day change) or only fades in (a week swipe).
+    @State private var ballGrows = true
+    /// The capsule that has just left a week: it stays on the days it was on and slides away with them.
+    @State private var capsuleGhosts: [CapsuleGhost] = []
+
+    private struct Ghost: Identifiable { let id = UUID(); let day: Int; let isToday: Bool; let fades: Bool }
+    private struct CapsuleGhost: Identifiable { let id = UUID(); let lead: Double; let trail: Double }
 
     private var weekStart: LocalDate { selected.adding(days: -selected.weekday) }
     private var position: Int { selected.daysSinceUnixEpoch + pendingShift }
@@ -79,6 +87,9 @@ struct WeekStripView: View {
                     // One interpolated value places every day, so no two days can be caught at different points of the move.
                     InterpolatedView(value: viewOffset) { offset in
                         ZStack(alignment: .topLeading) {
+                            ForEach(capsuleGhosts) { ghost in
+                                capsuleShape(lead: ghost.lead, trail: ghost.trail, offset: offset, cell: cell)
+                            }
                             circles(cell: cell, offset: offset)
                             ForEach(low..<high, id: \.self) { number in
                                 dayCell(LocalDate(daysSinceUnixEpoch: number), cell: cell)
@@ -156,7 +167,7 @@ struct WeekStripView: View {
         let target = position
         viewOffset = Double(pageStart)
         if ball != target {
-            let ghost = Ghost(day: ball, isToday: ball == today.daysSinceUnixEpoch)
+            let ghost = Ghost(day: ball, isToday: ball == today.daysSinceUnixEpoch, fades: !swipedWeek)
             ghosts.append(ghost)
             Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(400))
@@ -164,10 +175,11 @@ struct WeekStripView: View {
             }
         }
         ballID = UUID()
+        ballGrows = !swipedWeek
         ball = target
         if swipedWeek {
             swipedWeek = false
-            fadeCapsule(to: target)
+            replaceCapsule(to: target)
             return
         }
         leading = Double(target)
@@ -177,16 +189,21 @@ struct WeekStripView: View {
         }
     }
 
-    /// The capsule goes out where it was, is put on the new day while it cannot be seen, and comes back once the week has paged.
-    private func fadeCapsule(to target: Int) {
-        withAnimation(.easeOut(duration: 0.12)) { capsuleOpacity = 0 }
+    /// A week swipe: the capsule does not morph across the pages. The old one stays on its days and leaves with the week; the new one simply
+    /// appears on the new week.
+    private func replaceCapsule(to target: Int) {
+        let ghost = CapsuleGhost(lead: leading, trail: trailing)
+        capsuleGhosts.append(ghost)
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(130))
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { leading = Double(position); trailing = Double(position) }
-            try? await Task.sleep(for: .milliseconds(200))
-            withAnimation(.easeIn(duration: 0.2)) { capsuleOpacity = 1 }
+            try? await Task.sleep(for: .milliseconds(500))
+            capsuleGhosts.removeAll { $0.id == ghost.id }
+        }
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { leading = Double(target); trailing = Double(target); capsuleOpacity = 0 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(30))
+            withAnimation(.easeOut(duration: 0.16)) { capsuleOpacity = 1 }
         }
     }
 
@@ -198,13 +215,7 @@ struct WeekStripView: View {
             InterpolatedView(value: leading) { lead in
                 InterpolatedView(value: trailing) { trail in
                     InterpolatedView(value: viewOffset) { offset in
-                        let start = (CGFloat(lead) - CGFloat(offset) + 0.5) * cell
-                        let end = (CGFloat(trail) - CGFloat(offset) + 2) * cell - 4
-                        Capsule().fill(Color(.systemFill))
-                            .opacity(capsuleOpacity)
-                            .frame(width: max(Self.ball, end - start), height: Self.ball)
-                            .offset(x: start, y: (Self.numberRow - Self.ball) / 2)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        capsuleShape(lead: lead, trail: trail, offset: offset, cell: cell).opacity(capsuleOpacity)
                     }
                     .animation(dragging ? nil : .interpolatingSpring(stiffness: 190, damping: 19), value: viewOffset)
                 }
@@ -212,6 +223,15 @@ struct WeekStripView: View {
             }
             .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: leading)
         }
+    }
+
+    private func capsuleShape(lead: Double, trail: Double, offset: Double, cell: CGFloat) -> some View {
+        let start = (CGFloat(lead) - CGFloat(offset) + 0.5) * cell
+        let end = (CGFloat(trail) - CGFloat(offset) + 2) * cell - 4
+        return Capsule().fill(Color(.systemFill))
+            .frame(width: max(Self.ball, end - start), height: Self.ball)
+            .offset(x: start, y: (Self.numberRow - Self.ball) / 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private func updateWidth(_ width: CGFloat) {
@@ -223,10 +243,10 @@ struct WeekStripView: View {
     private func circles(cell: CGFloat, offset: Double) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(ghosts) { ghost in
-                FadingBall(color: ghost.isToday ? .accentColor : .primary, size: Self.ball)
+                FadingBall(color: ghost.isToday ? .accentColor : .primary, size: Self.ball, fades: ghost.fades)
                     .offset(x: (CGFloat(ghost.day) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
             }
-            GrowingBall(color: ball == today.daysSinceUnixEpoch ? .accentColor : .primary, size: Self.ball)
+            GrowingBall(color: ball == today.daysSinceUnixEpoch ? .accentColor : .primary, size: Self.ball, grows: ballGrows)
                 .id(ballID)
                 .offset(x: (CGFloat(ball) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
         }
@@ -310,15 +330,16 @@ private struct InterpolatedView<Content: View>: View, Animatable {
     var body: some View { content(value) }
 }
 
-/// A circle that grows from its own centre when it appears.
+/// A circle that grows from its own centre when it appears (or, with `grows` off, only fades in).
 private struct GrowingBall: View {
     let color: Color
     let size: CGFloat
+    var grows = true
     @State private var shown = false
 
     var body: some View {
         Circle().fill(color).frame(width: size, height: size)
-            .scaleEffect(shown ? 1 : 0.3)
+            .scaleEffect(grows && !shown ? 0.3 : 1)
             .opacity(shown ? 1 : 0)
             .onAppear { withAnimation(.easeOut(duration: 0.16)) { shown = true } }
     }
@@ -328,11 +349,13 @@ private struct GrowingBall: View {
 private struct FadingBall: View {
     let color: Color
     let size: CGFloat
+    /// False when the circle should leave at full strength, only carried off by its week.
+    var fades = true
     @State private var faded = false
 
     var body: some View {
         Circle().fill(color).frame(width: size, height: size)
-            .opacity(faded ? 0 : 1)
+            .opacity(fades && faded ? 0 : 1)
             .onAppear { withAnimation(.easeOut(duration: 0.2)) { faded = true } }
     }
 }
