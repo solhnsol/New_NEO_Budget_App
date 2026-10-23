@@ -55,7 +55,9 @@ actor AppLedger {
 
     /// Every account's and card's movements as the bank and the card company see them (the ledger tab's statement view).
     func statements() throws -> [LedgerStatements.Statement] {
-        LedgerStatements.statements(try snapshot(), configuration: configuration)
+        let reported: [AccountID: ReportedBalance]
+        if case let .live(ledger, _) = backing { reported = ledger.reportedBalances } else { reported = [:] }
+        return LedgerStatements.statements(try snapshot(), configuration: configuration, reportedBalances: reported)
     }
 
     /// Spending and refunds for the timeline. Money movement (transfers, card bill payments, income) is excluded

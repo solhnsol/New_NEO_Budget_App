@@ -29,6 +29,15 @@ public struct RuleQuestion: Equatable, Identifiable, Sendable {
     public var id: String { notificationID }
 }
 
+/// A balance a notification printed for an account ("잔액 1,234원", "Your new balance is ₩10,000"): what the bank or the
+/// card itself said the account held at that moment.
+public struct ReportedBalance: Equatable, Sendable {
+    public let accountID: AccountID
+    public let minorUnits: Int64
+    public let atUnixMilliseconds: Int64
+    public let notificationID: String
+}
+
 /// The real ledger as a replay: first an imported history (`ImportedHistory`, if the user has one), then every received
 /// notification, in arrival order, through `NotificationIntake` over the user's account setup. Notifications from before
 /// the history's cutover are kept but not replayed: their acts are the imported rows. Received notifications, the
@@ -90,6 +99,27 @@ public struct IntakeLedger {
             }
         }
         return result.sorted { ($0.occurredAtUnixMilliseconds, $0.id) > ($1.occurredAtUnixMilliseconds, $1.id) }
+    }
+
+    /// The newest balance each account's notifications reported. A notice that moves no money (a transit "Trip in Progress"
+    /// or "no charge", a bank balance line) counts too: it is the only record of money the ledger never saw leave. Notices
+    /// whose account cannot be settled without asking the user are left out. The ledger starts from zero and holds only what
+    /// notifications recorded, so this is what anchors a balance to the real one.
+    public var reportedBalances: [AccountID: ReportedBalance] {
+        var result: [AccountID: ReportedBalance] = [:]
+        for notification in notifications {
+            var evidence = intake.extractor.evidence(from: notification)
+            guard let balance = evidence.balanceMinorUnits else { continue }
+            // The no-charge and balance-only notices are the same Wallet transit card as a fare; a rule is scoped to the fare.
+            if evidence.type == .transitBalanceOnly || evidence.type == .transitNoCharge {
+                evidence = AccountEvidence(provider: evidence.provider, type: .transitFare, instrument: evidence.instrument, balanceMinorUnits: balance)
+            }
+            guard case let .resolved(.account(accountID), _) = setup.registry.resolve(evidence) else { continue }
+            let at = notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds
+            if let known = result[accountID], known.atUnixMilliseconds > at { continue }
+            result[accountID] = ReportedBalance(accountID: accountID, minorUnits: balance, atUnixMilliseconds: at, notificationID: notification.id)
+        }
+        return result
     }
 
     /// Imported balances against the balances Actual had, account by account (empty without a history).
