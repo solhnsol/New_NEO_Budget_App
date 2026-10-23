@@ -138,16 +138,36 @@ public struct NotificationIntake: Sendable {
             candidateID: TransactionCandidateID(rawValue: "-"), draft: draft, evidence: evidence,
             registry: setup.registry, fallbackSource: notification.source.applicationIdentifier
         )
-        let candidate = try assembler.assemble(draft, resolution: resolution, context: CandidateAssemblyContext(
+        let snapshot = try repository.processingSnapshot()
+        // The second half of a Toss payment paid from a bank account is the expense: the account of the withdrawal, the shop of
+        // the Toss alert. Neither alone can be booked, so what is assembled depends on the half already waiting.
+        var recordedDraft = draft
+        var recordedResolution = resolution
+        var binding = observationWithoutID.binding
+        let waiting = snapshot.candidates.values.compactMap(\.correlationRecord)
+        let earlier = snapshot.candidates.values.first {
+            $0.candidate.sourceDraft.map { $0.rawNotificationID == draft.rawNotificationID && $0.eventIndex == draft.eventIndex } == true
+        }
+        if let recorded = earlier?.observation, recorded.draft.ruleID == NotificationCorrelator.tossQuickPayRuleID || recorded.notificationType == .tossPayment {
+            // The same notification again: it is recorded as it was the first time, whatever has been paired since.
+            recordedDraft = recorded.draft
+            if let paired = recorded.binding { recordedResolution = .resolved(paired) }
+            binding = recorded.binding
+        } else if let recording = correlator.quickPayRecording(for: observationWithoutID, against: waiting) {
+            recordedDraft = recording.draft
+            recordedResolution = .resolved(recording.binding)
+            binding = recording.binding
+        }
+        let candidate = try assembler.assemble(recordedDraft, resolution: recordedResolution, context: CandidateAssemblyContext(
             timeZoneIdentifier: timeZoneIdentifier,
             transferCounterpartAccountID: observationWithoutID.transferCounterpart,
             policyVersion: policyVersion
         ))
         let observation = CorrelationObservation(
-            candidateID: candidate.id, draft: draft, binding: observationWithoutID.binding,
-            transferCounterpart: observationWithoutID.transferCounterpart, source: observationWithoutID.source
+            candidateID: candidate.id, draft: recordedDraft, binding: binding,
+            transferCounterpart: observationWithoutID.transferCounterpart, source: observationWithoutID.source,
+            notificationType: observationWithoutID.notificationType, institution: observationWithoutID.institution
         )
-        let snapshot = try repository.processingSnapshot()
         let result = try repository.process(
             candidate, observation: observation, correlator: correlator,
             expectedCandidateRevision: snapshot.candidateRevision, expectedLedgerRevision: snapshot.ledger.revision
