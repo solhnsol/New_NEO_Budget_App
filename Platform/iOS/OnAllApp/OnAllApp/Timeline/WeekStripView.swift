@@ -174,12 +174,23 @@ struct WeekStripView: View {
                 ghosts.removeAll { $0.id == ghost.id }
             }
         }
+        let previous = ball
         ballID = UUID()
         ballGrows = !swipedWeek
         ball = target
         if swipedWeek {
             swipedWeek = false
             replaceCapsule(to: target)
+            return
+        }
+        // Going forward the circle's end moves first and the far end catches up (the capsule squeezes, then stretches). Going back it is the
+        // far end that moves first and the circle's end that catches up, so the capsule does the same thing in both directions.
+        if target < previous {
+            trailing = Double(target)
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(45))
+                leading = Double(target)
+            }
             return
         }
         leading = Double(target)
