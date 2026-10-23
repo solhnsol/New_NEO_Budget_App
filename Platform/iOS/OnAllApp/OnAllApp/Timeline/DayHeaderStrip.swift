@@ -34,7 +34,6 @@ struct DayHeaderStrip: View {
             .offset(x: Self.gutter)
         }
         .frame(height: height)
-        .background(Theme.band)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 0.5) }
     }
 }

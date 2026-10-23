@@ -456,6 +456,10 @@ struct FixedGridBrowseView: View {
                         if let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) {
                             dayColumn(timeline, column: column, frame: frame, layoutWidth: layoutWidth, window: window)
                                 .frame(width: layoutWidth, height: height, alignment: .topLeading)
+                                .overlay(alignment: .topLeading) {
+                                    // The rule between this day's column and the one before it, under the header's.
+                                    Rectangle().fill(Theme.divider).frame(width: 0.5, height: height).offset(x: Self.gutter).allowsHitTesting(false)
+                                }
                                 .offset(x: geometry.x(ofDay: Double(epoch), at: position) - Self.gutter)
                         }
                     }
@@ -1959,20 +1963,11 @@ private struct FixedHourAxis: View {
                     .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
                 }
                 if state.labelOpacity > 0.003 {
-                    // An hour on a line of the grid is the axis's main label: dark, semibold, full size. Every other hour is gray and a size
-                    // smaller. Between days the two pass into each other as the hour's line comes or goes.
-                    let grid = gridWeight(hour: state.hour)
+                    // Every hour is written the same: one gray, one size (Hans, 2026-10-23). Which hours have room is still decided by `HourAxis.layout`,
+                    // where the hours on a line of the grid keep theirs first.
                     ZStack(alignment: .trailing) {
-                        if grid < 1 {
-                            Text(Formatting.hourLabel(state.hour % 24))
-                                .font(.system(size: metrics.labelFontSize * 0.85).monospacedDigit()).foregroundStyle(Theme.textTertiary)
-                                .opacity(1 - grid)
-                        }
-                        if grid > 0 {
-                            Text(Formatting.hourLabel(state.hour % 24))
-                                .font(.system(size: metrics.labelFontSize, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
-                                .opacity(grid)
-                        }
+                        Text(Formatting.hourLabel(state.hour))
+                            .font(.system(size: metrics.labelFontSize * 0.9).monospacedDigit()).foregroundStyle(Theme.textTertiary)
                     }
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
