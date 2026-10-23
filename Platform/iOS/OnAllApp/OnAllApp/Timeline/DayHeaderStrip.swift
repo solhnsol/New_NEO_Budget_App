@@ -11,10 +11,10 @@ struct DayHeaderStrip: View {
 
     private static let gutter: CGFloat = 60
     private static let labelHeight: CGFloat = 30
-    private static let chipHeight: CGFloat = 22
     /// Always the same height, whatever the days hold. A header that grows or shrinks with the all-day events of the days around
-    /// would move the whole grid up or down at the moment a swipe lands on such a day.
-    static let height: CGFloat = labelHeight + chipHeight + 6
+    /// would move the whole grid up or down at the moment a swipe lands on such a day. The all-day event sits on the day's own line, so
+    /// there is no room kept for it below.
+    static let height: CGFloat = labelHeight + 6
 
     var body: some View {
         let height = Self.height
@@ -45,33 +45,31 @@ private struct DayHeaderCell: View {
     let onSelect: (AllDayItem) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 4) {
-                Text("\(entry.day.day)")
-                    .font(.system(.callout, weight: .bold).monospacedDigit())
-                    .foregroundStyle(isToday ? Color.white : Theme.textPrimary)
-                    .frame(minWidth: 26, minHeight: 26)
-                    .background(isToday ? Theme.accent : .clear, in: Circle())
-                Text(Formatting.weekdayShort(entry.day)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-            }
-            .frame(height: 30, alignment: .leading)
-            .padding(.leading, Theme.Space.s)
+        HStack(spacing: 4) {
+            Text("\(entry.day.day)")
+                .font(.system(.callout, weight: .bold).monospacedDigit())
+                .foregroundStyle(isToday ? Color.white : Theme.textPrimary)
+                .frame(minWidth: 26, minHeight: 26)
+                .background(isToday ? Theme.accent : .clear, in: Circle())
+            Text(Formatting.weekdayShort(entry.day)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+            // The day's all-day event beside its name (the first; the rest are in the "+N" menu).
             if let timeline = entry.timeline, let first = timeline.allDay.first {
-                HStack(spacing: 4) {
-                    chip(first)
-                    if timeline.allDay.count > 1 {
-                        Menu {
-                            ForEach(Array(timeline.allDay.dropFirst()), id: \.id) { item in Button(item.title) { onSelect(item) } }
-                        } label: {
-                            Text("+\(timeline.allDay.count - 1)").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary)
-                                .padding(.horizontal, 5).frame(minHeight: 22)
-                        }
-                        .accessibilityLabel("종일 일정 \(timeline.allDay.count - 1)개 더 보기")
+                chip(first)
+                if timeline.allDay.count > 1 {
+                    Menu {
+                        ForEach(Array(timeline.allDay.dropFirst()), id: \.id) { item in Button(item.title) { onSelect(item) } }
+                    } label: {
+                        Text("+\(timeline.allDay.count - 1)").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                            .padding(.horizontal, 5).frame(minHeight: 22)
                     }
+                    .accessibilityLabel("종일 일정 \(timeline.allDay.count - 1)개 더 보기")
                 }
-                .padding(.horizontal, Theme.Space.s - 2)
+            } else {
+                Spacer(minLength: 0)
             }
         }
+        .padding(.leading, Theme.Space.s).padding(.trailing, Theme.Space.s - 2)
+        .frame(maxHeight: .infinity, alignment: .center)
         // The rule between this day's column and the one before it.
         .overlay(alignment: .leading) { Rectangle().fill(Theme.divider).frame(width: 0.5) }
         .accessibilityElement(children: .contain)
