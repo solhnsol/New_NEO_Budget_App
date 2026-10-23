@@ -1,7 +1,8 @@
 import NEOBudgetCalendar
 import SwiftUI
 
-/// The day names above the columns, and each day's all-day events under its name. The strip slides with the days below it.
+/// The day names above the columns, and each day's all-day events under its name: a band over the grid, like a spreadsheet's column titles, with a
+/// rule between the columns and one under the band. The strip slides with the days below it.
 struct DayHeaderStrip: View {
     let strip: [StripDay]
     let today: LocalDate
@@ -33,6 +34,8 @@ struct DayHeaderStrip: View {
             .offset(x: Self.gutter)
         }
         .frame(height: height)
+        .background(Theme.band)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 0.5) }
     }
 }
 
@@ -45,14 +48,14 @@ private struct DayHeaderCell: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 Text("\(entry.day.day)")
-                    .font(.callout.monospacedDigit().weight(.bold))
-                    .foregroundStyle(isToday ? Color.white : Color.primary)
+                    .font(.system(.callout, weight: .bold).monospacedDigit())
+                    .foregroundStyle(isToday ? Color.white : Theme.textPrimary)
                     .frame(minWidth: 26, minHeight: 26)
-                    .background(isToday ? Color.accentColor : .clear, in: Circle())
-                Text(Formatting.weekdayShort(entry.day)).font(.caption).foregroundStyle(.secondary)
+                    .background(isToday ? Theme.accent : .clear, in: Circle())
+                Text(Formatting.weekdayShort(entry.day)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
             .frame(height: 30, alignment: .leading)
-            .padding(.leading, 4)
+            .padding(.leading, Theme.Space.s)
             if let timeline = entry.timeline, let first = timeline.allDay.first {
                 HStack(spacing: 4) {
                     chip(first)
@@ -60,25 +63,27 @@ private struct DayHeaderCell: View {
                         Menu {
                             ForEach(Array(timeline.allDay.dropFirst()), id: \.id) { item in Button(item.title) { onSelect(item) } }
                         } label: {
-                            Text("+\(timeline.allDay.count - 1)").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                            Text("+\(timeline.allDay.count - 1)").font(.system(.caption2, weight: .semibold)).foregroundStyle(Theme.textSecondary)
                                 .padding(.horizontal, 5).frame(minHeight: 22)
                         }
                         .accessibilityLabel("종일 일정 \(timeline.allDay.count - 1)개 더 보기")
                     }
                 }
-                .padding(.horizontal, 2)
+                .padding(.horizontal, Theme.Space.s - 2)
             }
         }
+        // The rule between this day's column and the one before it.
+        .overlay(alignment: .leading) { Rectangle().fill(Theme.divider).frame(width: 0.5) }
         .accessibilityElement(children: .contain)
     }
 
     private func chip(_ item: AllDayItem) -> some View {
-        let color = Color(hex: item.calendarColorHex) ?? .accentColor
+        let color = Color(hex: item.calendarColorHex) ?? Theme.accent
         return Button { onSelect(item) } label: {
-            Text(item.title).font(.caption2.weight(.medium)).lineLimit(1)
+            Text(item.title).font(.system(.caption, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .padding(.horizontal, 6)
                 .frame(maxWidth: .infinity, minHeight: 22, alignment: .leading)
-                .background(color.opacity(item.state == .eventMissing ? 0.10 : 0.22), in: RoundedRectangle(cornerRadius: 5))
+                .background(color.opacity(item.state == .eventMissing ? 0.10 : 0.22), in: RoundedRectangle(cornerRadius: Theme.Radius.small - 2, style: .continuous))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("종일 일정 \(item.title)")

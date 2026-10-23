@@ -29,6 +29,8 @@ enum Theme {
     /// An unchosen chip, a stepper button, an icon's tile.
     static let fill = Color.dynamic(light: 0xF2F4F6, dark: 0x2C2C2E)
     static let divider = Color.dynamic(light: 0xE5E8EB, dark: 0x333336)
+    /// A bar that sits over a grid or list (the day names and all-day row): a step off the screen's white, a step above its black.
+    static let band = Color.dynamic(light: 0xF2F4F6, dark: 0x1C1C1E)
 
     static let textPrimary = Color.dynamic(light: 0x191F28, dark: 0xF2F4F6)
     static let textSecondary = Color.dynamic(light: 0x4E5968, dark: 0xB0B8C1)
