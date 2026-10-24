@@ -103,6 +103,52 @@ public actor EventKitCalendarProvider: CalendarProvider {
 
     // MARK: Writing
 
+    public func createCalendar(title: String, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        do { try requireAccess() } catch { return .failure(.accessUnavailable) }
+        let calendar = EKCalendar(for: .event, eventStore: store)
+        calendar.title = title
+        if let colorHex, let color = cgColor(hex: colorHex) { calendar.cgColor = color }
+        // A new calendar needs an account to live in: the one new events go to by default, else any account that allows calendars.
+        guard let source = store.defaultCalendarForNewEvents?.source
+            ?? store.sources.first(where: { $0.sourceType == .local })
+            ?? store.sources.first(where: { $0.sourceType == .calDAV }) else {
+            return .failure(.unsupported("no account to hold a new calendar"))
+        }
+        calendar.source = source
+        do {
+            try store.saveCalendar(calendar, commit: true)
+        } catch {
+            return .failure(map(error, calendarID: CalendarID(rawValue: calendar.calendarIdentifier)))
+        }
+        return .success(descriptor(calendar))
+    }
+
+    public func updateCalendar(_ id: CalendarID, title: String?, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        do { try requireAccess() } catch { return .failure(.accessUnavailable) }
+        if let failure = calendarGate(id) { return .failure(failure) }
+        guard let calendar = calendar(withID: id.rawValue) else { return .failure(.calendarMissing(id)) }
+        if let title { calendar.title = title }
+        if let colorHex, let color = cgColor(hex: colorHex) { calendar.cgColor = color }
+        do {
+            try store.saveCalendar(calendar, commit: true)
+        } catch {
+            return .failure(map(error, calendarID: id))
+        }
+        return .success(descriptor(calendar))
+    }
+
+    public func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool> {
+        do { try requireAccess() } catch { return .failure(.accessUnavailable) }
+        if let failure = calendarGate(id) { return .failure(failure) }
+        guard let calendar = calendar(withID: id.rawValue) else { return .failure(.calendarMissing(id)) }
+        do {
+            try store.removeCalendar(calendar, commit: true)
+        } catch {
+            return .failure(map(error, calendarID: id))
+        }
+        return .success(true)
+    }
+
     public func createEvent(_ draft: CalendarEventDraft) async -> CalendarProviderResult<CalendarEvent> {
         do { try requireAccess() } catch { return .failure(.accessUnavailable) }
         guard let calendar = calendar(withID: draft.calendarID.rawValue) else { return .failure(.calendarMissing(draft.calendarID)) }
@@ -306,6 +352,12 @@ public actor EventKitCalendarProvider: CalendarProvider {
             isWritable: calendar.allowsContentModifications,
             sourceTitle: calendar.source?.title
         )
+    }
+
+    private func cgColor(hex: String) -> CGColor? {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard digits.count == 6, let value = Int(digits, radix: 16) else { return nil }
+        return CGColor(srgbRed: CGFloat((value >> 16) & 0xFF) / 255, green: CGFloat((value >> 8) & 0xFF) / 255, blue: CGFloat(value & 0xFF) / 255, alpha: 1)
     }
 
     private func hex(_ color: CGColor?) -> String? {

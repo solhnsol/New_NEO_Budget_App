@@ -26,6 +26,20 @@ struct SettingsView: View {
             }
             .onAllCardRow()
             Section {
+                NavigationLink {
+                    CalendarSettingsView(model: model)
+                } label: {
+                    HStack(spacing: Theme.Space.m) {
+                        IconTile(systemName: "calendar", tint: Theme.accent)
+                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                            Text("캘린더").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                            Text("캘린더 추가·삭제, 아이콘 정하기").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                }
+            }
+            .onAllCardRow()
+            Section {
                 Button { choosingFile = true } label: {
                     HStack(spacing: Theme.Space.m) {
                         IconTile(systemName: "tray.and.arrow.down", tint: Theme.accent)

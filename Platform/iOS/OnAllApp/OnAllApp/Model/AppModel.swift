@@ -119,6 +119,7 @@ final class AppModel {
         self.dayZone = dayZone
         self.ledger = ledger
         self.isDemo = isDemo
+        calendarIcons = CalendarIconStore.load(key: isDemo ? "calendarIcons.demo" : "calendarIcons")
         self.prepare = prepare
         selectedDay = dayZone.localDate(of: Self.nowMilliseconds())
     }
@@ -460,6 +461,73 @@ final class AppModel {
     }
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
+
+    // MARK: Calendars
+
+    private var calendarIconKey: String { isDemo ? "calendarIcons.demo" : "calendarIcons" }
+    /// The icons the reader picked for calendars (settings), by calendar.
+    private(set) var calendarIcons = CalendarIconStore()
+
+    /// The icon to draw for a calendar: the picked one, else a guess from its name.
+    func calendarSymbol(id: CalendarID, title: String?) -> String {
+        CalendarIcon.symbol(picked: calendarIcons.symbol(for: id), title: title)
+    }
+
+    func setCalendarIcon(_ symbol: String, for id: CalendarID) {
+        calendarIcons.set(symbol, for: id)
+        calendarIcons.save(key: calendarIconKey)
+    }
+
+    /// Makes a calendar in the device calendar (the demo's own, in demo) with the icon the reader picked. Returns why it failed, or `nil`.
+    func addCalendar(title: String, colorHex: String, symbol: String) async -> String? {
+        switch await provider.createCalendar(title: title, colorHex: colorHex) {
+        case let .success(calendar):
+            setCalendarIcon(symbol, for: calendar.id)
+            await reload()
+            return nil
+        case let .failure(failure): return Self.message(for: failure)
+        case .conflict: return "캘린더를 만들지 못했어요."
+        }
+    }
+
+    /// Renames and recolors a calendar (what is unchanged is left alone) and sets its icon. Returns why it failed, or `nil`.
+    func editCalendar(_ calendar: CalendarDescriptor, title: String, colorHex: String, symbol: String) async -> String? {
+        setCalendarIcon(symbol, for: calendar.id)
+        let newTitle = title == calendar.title ? nil : title
+        let newColor = colorHex == calendar.colorHex ? nil : colorHex
+        if newTitle != nil || newColor != nil {
+            switch await provider.updateCalendar(calendar.id, title: newTitle, colorHex: newColor) {
+            case .success: break
+            case let .failure(failure): return Self.message(for: failure)
+            case .conflict: return "캘린더를 바꾸지 못했어요."
+            }
+        }
+        await reload()
+        return nil
+    }
+
+    /// Removes a calendar with all its events. The events are gone from the device calendar too.
+    func removeCalendar(_ id: CalendarID) async -> String? {
+        switch await provider.deleteCalendar(id) {
+        case .success:
+            calendarIcons.set(nil, for: id)
+            calendarIcons.save(key: calendarIconKey)
+            await reload()
+            return nil
+        case let .failure(failure): return Self.message(for: failure)
+        case .conflict: return "캘린더를 지우지 못했어요."
+        }
+    }
+
+    private static func message(for failure: CalendarProviderFailure) -> String {
+        switch failure {
+        case .accessUnavailable: return "캘린더 접근을 허용해 주세요."
+        case .calendarNotWritable: return "이 캘린더는 앱에서 바꿀 수 없어요."
+        case .calendarMissing: return "이미 없는 캘린더예요."
+        case .unsupported: return "이 기기에서는 캘린더를 추가하거나 지울 수 없어요."
+        case .eventMissing, .saveFailed: return "저장하지 못했어요. 잠시 뒤에 다시 해 주세요."
+        }
+    }
 
     /// What the user changed about transactions for display. Kept in a file, except in the demo (a restart gives the demo back unchanged).
     private(set) var transactionOverrides = TransactionOverrideStore()
