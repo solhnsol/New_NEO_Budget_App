@@ -462,7 +462,7 @@ final class AppModel {
     private(set) var transactionOverrides = TransactionOverrideStore()
     /// Moves with every edit, so the ledger tab reloads.
     private(set) var overrideRevision = 0
-    private lazy var overridesURL: URL? = isDemo ? nil : URL.applicationSupportDirectory.appending(path: "transaction-overrides.json")
+    private var overridesURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "transaction-overrides.json") }
 
     /// Reads the saved edits; called once at start.
     func loadOverrides() {
