@@ -256,13 +256,14 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
             return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision)
 
         case let .suggests(matches):
+            let suggested: CandidateIssue = matches.contains { $0.rule == .refundSuggestion } ? .possibleReturnOfEarlierPurchase : .possibleSameMoneyRecorded
             let review = try TransactionCandidate(
                 id: candidate.id,
                 evidenceIDs: candidate.evidenceIDs,
                 status: .needsReview,
                 issues: candidate.status == .needsReview
-                    ? Array(Set(candidate.issues + [.possibleReturnOfEarlierPurchase])).sorted { $0.rawValue < $1.rawValue }
-                    : [.possibleReturnOfEarlierPurchase],
+                    ? Array(Set(candidate.issues + [suggested])).sorted { $0.rawValue < $1.rawValue }
+                    : [suggested],
                 proposedEntry: candidate.proposedEntry,
                 policyVersion: candidate.policyVersion,
                 sourceDraft: candidate.sourceDraft
