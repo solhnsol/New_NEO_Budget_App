@@ -90,10 +90,14 @@ private struct DayHeaderCell: View {
 /// What the top bars (month, week strip, column titles) sit on: the screen's own color over a blur, so it reads as the grid's color while what scrolled
 /// up under it still shows through.
 struct TopBarBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
+        // The dark material lifts black to gray, so in dark it is used lightly and the screen's own black carries the color.
+        let dark = scheme == .dark
         ZStack {
-            Rectangle().fill(.ultraThinMaterial)
-            Rectangle().fill(Color(.systemBackground).opacity(0.45))
+            Rectangle().fill(.ultraThinMaterial).opacity(dark ? 0.3 : 1)
+            Rectangle().fill(Color(.systemBackground).opacity(dark ? 0.7 : 0.45))
         }
     }
 }
