@@ -74,6 +74,9 @@ struct EventPresentation: Equatable {
     let title: CGFloat
     /// 0 … 1: the title in small type, for a card too thin for the title. It gives way to the title as the card gets tall enough for it.
     var compactTitle: CGFloat = 0
+    /// 0 … 1: how far a card too thin for even the small title has become a dot (its name is written beside it, like a transaction's chip). 0 from the
+    /// height that has room for the small title, 1 at the height of a line, so a card shrinks into the dot as it thins and grows out of it as it thickens.
+    var dot: CGFloat = 0
     let startTime: CGFloat
     let endTime: CGFloat
     /// The count of linked transactions ("거래 N건"), when the rows do not fit.
@@ -147,6 +150,7 @@ struct EventPresentation: Equatable {
         return EventPresentation(
             height: height, level: level, card: card,
             title: title, compactTitle: appearing(height, over: metrics.compactNeed, ramp: ramp) * (1 - title),
+            dot: min(1, max(0, (metrics.compactNeed - height) / max(0.001, metrics.compactNeed - metrics.lineHeight))),
             startTime: appearing(height, over: metrics.startNeed, ramp: ramp),
             endTime: endTime, transactionSummary: summary,
             transactions: hasRows ? appearing(rowsHeight, over: metrics.detailNeed, ramp: ramp) : 0,

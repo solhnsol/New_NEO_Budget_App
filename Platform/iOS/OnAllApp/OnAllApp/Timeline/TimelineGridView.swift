@@ -297,9 +297,10 @@ struct TimelineGridView: View {
             }
             // Titles are drawn over every card, so a card stacked on another never hides the title under it.
             ForEach(plan.events.filter { !editor.isExpanded($0.block) }, id: \.block.id) { item in
-                if let header = item.header {
-                    EventHeaderView(block: item.block, rect: header, zoneIdentifier: timeline.timeZoneIdentifier)
-                } else if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
+                if let label = item.dotLabel {
+                    EventDotLabel(block: item.block, label: label, presentation: item.presentation, scale: scale)
+                }
+                if item.showsTitleInCard, !titleIsCovered(item, frames: frames, focused: focus) {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
@@ -617,7 +618,7 @@ private struct BlockCell: View {
             } else {
                 EventBlockView(
                     block: block, height: item.drawnFrame.height, titleOffset: item.title.dy, rows: item.insideRows,
-                    presentation: item.presentation, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
+                    presentation: item.presentation, scale: scale, zoneIdentifier: zoneIdentifier,
                     endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
                     startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
                     anchors: item.insideAnchors.map { $0 - frame.minY }

@@ -229,40 +229,6 @@ struct OverflowCardView: View {
     }
 }
 
-/// A title that moved out of its card, attached above the event's start. Paler than the card and set off by a rule, so it reads as
-/// outside the event's time; the event's real start is the card's own top edge below it.
-struct EventHeaderView: View {
-    let block: EventBlock
-    let rect: CGRect
-    var zoneIdentifier = ""
-
-    var body: some View {
-        let color = Color(hex: block.calendarColorHex) ?? .accentColor
-        // A small tab sitting on the card's top-left corner, only as wide as its text, and quieter than the card: smaller type, no
-        // time (the card has it), square at the bottom where it joins the card's top edge.
-        let tab = UnevenRoundedRectangle(topLeadingRadius: 5, topTrailingRadius: 5)
-        HStack(spacing: 3) {
-            if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 7)) }
-            Text(block.title).font(.system(size: 10, weight: .medium)).lineLimit(1)
-            if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 7)) }
-        }
-        .foregroundStyle(Color.primary.opacity(0.75))
-        .padding(.leading, 9).padding(.trailing, 7)
-        .frame(maxWidth: max(0, rect.width), alignment: .leading)
-        .frame(height: rect.height)
-        .fixedSize(horizontal: true, vertical: false)
-        .background(Color(.systemBackground), in: tab)
-        .background(color.opacity(0.22), in: tab)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
-        .overlay(tab.stroke(color.opacity(0.5), lineWidth: 1))
-        .clipShape(tab)
-        .frame(width: rect.width, height: rect.height, alignment: .leading)
-        .offset(x: rect.minX, y: rect.minY)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)             // the card it is attached to carries the same event for VoiceOver
-    }
-}
-
 /// A row of text coming in from the left: the part of it up to `progress` of its width is shown, fading in with it. The text keeps its
 /// size and spacing throughout; only how much of it is uncovered changes.
 private struct RevealMask: ViewModifier {

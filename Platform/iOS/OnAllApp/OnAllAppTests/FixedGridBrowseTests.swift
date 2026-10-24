@@ -90,7 +90,7 @@ private func transactionIDs(_ plan: DayRenderPlan) -> [String] {
     plan.lines.map(\.id) + plan.overflows.flatMap { $0.members.map(\.transactionID) } + plan.events.flatMap { $0.insideRows.map { $0.transactionID.rawValue } }
 }
 
-private func visibleTitles(_ plan: DayRenderPlan) -> Int { plan.events.filter { $0.presentation.title > 0.99 || $0.header != nil }.count }
+private func visibleTitles(_ plan: DayRenderPlan) -> Int { plan.events.filter { $0.presentation.title > 0.99 }.count }
 
 // MARK: The flag
 

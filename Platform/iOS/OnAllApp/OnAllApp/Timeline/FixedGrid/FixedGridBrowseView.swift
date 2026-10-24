@@ -562,7 +562,7 @@ struct FixedGridBrowseView: View {
         let ghosts = Set(plan.events.filter { $0.block.eventKey == ghostKey }.map(\.blendItem))
         let base = opacity
         let opacity: (FixedGridColumns.Item) -> Double = { ghosts.contains($0) ? base($0) * 0.3 : base($0) }
-        let events = plan.events.filter { (reaches($0.drawnFrame) || ($0.header.map(reaches) ?? false)) && opacity($0.blendItem) > 0 }
+        let events = plan.events.filter { reaches($0.drawnFrame) && opacity($0.blendItem) > 0 }
         let lines = plan.lines.filter { reaches($0.frame) && opacity(.line($0.id)) > 0 }
         let overflows = plan.overflows.filter { reaches($0.frame) && opacity(.overflow($0.id)) > 0 }
         return ZStack(alignment: .topLeading) {
@@ -571,10 +571,11 @@ struct FixedGridBrowseView: View {
                     .opacity(opacity(item.blendItem))
             }
             ForEach(events, id: \.block.id) { item in
-                if let header = item.header {
-                    EventHeaderView(block: item.block, rect: header, zoneIdentifier: timeline.timeZoneIdentifier)
+                if let label = item.dotLabel {
+                    EventDotLabel(block: item.block, label: label, presentation: item.presentation, scale: scale)
                         .opacity(opacity(item.blendItem))
-                } else if item.showsTitleInCard {
+                }
+                if item.showsTitleInCard {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: axis.gutterWidth + axis.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
@@ -1942,7 +1943,7 @@ private struct FixedBlockCell: View {
         let frame = item.drawnFrame
         EventBlockView(
             block: item.block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
-            presentation: item.presentation, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
+            presentation: item.presentation, scale: scale, zoneIdentifier: zoneIdentifier,
             endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
             startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
             anchors: item.insideAnchors.map { $0 - frame.minY }
