@@ -9,7 +9,8 @@ struct DayHeaderStrip: View {
     let swipeOffset: CGFloat
     let onSelect: (AllDayItem) -> Void
 
-    private static let gutter: CGFloat = 60
+    /// The width of the hour axis to the left of the columns: the grid under the header says what it is, so the rules between columns line up.
+    var gutter: CGFloat = 60
     private static let labelHeight: CGFloat = 30
     /// Always the same height, whatever the days hold. A header that grows or shrinks with the all-day events of the days around
     /// would move the whole grid up or down at the moment a swipe lands on such a day. The all-day event sits on the day's own line, so
@@ -19,7 +20,7 @@ struct DayHeaderStrip: View {
     var body: some View {
         let height = Self.height
         GeometryReader { size in
-            let columnWidth = max(0, (size.size.width - Self.gutter) / 2)
+            let columnWidth = max(0, (size.size.width - gutter) / 2)
             // Cut at the gutter, like the days below, so a day sliding out never shows over the hour labels' column.
             ZStack(alignment: .topLeading) {
                 ForEach(strip, id: \.day) { entry in
@@ -29,9 +30,9 @@ struct DayHeaderStrip: View {
                         .offset(x: columnWidth * CGFloat(position - 1) + swipeOffset)
                 }
             }
-            .frame(width: max(0, size.size.width - Self.gutter), height: height, alignment: .topLeading)
+            .frame(width: max(0, size.size.width - gutter), height: height, alignment: .topLeading)
             .clipped()
-            .offset(x: Self.gutter)
+            .offset(x: gutter)
         }
         .frame(height: height)
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 0.5) }
