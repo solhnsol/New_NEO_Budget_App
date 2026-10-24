@@ -199,8 +199,8 @@ struct DayTimelineScreen: View {
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
                 }
             }
-            // The day totals sit under both styles. The fixed grid shows its edit bar (cancel / done) there instead while it is on screen.
-            if BrowseAxisMode.current != .fixedGrid || style.wrappedValue == .list {
+            // The day totals sit under the time grid only; the list uses the whole screen. The fixed grid shows its edit bar (cancel / done) there instead.
+            if BrowseAxisMode.current != .fixedGrid && !isList {
                 Divider()
                 SummaryBar(timelines: timelines)
             }
