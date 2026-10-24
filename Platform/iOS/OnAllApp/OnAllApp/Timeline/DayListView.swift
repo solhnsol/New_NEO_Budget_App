@@ -31,6 +31,10 @@ struct DayListView: View {
     /// (the normal rate is 0.998; each 0.001 lower is roughly a tenth more speed lost per second at that rate).
     static let snagRate: CGFloat = 0.9975
     static let snagSeconds = 0.05
+    /// While the finger drags, the list holds at a day's line: it follows the finger only this fraction of the way, and lets go (to the finger's
+    /// position) once the finger has pulled `releasePull` points past the line.
+    static let holdGive: CGFloat = 0.2
+    static let releasePull: CGFloat = 36
 
     /// The day the column was built around. It is kept for the life of the view: the parent builds this struct again on every change of the selected
     /// day, and a centre that followed it would slide the whole range of days under the scroll position by a day at a time.
@@ -97,7 +101,8 @@ struct DayListView: View {
     private func moved(to now: [Int: CGFloat]) {
         guard !now.isEmpty else { return }
         let height = scrollView.view?.bounds.height ?? 0
-        let top = now.filter { $0.value <= 0.5 }.keys.max() ?? now.keys.min()!
+        // The header is drawn over the top of the list: the day at the top is the one at the top of what can really be seen below it.
+        let top = now.filter { $0.value <= topInset + 0.5 }.keys.max() ?? now.keys.min()!
         let bottom = now.filter { $0.value <= height }.keys.max() ?? top
         defer { lastBottom = bottom }
         guard headingFor == nil else { return }
@@ -108,6 +113,9 @@ struct DayListView: View {
         if enteredBelow || enteredAbove {
             Haptics.snap()
             scrollView.snag(rate: Self.snagRate, seconds: Self.snagSeconds)
+        }
+        if let old = readingEpoch, old != top, let line = now[top > old ? top : old] {
+            scrollView.hold(dir: top > old ? 1 : -1, lineGap: line - topInset, give: Self.holdGive, release: Self.releasePull)
         }
         scrolled(to: top)
     }
@@ -450,9 +458,46 @@ private struct DayTopKey: PreferenceKey {
 
 /// The `UIScrollView` under the SwiftUI list, found so it can be held back for a moment as it coasts past a day's line.
 @MainActor private final class ScrollViewBox {
-    weak var view: UIScrollView?
+    weak var view: UIScrollView? { didSet { if view !== oldValue { observe() } } }
     private var releasing: Task<Void, Never>?
     private var normalRate: UIScrollView.DecelerationRate?
+    private var observation: NSKeyValueObservation?
+    private var writing = false
+
+    /// A day's line held under the finger: where the offset is held, which way the list was moving, and where the finger and the offset were when it was caught.
+    private struct Hold {
+        let heldY: CGFloat, dir: CGFloat, fingerY: CGFloat, offsetY: CGFloat, give: CGFloat, release: CGFloat
+    }
+    private var holding: Hold?
+
+    private func observe() {
+        observation = view?.observe(\.contentOffset) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.offsetChanged() }
+        }
+    }
+
+    /// While the finger drags past a day's line, the list stays on the line and gives only a little, until the finger has pulled hard enough: then it lets go
+    /// and lands where the finger is.
+    func hold(dir: CGFloat, lineGap: CGFloat, give: CGFloat, release: CGFloat) {
+        guard let view, view.isTracking, holding == nil else { return }
+        let y = view.contentOffset.y
+        holding = Hold(heldY: y + lineGap, dir: dir, fingerY: view.panGestureRecognizer.location(in: nil).y, offsetY: y, give: give, release: release)
+    }
+
+    private func offsetChanged() {
+        guard !writing, let view, let hold = holding else { return }
+        guard view.isTracking else { holding = nil; return }
+        let natural = hold.offsetY - (view.panGestureRecognizer.location(in: nil).y - hold.fingerY)
+        let pull = hold.dir * (natural - hold.heldY)
+        writing = true
+        defer { writing = false }
+        if pull > 0 && pull < hold.release {
+            view.contentOffset.y = hold.heldY + hold.dir * pull * hold.give
+        } else {
+            holding = nil
+            view.contentOffset.y = natural
+        }
+    }
 
     func snag(rate: CGFloat, seconds: Double) {
         guard let view, view.isDecelerating, !view.isTracking else { return }
