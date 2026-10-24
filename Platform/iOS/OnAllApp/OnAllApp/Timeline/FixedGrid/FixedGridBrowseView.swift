@@ -1961,16 +1961,10 @@ private struct FixedHourAxis: View {
     let scale: CGFloat
     private var rail: CGFloat { gutter - 8 }
 
-    /// 1 when the whole hour is a boundary of the grid, down to 0 five minutes away from every boundary.
-    private func gridWeight(hour: Int) -> Double {
-        let nearest = partition.boundaries.map { abs($0 - Double(hour * 60)) }.min() ?? 5
-        return max(0, 1 - nearest / 5)
-    }
-
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
-        // The hours with a line across the days come first: theirs are the labels that keep their room.
-        let states = HourAxis.layout(partition: partition, metrics: metrics, first: Set((0...24).filter { gridWeight(hour: $0) >= 0.5 }))
+        // The hours with a line across the days come first: theirs are the labels that keep their room. Between days the ends are laid out apart and blended.
+        let states = HourAxis.fixedGridLayout(partition: partition, metrics: metrics)
         ZStack(alignment: .topLeading) {
             ForEach(0..<partition.slotCount, id: \.self) { slot in
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
@@ -1983,7 +1977,7 @@ private struct FixedHourAxis: View {
                 if state.tickOpacity > 0.003 {
                     // An hour that is a boundary of the grid itself (a cell edge) is longer and darker than one that only has room; it fades to the plain
                     // tick over a few minutes while the boundaries move between days.
-                    let grid = gridWeight(hour: state.hour)
+                    let grid = state.gridWeight
                     Path { path in
                         path.move(to: CGPoint(x: rail, y: state.y))
                         path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity) + 4 * CGFloat(grid), y: state.y))

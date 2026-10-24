@@ -5,6 +5,8 @@ struct OnAllApp: App {
     @State private var model: AppModel?
     /// The app's data could not be opened: say so instead of spinning forever.
     @State private var startFailure: String?
+    /// Bumped to rebuild the model after the user switched modes.
+    @State private var generation = 0
 
     var body: some Scene {
         WindowGroup {
@@ -33,10 +35,17 @@ struct OnAllApp: App {
                 }
                 #endif
             }
-            .task {
+            .environment(\.switchAppMode, { mode in
+                AppMode.save(mode)
+                model = nil
+                startFailure = nil
+                generation += 1
+            })
+            .task(id: generation) {
                 guard model == nil else { return }
                 let arguments = ProcessInfo.processInfo.arguments
-                let isDemo = arguments.contains("-demo") || DemoFull.isOn   // until real data is connected, a plain launch opens the full demo (`-live` for the device)
+                // A plain launch opens the full demo until the user switches to their own data in 설정; `-live` and `-demo` override for one launch.
+                let isDemo = arguments.contains("-demo") || DemoFull.isOn
                 do {
                     let created = isDemo ? try AppModel.demo() : try AppModel.live(withSampleLedger: arguments.contains("-ledger-sample"))
                     model = created

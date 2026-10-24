@@ -8,6 +8,7 @@ import SwiftUI
 struct IntakeInboxView: View {
     let model: AppModel
     @State private var items: [InboxItem]?
+    @State private var imported: [PendingImport] = []
     @State private var questions: [AccountQuestion] = []
     @State private var answering: AccountQuestion?
     @State private var choosingAccount: RuleQuestion?
@@ -24,6 +25,16 @@ struct IntakeInboxView: View {
                     Text("이 계좌가 맞나요?")
                 } footer: {
                     Text("알림에 처음 나온 계좌와 카드예요. 답해 주시면 이전 알림까지 다시 계산해요.")
+                }
+                .onAllCardRow()
+            }
+            if !imported.isEmpty {
+                Section {
+                    ForEach(imported) { item in ImportedRow(item: item, zoneIdentifier: model.dayZone.identifier) }
+                } header: {
+                    Text("가져온 기록 중 정리할 것")
+                } footer: {
+                    Text("가계부 앱에서 가져온 기록 중 아직 처리되지 않은 거래예요. 실제로 알림이 왔고 아직 처리하지 않은 것처럼 보여 드려요.")
                 }
                 .onAllCardRow()
             }
@@ -55,6 +66,7 @@ struct IntakeInboxView: View {
 
     private func load() async {
         items = await model.inbox()
+        imported = await model.pendingImports()
         questions = await model.accountQuestions()
     }
 }
@@ -85,6 +97,27 @@ private struct InboxRow: View {
                     Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                 }
             }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+private struct ImportedRow: View {
+    let item: PendingImport
+    let zoneIdentifier: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.title ?? "이름 없는 거래").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.textPrimary)
+                Spacer()
+                Text(Formatting.money(item.signedMinorUnits == 0 ? item.amount.minorUnits : item.signedMinorUnits, currency: item.amount.currency))
+                    .font(.subheadline).foregroundStyle(Theme.textPrimary).monospacedDigit()
+            }
+            Text(Formatting.shortDate(item.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + " · " + item.accountName)
+                .font(.caption).foregroundStyle(Theme.textTertiary)
+            Text(item.reasons.map(IntakeText.reason).joined(separator: " · ") + (item.inLedger ? "" : " · 검토 대기"))
+                .font(.caption.weight(.medium)).foregroundStyle(Theme.caution)
         }
         .padding(.vertical, 2)
     }

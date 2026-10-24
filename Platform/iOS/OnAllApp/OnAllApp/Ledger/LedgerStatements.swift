@@ -1,6 +1,7 @@
 import Foundation
 import NEOBudgetCalendar
 import NEOBudgetCore
+import NEOBudgetInMemoryStorage
 
 /// The ledger as the bank and the card company see it: every entry that moved money in an account or on a card, with its real sign, never netted
 /// against refunds or settlements. It is what is compared with a bank statement, and what card usage (실적, 한도) is counted from. The spending view
@@ -35,6 +36,9 @@ enum LedgerStatements {
         let lines: [Line]
         /// Account: its balance now. Card: what is owed now.
         let current: Int64
+        /// Account only: what was added to the ledger's own running balance so it agrees with the newest balance a notification
+        /// reported (the ledger starts at zero and misses money no notification recorded). Zero without such a notification.
+        var anchorAdjustment: Int64 = 0
         var id: Source { source }
     }
 
@@ -57,7 +61,12 @@ enum LedgerStatements {
 
     // MARK: Statements
 
-    static func statements(_ snapshot: CandidateProcessingSnapshot, configuration: LedgerConfiguration) -> [Statement] {
+    /// `reportedBalances` are the balances notifications printed (`IntakeLedger.reportedBalances`). An account with one shows the real
+    /// balance: the ledger's running balance, moved by one constant so it equals the reported balance at the moment it was reported.
+    /// Entries after it move the balance from there. The ledger itself is not changed.
+    static func statements(
+        _ snapshot: CandidateProcessingSnapshot, configuration: LedgerConfiguration, reportedBalances: [AccountID: ReportedBalance] = [:]
+    ) -> [Statement] {
         let titles = LedgerTimelineProjection.details(from: snapshot).titles
         let instruments = instruments(from: snapshot)
         let entries = snapshot.ledger.entries.sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
@@ -71,7 +80,19 @@ enum LedgerStatements {
                     lines.append(line(entry, delta: posting.delta, balanceAfter: balance, titles: titles, instruments: instruments))
                 }
             }
-            return Statement(source: .account(account.id), name: account.name, currency: account.openingBalance.currency, lines: lines.reversed(), current: balance)
+            var adjustment: Int64 = 0
+            if let reported = reportedBalances[account.id] {
+                // The ledger's balance as of the reported moment: after every entry up to and including that time.
+                var ledgerThen = account.openingBalance.minorUnits
+                for line in lines where line.occurredAtUnixMilliseconds <= reported.atUnixMilliseconds {
+                    ledgerThen = line.balanceAfter ?? ledgerThen
+                }
+                adjustment = reported.minorUnits - ledgerThen
+                lines = lines.map { Line(entryID: $0.entryID, kind: $0.kind, occurredAtUnixMilliseconds: $0.occurredAtUnixMilliseconds, title: $0.title,
+                                         delta: $0.delta, balanceAfter: $0.balanceAfter.map { $0 + adjustment }, instrument: $0.instrument) }
+                balance += adjustment
+            }
+            return Statement(source: .account(account.id), name: account.name, currency: account.openingBalance.currency, lines: lines.reversed(), current: balance, anchorAdjustment: adjustment)
         }
         let cards = configuration.creditInstruments.map { card -> Statement in
             var owed: Int64 = 0
