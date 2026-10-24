@@ -11,6 +11,8 @@ import SwiftUI
 /// never moves what is on screen; each day is read when it comes near (`readAhead` days either side of the top) and kept only while it stays near.
 struct DayListView: View {
     let model: AppModel
+    /// How far from the top of the screen the list starts: it runs under the translucent top bar, so what scrolls up shows through it.
+    var topInset: CGFloat = 0
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
     /// The day at the top of the screen changed because the list was scrolled.
@@ -33,8 +35,9 @@ struct DayListView: View {
     /// Days handed to the model from the scroll, and when, so the model's answer is not mistaken for a pick made elsewhere.
     @State private var pushed: [Int: Date] = [:]
 
-    init(model: AppModel, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onScrollToDay: @escaping (LocalDate) -> Void) {
+    init(model: AppModel, topInset: CGFloat = 0, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onScrollToDay: @escaping (LocalDate) -> Void) {
         self.model = model
+        self.topInset = topInset
         self.onSelect = onSelect
         self.onOpenTransaction = onOpenTransaction
         self.onScrollToDay = onScrollToDay
@@ -58,6 +61,9 @@ struct DayListView: View {
             }
             .scrollTargetLayout()
         }
+        .contentMargins(.top, topInset, for: .scrollContent)
+        .contentMargins(.top, topInset, for: .scrollIndicators)
+        .ignoresSafeArea(edges: .top)
         .scrollPosition(id: $topEpoch, anchor: .top)
         .task(id: topEpoch) { await readAround(topEpoch) }
         .onChange(of: topEpoch) { _, epoch in scrolled(to: epoch) }

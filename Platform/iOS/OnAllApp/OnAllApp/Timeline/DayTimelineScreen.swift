@@ -22,6 +22,8 @@ struct DayTimelineScreen: View {
     @State private var addingTransaction = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
+    /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
+    @State private var chromeFrame: CGRect = .zero
 
     private var style: Binding<CalendarStyle> {
         Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .grid }, set: { styleRaw = $0.rawValue })
@@ -146,19 +148,14 @@ struct DayTimelineScreen: View {
 
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
-        return VStack(spacing: 0) {
-            DayHeader(model: model, singleDay: style.wrappedValue == .list, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
-                Task { await goTo(day) }
-            }
-            WeekStripView(
-                cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: style.wrappedValue != .list, pendingShift: pendingDays,
-                onSelect: { day in Task { await goTo(day) } },
-                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
-            )
-            Divider()
-            if style.wrappedValue == .list {
+        let chromeHeight = chromeFrame.height
+        let isList = style.wrappedValue == .list
+        return ZStack(alignment: .top) {
+          VStack(spacing: 0) {
+            if isList {
                 DayListView(
                     model: model,
+                    topInset: chromeFrame.maxY,
                     onSelect: { selection = $0 },
                     onOpenTransaction: { openTransaction = TransactionRef(id: $0) },
                     onScrollToDay: { day in
@@ -172,9 +169,11 @@ struct DayTimelineScreen: View {
                         }
                     }
                 )
-            } else if BrowseAxisMode.current == .fixedGrid {
+            } else {
+                Color.clear.frame(height: chromeHeight)
+                if BrowseAxisMode.current == .fixedGrid {
                 FixedGridBrowseView(
-                    model: model, today: model.today, zone: model.dayZone,
+                    model: model, today: model.today, zone: model.dayZone, chromeInset: chromeFrame.maxY,
                     onSelect: { selection = $0 },
                     onMoveDays: { days in
                         // The days already read are shown in this frame; what the new window is missing (and the margin kept ahead) is read after.
@@ -185,7 +184,7 @@ struct DayTimelineScreen: View {
                     },
                     pendingDays: $pendingDays
                 )
-            } else if let editor = model.editor, timelines.count == 2 {
+                } else if let editor = model.editor, timelines.count == 2 {
                 TimelineGridView(
                     strip: stripWithJump, today: model.today, zone: model.dayZone, editor: editor,
                     onSelect: { selection = $0 },
@@ -198,12 +197,29 @@ struct DayTimelineScreen: View {
                     pendingDays: $pendingDays
                 )
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
+                }
             }
             // The day totals sit under both styles. The fixed grid shows its edit bar (cancel / done) there instead while it is on screen.
             if BrowseAxisMode.current != .fixedGrid || style.wrappedValue == .list {
                 Divider()
                 SummaryBar(timelines: timelines)
             }
+          }
+          VStack(spacing: 0) {
+            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
+                Task { await goTo(day) }
+            }
+            WeekStripView(
+                cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
+                onSelect: { day in Task { await goTo(day) } },
+                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
+            )
+            // The grid's own column titles carry the rule under them; the list has nothing under the strip but this one.
+            if isList { Divider() }
+          }
+          .background { TopBarBackground().ignoresSafeArea(edges: .top) }
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chromeFrame = $0 }
+          .zIndex(1)
         }
         .background {
             GeometryReader { proxy in

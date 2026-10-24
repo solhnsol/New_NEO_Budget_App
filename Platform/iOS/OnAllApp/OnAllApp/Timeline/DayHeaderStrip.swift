@@ -86,3 +86,14 @@ private struct DayHeaderCell: View {
         .accessibilityLabel("종일 일정 \(item.title)")
     }
 }
+
+/// What the top bars (month, week strip, column titles) sit on: the screen's own color over a blur, so it reads as the grid's color while what scrolled
+/// up under it still shows through.
+struct TopBarBackground: View {
+    var body: some View {
+        ZStack {
+            Rectangle().fill(.ultraThinMaterial)
+            Rectangle().fill(Color(.systemBackground).opacity(0.45))
+        }
+    }
+}
