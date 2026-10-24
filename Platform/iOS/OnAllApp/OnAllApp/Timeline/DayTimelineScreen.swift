@@ -212,7 +212,15 @@ struct DayTimelineScreen: View {
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
         .fullScreenCover(item: $ledgerDestination) { destination in
-            LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
+            switch destination {
+            case .settings:
+                NavigationStack {
+                    SettingsView(model: model)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { ledgerDestination = nil } } }
+                }
+            case .list, .accounts:
+                LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
+            }
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }

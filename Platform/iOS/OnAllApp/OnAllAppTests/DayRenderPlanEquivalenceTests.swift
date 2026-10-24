@@ -151,8 +151,11 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
     // presentation, so every digest with an event moved, and nothing else did (the default three rows, every frame, hit and reveal are the same).
     // busy: retaken when a card's rows began to stop where an event inside it begins (`rowRoom`): its 9:00 card, which holds the 9:10 one, writes fewer rows
     // above it. A title moved down its card also takes its rows' room with it, and moves beside a title rather than onto a card inside its own; no day here has either.
+    // All four days with an event retaken with the fixed grid display policy (b2b9c94): `EventPresentation` gained `compactTitle` (the small title of a thin card; the
+    // digest writes the whole presentation, so every day with an event moved), a card is indented one step past the deepest card it lies on, and a thin card no
+    // longer gets a tab header. The empty day has no event and did not move.
     let expected: [String: String] = [
-        "busy": "6a2f785d77b8ca81", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
+        "busy": "4accc48096575b66", "dense": "18799a80f71d879a", "overlapping": "60078692f0aa1acd", "longAndShort": "ecd5de1c9dc41adb", "empty": "6913f3cb5b16accc",
     ]
     for day in try days() {
         let list = combinations(of: day)
