@@ -16,6 +16,14 @@ struct DayTimelineScreen: View {
     /// Days read for a far jump, which slide past on the way to the day picked.
     @State private var jumpDays: [StripDay] = []
     @State private var isChangingDay = false
+    @AppStorage(CalendarStyle.storageKey) private var styleRaw = CalendarStyle.grid.rawValue
+    @State private var ledgerDestination: LedgerDestination?
+    @State private var openTransaction: TransactionRef?
+    @State private var addingTransaction = false
+
+    private var style: Binding<CalendarStyle> {
+        Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .grid }, set: { styleRaw = $0.rawValue })
+    }
 
     var body: some View {
         let probe = BrowseProbe.begin(.outerBody)
@@ -130,14 +138,23 @@ struct DayTimelineScreen: View {
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         return VStack(spacing: 0) {
-            DayHeader(model: model) { day in Task { await goTo(day) } }
+            DayHeader(model: model, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
+                Task { await goTo(day) }
+            }
             WeekStripView(
                 cells: model.weekCells, selected: model.selectedDay, today: model.today, pendingShift: pendingDays,
                 onSelect: { day in Task { await goTo(day) } },
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
             )
             Divider()
-            if BrowseAxisMode.current == .fixedGrid {
+            if style.wrappedValue == .list {
+                DayListView(
+                    model: model,
+                    onSelect: { selection = $0 },
+                    onOpenTransaction: { openTransaction = TransactionRef(id: $0) },
+                    onMoveDay: { days in Task { await goTo(model.selectedDay.adding(days: days)) } }
+                )
+            } else if BrowseAxisMode.current == .fixedGrid {
                 FixedGridBrowseView(
                     model: model, today: model.today, zone: model.dayZone,
                     onSelect: { selection = $0 },
@@ -164,8 +181,8 @@ struct DayTimelineScreen: View {
                 )
                 .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
             }
-            // The fixed grid keeps this place for its edit bar (cancel / done) instead of the day totals.
-            if BrowseAxisMode.current != .fixedGrid {
+            // The day totals sit under both styles. The fixed grid shows its edit bar (cancel / done) there instead while it is on screen.
+            if BrowseAxisMode.current != .fixedGrid || style.wrappedValue == .list {
                 Divider()
                 SummaryBar(timelines: timelines)
             }
@@ -191,6 +208,19 @@ struct DayTimelineScreen: View {
                 }
             })
                 .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
+        .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
+        .fullScreenCover(item: $ledgerDestination) { destination in
+            switch destination {
+            case .settings:
+                NavigationStack {
+                    SettingsView(model: model)
+                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { ledgerDestination = nil } } }
+                }
+            case .list, .accounts:
+                LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
+            }
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
@@ -226,14 +256,18 @@ private struct StatusView: View {
 
 private struct DayHeader: View {
     let model: AppModel
+    let menu: CalendarMenu
     let goTo: (LocalDate) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
+            // Only the month: the days themselves are named once, over their columns.
+            Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
             Spacer()
-            Button("오늘") { goTo(model.today) }
-                .buttonStyle(.bordered).disabled(model.isToday)
+            Button { goTo(model.today) } label: {
+                Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)
+            }
+            .disabled(model.isToday)
             // The arrows get a full 44pt square to hit (the bare symbol was about half that); the header keeps its height.
             HStack(spacing: 0) {
                 Button { goTo(model.selectedDay.adding(days: -1)) } label: { arrow("chevron.left") }
@@ -242,13 +276,14 @@ private struct DayHeader: View {
                     .accessibilityLabel("다음 날")
             }
             .padding(.trailing, -10)
+            menu
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
     }
 
     private func arrow(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
+        Image(systemName: symbol).font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

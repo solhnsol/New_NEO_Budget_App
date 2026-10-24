@@ -98,8 +98,8 @@ enum FixedGridColumns {
         var result: [Item: [AnyHashable]] = [:]
         for event in plan.events {
             result[.event(event.block.id.rawValue)] = [
-                event.drawnFrame.hashableValue, event.title.dx, event.title.dy, event.title.overflows, event.presentation.signature, event.header?.hashableValue,
-                event.showsTitleInCard, event.shownRows, event.hiddenRows, event.insideRows.map(\.transactionID.rawValue), event.titleMaxWidth,
+                event.drawnFrame.hashableValue, event.title.dx, event.title.dy, event.title.overflows, event.presentation.signature,
+                event.showsTitleInCard, event.dotLabel?.frame.hashableValue, event.dotLabel?.reveal, event.shownRows, event.hiddenRows, event.insideRows.map(\.transactionID.rawValue), event.titleMaxWidth,
                 event.insideAnchors, event.startTimeFits,
             ]
         }

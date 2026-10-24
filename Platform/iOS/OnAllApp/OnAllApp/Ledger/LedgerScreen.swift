@@ -3,21 +3,28 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The ledger tab, in two readings of the same ledger:
-/// - **소비**: every spend and refund as a plain list, newest day first, as the timeline shows them. No grid; tapping a row opens its details.
+/// The ledger, opened from the calendar's menu, in two readings of the same ledger:
+/// - **목록**: every spend and refund as a plain list, newest day first, as the timeline shows them. No grid; tapping a row opens its details.
 ///   Recent deposits nothing explains yet sit on top; dragging one onto a purchase records it as that purchase's settlement (`DepositMerge`).
 /// - **계좌·카드**: what really moved on each account and card, unnetted, to compare with the bank, and each card's usage this month.
 struct LedgerScreen: View {
     enum Mode: Hashable { case spending, accounts }
 
     let model: AppModel
-    @State private var mode = Mode.spending
+    let onClose: () -> Void
+    @State private var mode: Mode
     @State private var sections: [LedgerDaySection]?
     @State private var deposits: [LedgerDeposit] = []
     /// A deposit dropped on a purchase, waiting for the user to confirm who sent it.
     @State private var merging: (deposit: LedgerDeposit, purchase: LedgerListEntry)?
     @State private var senderName = ""
     @State private var mergeMessage: String?
+
+    init(model: AppModel, mode: Mode = .spending, onClose: @escaping () -> Void) {
+        self.model = model
+        self.onClose = onClose
+        _mode = State(initialValue: mode)
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,12 +40,13 @@ struct LedgerScreen: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Picker("보기", selection: $mode) {
-                        Text("소비").tag(Mode.spending)
+                        Text("목록").tag(Mode.spending)
                         Text("계좌·카드").tag(Mode.accounts)
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
+                    .frame(maxWidth: 220)
                 }
+                ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
@@ -51,7 +59,7 @@ struct LedgerScreen: View {
             }
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
-        .task(id: model.dataGeneration) { await load() }
+        .task(id: [model.dataGeneration, model.overrideRevision]) { await load() }
         .alert("정산으로 합칠까요?", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })) {
             TextField("보낸 사람", text: $senderName)
             Button("합치기") { if let merging { Task { await merge(merging.deposit, onto: merging.purchase) } } }
@@ -84,19 +92,22 @@ struct LedgerScreen: View {
                             DepositRow(deposit: deposit, zoneIdentifier: model.dayZone.identifier)
                                 .draggable(deposit.id.rawValue)
                                 .listRowSeparator(.hidden)
+                                .listRowBackground(Theme.surface)
                                 .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
+                        // A row, not a footer: a list footer is drawn on the system background and leaves black bands around it in dark mode.
+                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                            .listRowSeparator(.hidden).listRowBackground(Theme.surface)
+                            .listRowInsets(EdgeInsets(top: 0, leading: Theme.Space.xl, bottom: Theme.Space.m, trailing: Theme.Space.l))
                     } header: {
                         Text("정리할 입금").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary).textCase(nil)
-                    } footer: {
-                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 ForEach(sections) { section in
                     Section {
                         ForEach(section.entries) { entry in
                             NavigationLink {
-                                TransactionDetailView(entry: entry, zone: model.dayZone)
+                                TransactionDetailView(entry: entry, model: model)
                             } label: {
                                 LedgerRow(entry: entry, zoneIdentifier: model.dayZone.identifier)
                             }
@@ -107,6 +118,7 @@ struct LedgerScreen: View {
                                 return true
                             }
                             .listRowSeparator(.hidden)
+                            .listRowBackground(Theme.surface)
                             .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
@@ -223,7 +235,9 @@ struct LedgerRow: View {
     private var subtitle: String {
         var parts = [Formatting.time(entry.transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)]
         if entry.transaction.flow == .refund { parts.append("환불") }
+        if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) { parts.append("직접 입력") }
         parts.append(contentsOf: entry.activityTitles)
+        parts.append(contentsOf: (entry.override?.tags ?? []).map { "#" + $0 })
         return parts.joined(separator: " · ")
     }
 }

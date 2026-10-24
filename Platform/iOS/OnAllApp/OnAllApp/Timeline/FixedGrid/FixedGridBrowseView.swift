@@ -62,6 +62,13 @@ struct FixedGridBrowseView: View {
     @State private var editBarHeight: CGFloat = 0
     /// How far the keyboard reaches up over the grid (the edit bar rides on it), and where the grid is on screen.
     @State private var keyboardOverlap: CGFloat = 0
+    /// The scroll offset before the session began (the scroll goes back to it when the session ends, with the keyboard), how long the keyboard takes to
+    /// move, and the pending release of the bar's room once the keyboard is gone.
+    @State private var preEditOffset: CGFloat?
+    @State private var keyboardDuration: TimeInterval = 0.25
+    @State private var releaseInset: Task<Void, Never>?
+    /// The scroll is on its way back to where the session began: the anchor that holds the time at the middle through a re-plan must not pull it away.
+    @State private var restoringScroll = false
     @State private var gridFrame: CGRect = .zero
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -166,13 +173,16 @@ struct FixedGridBrowseView: View {
         _ = carrying                                                     // … or a transaction
         return GeometryReader { outer in
             VStack(spacing: 0) {
-                headerStrip(width: outer.size.width)
-                Divider()
+                VStack(spacing: 0) {
+                    headerStrip(width: outer.size.width)
+                    Divider()
+                }
+                .background(.ultraThinMaterial)             // the grid is drawn under it (`topOverhang`), so what scrolled up shows through
+                .zIndex(1)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
-                editSlot
             }
-            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
+            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width; pinch.topOverhang = DayHeaderStrip.height + 1 }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
         }
         .confirmationDialog("무엇을 선택할까요?", isPresented: Binding(get: { choice != nil }, set: { if !$0 { choice = nil } }), titleVisibility: .visible, presenting: choice) { choice in
@@ -204,7 +214,7 @@ struct FixedGridBrowseView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { keyboardChanged($0) }
         .onChange(of: editBarHeight) { _, _ in keepChosenCardVisible() }
-        .onChange(of: edit.session?.id) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.id) { _, _ in sessionChanged() }
         .onChange(of: edit.session?.target) { _, _ in keepChosenCardVisible() }
         .onChange(of: editor?.isRenaming) { _, _ in keepChosenCardVisible() }
         // The grid keeps its size under the keyboard: its partition is planned for the room it has, and a rename must not re-plan the day.
@@ -337,18 +347,6 @@ struct FixedGridBrowseView: View {
         Task { @MainActor in if editor?.scopeQuestion?.id == id { editor?.answer(nil) } }
     }
 
-    /// Under the grid, where the day totals used to be: kept empty so the grid does not change size, and holding the edit bar (title, time, cancel / done)
-    /// while a session is open. Renaming moves the bar onto the keyboard instead (`editBar`).
-    private var editSlot: some View {
-        ZStack {
-            if let editor, edit.session != nil, !editor.isRenaming { sessionBar(editor) }
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity)
-        .frame(height: 68)
-        .animation(.easeOut(duration: 0.18), value: edit.session != nil)
-    }
-
     private func sessionBar(_ editor: FixedGridEditor) -> some View {
         EditSessionBar(
             editor: editor, zone: zone, calendars: model.calendars, people: model.catalog.people.filter { !$0.isSelf }, isCommitting: edit.session?.committing == true,
@@ -357,10 +355,11 @@ struct FixedGridBrowseView: View {
         )
     }
 
-    /// Over the grid: the messages (shown above the bar, and on their own after a session), and the bar while the title is renamed (it rides on the keyboard).
+    /// Floating over the bottom of the grid (the grid itself runs down to the bottom edge and never changes size): the messages (above the bar, and on
+    /// their own after a session) and the edit bar while a session is open. The bar is the same one while the title is renamed; it only rides up on the keyboard.
     private var editBar: some View {
-        let renaming = edit.session != nil && editor?.isRenaming == true
-        let hasContent = editor?.message != nil || renaming
+        let open = edit.session != nil
+        let hasContent = editor?.message != nil || open
         return VStack(spacing: 8) {
             if let message = editor?.message {
                 EditMessageView(message: message)
@@ -370,7 +369,7 @@ struct FixedGridBrowseView: View {
                     }
                     .onTapGesture { editor?.dismissMessage(message.id) }
             }
-            if let editor, renaming { sessionBar(editor) }
+            if let editor, open { sessionBar(editor) }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, hasContent ? 8 + keyboardOverlap : 0)
@@ -385,8 +384,9 @@ struct FixedGridBrowseView: View {
     /// handles when it fits, else its top; while renaming, its title. The scroll may go past the end of the day by the bar's height (`bottomInset`), so a
     /// card at the end of the day can come above the bar even at 1×.
     private func keepChosenCardVisible() {
-        pinch.bottomInset = edit.session != nil ? editBarHeight : 0                   // kept through a save, so the card does not move while it is answered
-        guard edit.session != nil, edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
+        guard edit.session != nil else { return }                                      // the room is released by `sessionChanged`, once the keyboard is gone
+        pinch.bottomInset = editBarHeight
+        guard edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
         let viewport = pinch.viewportHeight, offset = pinch.currentOffset?() ?? 0
         let top: CGFloat = 8, bottom = viewport - editBarHeight - 8
         guard viewport > 1, bottom - top > 44 else { return }
@@ -399,7 +399,33 @@ struct FixedGridBrowseView: View {
         else { target += span.upperBound - bottom }
         let range = pinch.offsetRange(zoom: pinch.zoom)
         target = min(max(target, range.lowerBound), range.upperBound)
-        if abs(target - offset) > 0.5 { pinch.scrollTo?(target) }
+        if abs(target - offset) > 0.5 { pinch.scrollTo?(target, 0.32) }
+    }
+
+    /// A session began: the offset it began at is kept. It ended (done or cancelled): the scroll goes back to that offset in the time the keyboard takes to
+    /// leave, and the bar's room (`bottomInset`) is kept until the keyboard is gone, then let go without moving the content.
+    private func sessionChanged() {
+        if edit.session != nil {
+            releaseInset?.cancel()
+            restoringScroll = false
+            if preEditOffset == nil { preEditOffset = pinch.currentOffset?() }
+            keepChosenCardVisible()
+            return
+        }
+        let duration = keyboardOverlap > 0 ? keyboardDuration : 0.25
+        if let back = preEditOffset {
+            let range = PinchZoomMath.offsetRange(zoom: pinch.zoom, viewport: pinch.viewportHeight)
+            let target = min(max(back, range.lowerBound), range.upperBound)
+            if room.unfreezeAnchor == nil, let now = pinch.currentOffset?(), abs(now - target) > 0.5 { restoringScroll = true; pinch.scrollTo?(target, duration) }
+        }
+        preEditOffset = nil
+        releaseInset?.cancel()
+        releaseInset = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(duration + 0.1))
+            restoringScroll = false
+            guard !Task.isCancelled, edit.session == nil else { return }
+            pinch.bottomInset = 0
+        }
     }
 
     /// How much of the grid the keyboard covers (the grid itself keeps its size: its partition is planned for the room it has).
@@ -407,6 +433,7 @@ struct FixedGridBrowseView: View {
         let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
         let hiding = note.name == UIResponder.keyboardWillHideNotification
         keyboardOverlap = hiding ? 0 : max(0, gridFrame.maxY - frame.minY)
+        if let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval, duration > 0 { keyboardDuration = duration }
     }
 
     /// A day on screen that is not kept yet says whether it is being read or could not be read (a kept day with nothing on it is drawn as the empty day it is).
@@ -456,6 +483,10 @@ struct FixedGridBrowseView: View {
                         if let timeline = model.cachedTimeline(for: LocalDate(daysSinceUnixEpoch: epoch)), let column = frame.column(epoch) {
                             dayColumn(timeline, column: column, frame: frame, layoutWidth: layoutWidth, window: window)
                                 .frame(width: layoutWidth, height: height, alignment: .topLeading)
+                                .overlay(alignment: .topLeading) {
+                                    // The rule between this day's column and the one before it, under the header's.
+                                    Rectangle().fill(Theme.divider).frame(width: 0.5, height: height).offset(x: Self.gutter).allowsHitTesting(false)
+                                }
                                 .offset(x: geometry.x(ofDay: Double(epoch), at: position) - Self.gutter)
                         }
                     }
@@ -531,7 +562,7 @@ struct FixedGridBrowseView: View {
         let ghosts = Set(plan.events.filter { $0.block.eventKey == ghostKey }.map(\.blendItem))
         let base = opacity
         let opacity: (FixedGridColumns.Item) -> Double = { ghosts.contains($0) ? base($0) * 0.3 : base($0) }
-        let events = plan.events.filter { (reaches($0.drawnFrame) || ($0.header.map(reaches) ?? false)) && opacity($0.blendItem) > 0 }
+        let events = plan.events.filter { reaches($0.drawnFrame) && opacity($0.blendItem) > 0 }
         let lines = plan.lines.filter { reaches($0.frame) && opacity(.line($0.id)) > 0 }
         let overflows = plan.overflows.filter { reaches($0.frame) && opacity(.overflow($0.id)) > 0 }
         return ZStack(alignment: .topLeading) {
@@ -540,10 +571,11 @@ struct FixedGridBrowseView: View {
                     .opacity(opacity(item.blendItem))
             }
             ForEach(events, id: \.block.id) { item in
-                if let header = item.header {
-                    EventHeaderView(block: item.block, rect: header, zoneIdentifier: timeline.timeZoneIdentifier)
+                if let label = item.dotLabel {
+                    EventDotLabel(block: item.block, label: label, presentation: item.presentation, scale: scale)
                         .opacity(opacity(item.blendItem))
-                } else if item.showsTitleInCard {
+                }
+                if item.showsTitleInCard {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: axis.gutterWidth + axis.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
@@ -1196,6 +1228,7 @@ struct FixedGridBrowseView: View {
     private func holdAnchor() {
         let userMoved = pinch.consumeUserMoved()
         let viewport = pinch.viewportHeight
+        if restoringScroll, room.unfreezeAnchor == nil { anchorState.release(at: move.position); return }
         guard viewport > 1, room.width > Self.gutter else { anchorState.release(at: move.position); room.unfreezeAnchor = nil; return }
         let inputs = inputs(viewport: viewport, width: room.width)
         let bounds = move.bounds
@@ -1910,7 +1943,7 @@ private struct FixedBlockCell: View {
         let frame = item.drawnFrame
         EventBlockView(
             block: item.block, height: frame.height, titleOffset: item.title.dy, rows: item.insideRows,
-            presentation: item.presentation, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
+            presentation: item.presentation, scale: scale, zoneIdentifier: zoneIdentifier,
             endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
             startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
             anchors: item.insideAnchors.map { $0 - frame.minY }
@@ -1929,16 +1962,10 @@ private struct FixedHourAxis: View {
     let scale: CGFloat
     private var rail: CGFloat { gutter - 8 }
 
-    /// 1 when the whole hour is a boundary of the grid, down to 0 five minutes away from every boundary.
-    private func gridWeight(hour: Int) -> Double {
-        let nearest = partition.boundaries.map { abs($0 - Double(hour * 60)) }.min() ?? 5
-        return max(0, 1 - nearest / 5)
-    }
-
     var body: some View {
         let metrics = HourAxis.Metrics(textScale: scale)
-        // The hours with a line across the days come first: theirs are the labels that keep their room.
-        let states = HourAxis.layout(partition: partition, metrics: metrics, first: Set((0...24).filter { gridWeight(hour: $0) >= 0.5 }))
+        // The hours with a line across the days come first: theirs are the labels that keep their room. Between days the ends are laid out apart and blended.
+        let states = HourAxis.fixedGridLayout(partition: partition, metrics: metrics)
         ZStack(alignment: .topLeading) {
             ForEach(0..<partition.slotCount, id: \.self) { slot in
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
@@ -1951,7 +1978,7 @@ private struct FixedHourAxis: View {
                 if state.tickOpacity > 0.003 {
                     // An hour that is a boundary of the grid itself (a cell edge) is longer and darker than one that only has room; it fades to the plain
                     // tick over a few minutes while the boundaries move between days.
-                    let grid = gridWeight(hour: state.hour)
+                    let grid = state.gridWeight
                     Path { path in
                         path.move(to: CGPoint(x: rail, y: state.y))
                         path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity) + 4 * CGFloat(grid), y: state.y))
@@ -1959,20 +1986,11 @@ private struct FixedHourAxis: View {
                     .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
                 }
                 if state.labelOpacity > 0.003 {
-                    // An hour on a line of the grid is the axis's main label: dark, semibold, full size. Every other hour is gray and a size
-                    // smaller. Between days the two pass into each other as the hour's line comes or goes.
-                    let grid = gridWeight(hour: state.hour)
+                    // Every hour is written the same: one gray, one size (Hans, 2026-10-23). Which hours have room is still decided by `HourAxis.layout`,
+                    // where the hours on a line of the grid keep theirs first.
                     ZStack(alignment: .trailing) {
-                        if grid < 1 {
-                            Text(Formatting.hourLabel(state.hour % 24))
-                                .font(.system(size: metrics.labelFontSize * 0.85).monospacedDigit()).foregroundStyle(Theme.textTertiary)
-                                .opacity(1 - grid)
-                        }
-                        if grid > 0 {
-                            Text(Formatting.hourLabel(state.hour % 24))
-                                .font(.system(size: metrics.labelFontSize, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary)
-                                .opacity(grid)
-                        }
+                        Text(Formatting.hourLabel(state.hour))
+                            .font(.system(size: metrics.labelFontSize * 0.9).monospacedDigit()).foregroundStyle(Theme.textTertiary)
                     }
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)

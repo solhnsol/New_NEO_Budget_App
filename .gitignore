@@ -18,3 +18,8 @@ data/
 *.sqlite-shm
 __pycache__/
 *.pyc
+
+# Actual Budget export files (real financial data)
+imported-history*.json
+tools/actual_import/*.json
+__pycache__/

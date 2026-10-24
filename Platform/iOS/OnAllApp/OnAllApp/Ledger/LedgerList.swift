@@ -12,6 +12,9 @@ struct LedgerListEntry: Identifiable, Equatable {
         let amount: AmountKnowledge
         let categoryID: CanonicalCategoryID?
         let eventMissing: Bool
+        /// The activity it went to, and when that activity happens; both `nil` for a portion that belongs to none.
+        var activityID: ActivityID? = nil
+        var activityTime: EventTimeRange? = nil
     }
 
     /// Money that came back for this purchase and is shown on it instead of on its own line (`docs/ledger-behavior.md`, 2 and Q2·Q3): a refund
@@ -33,6 +36,8 @@ struct LedgerListEntry: Identifiable, Equatable {
     let transaction: TransactionMarker
     let portions: [Portion]
     var offsets: [Offset] = []
+    /// What the user changed for display (`TransactionOverride`); the title is already in `transaction`.
+    var override: TransactionOverride? = nil
     var id: LedgerEntryID { transaction.id }
 
     /// What the purchase cost the user after what came back; `nil` when nothing did.
@@ -46,6 +51,7 @@ struct LedgerListEntry: Identifiable, Equatable {
 
     /// The category every portion agrees on; `nil` when there are none or they differ (as on the timeline).
     var categoryID: CanonicalCategoryID? {
+        if let chosen = override?.category { return chosen }
         let categories = Set(portions.map(\.categoryID))
         guard categories.count == 1 else { return nil }
         return categories.first ?? nil
@@ -80,16 +86,18 @@ struct LedgerDaySection: Identifiable, Equatable {
 /// settlement deposits applied to what someone owed for it: the obligation's own purchase if it has one, else the activity's largest purchase.
 enum LedgerList {
     static func sections(
-        _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:]
+        _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:],
+        overrides: [LedgerEntryID: TransactionOverride] = [:]
     ) -> [LedgerDaySection] {
-        let entries = netted(transactions.map { entry($0, life: life) }, life: life, refundOf: refundOf)
+        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id]) }, life: life, refundOf: refundOf)
         let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
         }
     }
 
-    static func entry(_ transaction: TransactionMarker, life: LifeState) -> LedgerListEntry {
+    static func entry(_ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil) -> LedgerListEntry {
+        let transaction = renamed(transaction, by: override)
         let allocations = life.allocationSet(for: transaction.id)?.allocations ?? []
         let portions = allocations.map { allocation in
             let activity = allocation.activityID.flatMap { life.activities[$0] }
@@ -98,10 +106,21 @@ enum LedgerList {
                 activityTitle: activity?.displayTitle,
                 amount: allocation.amount.knowledge,
                 categoryID: allocation.category.categoryID,
-                eventMissing: activity?.isEventMissing ?? false
+                eventMissing: activity?.isEventMissing ?? false,
+                activityID: activity?.id,
+                activityTime: activity?.time
             )
         }
-        return LedgerListEntry(transaction: transaction, portions: portions)
+        return LedgerListEntry(transaction: transaction, portions: portions, override: override)
+    }
+
+    /// The transaction with the name the user gave it; everything else about it is the ledger's.
+    private static func renamed(_ transaction: TransactionMarker, by override: TransactionOverride?) -> TransactionMarker {
+        guard let title = override?.title else { return transaction }
+        return TransactionMarker(
+            id: transaction.id, occurredAtUnixMilliseconds: transaction.occurredAtUnixMilliseconds, amount: transaction.amount,
+            flow: transaction.flow, title: title, timePrecision: transaction.timePrecision
+        )
     }
 
     static func totals(_ entries: [LedgerListEntry]) -> [LedgerTotal] {

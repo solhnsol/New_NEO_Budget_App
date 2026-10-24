@@ -300,35 +300,19 @@ private func lineIDs(_ layout: AdaptiveLayout) -> [String] { layout.lines.map(\.
     #expect(layout.ledgerTotals.count == 5 && layout.ledgerTotals.allSatisfy { $0.count == 1 })
 }
 
-// MARK: Event titles, headers
+// MARK: Event titles
 
 private func titledEvent(_ title: String, _ from: Int, _ to: Int) -> AllocationEvent { AllocationEvent(id: "e", title: title, startMinute: from, endMinute: to, linked: []) }
 
-@Test func aTitleThatCollidesWithALineMovesToAnExternalHeaderWhenThereIsClearRoomAbove() throws {
-    let event = titledEvent("아주 긴 일정 제목입니다", 12 * 60, 13 * 60)
-    let layout = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [event], transactions: [tx("t", 12 * 60 + 20)]), viewport: 900))
-    let placed = try placement(layout, "e")
-    #expect(placed.titleResolution == .externalHeader)
-    let header = try #require(placed.header)
-    #expect(header.eventID == placed.id && header.attachedToMinute == 12 * 60)                      // the event's id, attached to its start
-    #expect(placed.startMinute == 12 * 60 && placed.endMinute == 13 * 60)                           // no time changed
-    // Clear room: above the start by the header's height, with nothing in it.
-    let top = layout.axis.y(minute: 12 * 60)
-    #expect(top - header.height >= -0.01)
-    for target in layout.touchTargets where target.id != "e" { #expect(target.visualMaxY <= top - header.height + 0.01 || target.visualMinY >= top - 0.01) }
-}
-
-@Test func aTitleWithNoLineUnderItNeedsNoHeader() throws {
+@Test func aTitleWithNoLineUnderItIsLeftAlone() throws {
     let layout = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [titledEvent("아주 긴 일정 제목입니다", 12 * 60, 13 * 60)], transactions: [tx("t", 12 * 60 + 50)])))
-    #expect(try placement(layout, "e").titleResolution == .none && (try placement(layout, "e")).header == nil)
+    #expect(try placement(layout, "e").titleResolution == .none)
 }
 
-@Test func withoutRoomAboveTheTitleIsShortenedInsteadOfCoveringAnything() throws {
-    // A line just before the start fills the space where a header would go.
+@Test func aTitleThatCollidesWithALineIsShortenedInsteadOfCoveringAnything() throws {
     let event = titledEvent("아주 긴 일정 제목입니다", 12 * 60, 13 * 60)
     let layout = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [event], transactions: [tx("before", 11 * 60 + 58), tx("inside", 12 * 60 + 3)]), viewport: 900))
     let placed = try placement(layout, "e")
-    #expect(placed.header == nil)
     guard case let .abbreviated(width) = placed.titleResolution else { Issue.record("expected an abbreviated title, got \(placed.titleResolution)"); return }
     #expect(width >= AllocationParameters().minimumTitleWidth && width < 180)
 }
@@ -340,7 +324,7 @@ private func titledEvent(_ title: String, _ from: Int, _ to: Int) -> AllocationE
     narrow.contentWidth = 120
     let roomy = AdaptiveLayoutEngine.layout(narrow)
     let placed = try placement(roomy, "e")
-    #expect(placed.titleResolution == .expandedRange && placed.header == nil)
+    #expect(placed.titleResolution == .expandedRange)
     let params = AllocationParameters()
     #expect(roomy.axis.y(minute: 12 * 60 + 3) - roomy.axis.y(minute: 12 * 60) >= params.titleRow + params.lineGap + params.transactionRow / 2 - 0.5)
     #expect(placed.startMinute == 12 * 60 && placed.endMinute == 13 * 60)
@@ -350,15 +334,6 @@ private func titledEvent(_ title: String, _ from: Int, _ to: Int) -> AllocationE
     tight.viewportHeight = 1
     let cramped = try placement(AdaptiveLayoutEngine.layout(tight), "e")
     guard case .cramped = cramped.titleResolution else { Issue.record("expected cramped, got \(cramped.titleResolution)"); return }
-    #expect(cramped.header == nil)
-}
-
-@Test func anOverlappedEventDoesNotGetAHeaderOverItsParent() throws {
-    let outer = AllocationEvent(id: "outer", title: "바깥 일정", startMinute: 540, endMinute: 900, linked: [])
-    let inner = AllocationEvent(id: "inner", title: "아주 긴 안쪽 일정 제목", startMinute: 600, endMinute: 660, linked: [])
-    let layout = AdaptiveLayoutEngine.layout(input(main: day(mainDay, events: [outer, inner], transactions: [tx("t", 604)]), viewport: 900))
-    #expect(try placement(layout, "inner").header == nil)                                           // the room above it is the outer card
-    #expect(layout.events.compactMap(\.header).allSatisfy { $0.eventID == "outer" || $0.eventID == "inner" })
 }
 
 // MARK: Touch targets

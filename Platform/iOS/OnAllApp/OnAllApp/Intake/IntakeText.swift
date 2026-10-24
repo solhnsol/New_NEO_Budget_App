@@ -10,6 +10,7 @@ enum IntakeText {
         case .sameActAs: "다른 알림과 같은 거래"
         case let .waiting(issues): "검토 대기: " + (issues.first.map(issue) ?? "확인 필요")
         case .notTransaction: "거래 아님"
+        case .coveredByImport: "가져온 기록에 이미 있음"
         case .unreadable: "금액을 읽지 못함"
         case .failed: "처리하지 못함"
         }
@@ -18,7 +19,7 @@ enum IntakeText {
     /// Nothing for the user to do.
     static func isSettled(_ status: IntakeStatus) -> Bool {
         switch status {
-        case .recorded, .sameActAs, .notTransaction: true
+        case .recorded, .sameActAs, .notTransaction, .coveredByImport: true
         case .waiting, .unreadable, .failed: false
         }
     }
@@ -37,11 +38,26 @@ enum IntakeText {
         case .unsupportedEvent: "다른 알림으로 설명되지 않은 출금"
         case .missingOriginalEntry: "원래 결제를 찾지 못함"
         case .possibleReturnOfEarlierPurchase: "이전 결제의 환불일 수 있음"
+        case .possibleSameMoneyRecorded: "이미 기록된 것과 같은 돈일 수 있음"
         case .parserUncertain: "알림 해석이 불확실"
         case .ambiguousWithoutStrongIdentity, .conflictingStrongIdentity: "같은 거래인지 불확실"
         case .missingAmount, .invalidAmount: "금액 확인 필요"
         case .missingTransactionTime: "시각 확인 필요"
         case .promotionRejected: "가계부에 넣지 못함"
+        }
+    }
+
+    /// Why an imported row still waits, in the words of the row.
+    static func reason(_ reason: PendingReason) -> String {
+        switch reason {
+        case .uncategorized: "분류가 아직 없어요"
+        case .noName: "이름이 없어요"
+        case .unclassifiedDeposit: "무슨 입금인지 몰라요"
+        case .unexplainedWithdrawal: "다른 기록으로 설명되지 않은 출금이에요"
+        case .unpairedTransfer: "이체 상대 기록이 없어요"
+        case .refundWithoutPurchase: "어떤 결제의 환불인지 몰라요"
+        case .settlementOriginMissing: "정산한 원래 결제를 찾지 못했어요"
+        case .notRecorded: "가계부에 넣지 못했어요"
         }
     }
 

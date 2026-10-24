@@ -83,7 +83,7 @@ private func fnv(_ text: String) -> String {
 private func describe(_ plan: DayRenderPlan, height: CGFloat) -> String {
     var out: [String] = []
     for item in plan.events {
-        out.append("E \(item.block.id.rawValue) \(item.frame) \(item.drawnFrame) \(item.touchFrame) \(item.title) \(item.presentation) \(String(describing: item.header)) \(item.showsTitleInCard) rows=\(item.insideRows.map(\.allocationID.rawValue)) \(item.shownRows) \(item.hiddenRows) \(String(describing: item.titleMaxWidth)) \(item.insideAnchors) \(item.startTimeFits) \(String(describing: item.placement?.level))")
+        out.append("E \(item.block.id.rawValue) \(item.frame) \(item.drawnFrame) \(item.touchFrame) \(item.title) \(item.presentation) \(item.showsTitleInCard) rows=\(item.insideRows.map(\.allocationID.rawValue)) \(item.shownRows) \(item.hiddenRows) \(String(describing: item.titleMaxWidth)) \(item.insideAnchors) \(item.startTimeFits) \(String(describing: item.placement?.level))")
     }
     for line in plan.lines {
         out.append("L \(line.id) \(String(describing: line.display)) \(String(describing: line.link)) \(String(describing: line.linkedEventTitle)) \(line.frame) \(line.touchFrame) \(String(describing: line.anchorY)) \(line.reveal)")
@@ -151,8 +151,12 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
     // presentation, so every digest with an event moved, and nothing else did (the default three rows, every frame, hit and reveal are the same).
     // busy: retaken when a card's rows began to stop where an event inside it begins (`rowRoom`): its 9:00 card, which holds the 9:10 one, writes fewer rows
     // above it. A title moved down its card also takes its rows' room with it, and moves beside a title rather than onto a card inside its own; no day here has either.
+    // All four days with an event retaken with the fixed grid display policy (b2b9c94): `EventPresentation` gained `compactTitle` (the small title of a thin card; the
+    // digest writes the whole presentation, so every day with an event moved), a card is indented one step past the deepest card it lies on, and a thin card no
+    // longer gets a tab header. The empty day has no event and did not move.
+    // Retaken again when tab headers went (`header` left the digest) and a card too thin for the small title became a dot with its name beside it (`dot`, `dotLabel`).
     let expected: [String: String] = [
-        "busy": "6a2f785d77b8ca81", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
+        "busy": "cf42a5b3ceff2b13", "dense": "b06ed854ca1afbd1", "overlapping": "d17f40a0ba4abb63", "longAndShort": "a813dfc409c28c5", "empty": "6913f3cb5b16accc",
     ]
     for day in try days() {
         let list = combinations(of: day)

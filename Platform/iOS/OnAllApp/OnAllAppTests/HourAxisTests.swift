@@ -170,3 +170,54 @@ private let scenarios: [AxisStabilityScenario] = [F.stabilizationRuns[2], F.grid
     #expect(lines[10].labelOpacity > plain[10].labelOpacity && lines[10].labelOpacity > lines[9].labelOpacity)
     #expect(HourAxis.layout(partition: partition, metrics: metrics, first: []) == plain)
 }
+
+// MARK: Between two days that differ a lot
+
+/// A busy morning on one day, a busy evening on the other: the boundaries sweep over most of the hours between them.
+private func farApartDays() throws -> (TemporalGridPartition, TemporalGridPartition) {
+    let a = try #require(TemporalGridPartition(wholeMinutes: [0, 360, 420, 480, 540, 600, 720, 1080, 1440], totalHeight: 480))
+    let b = try #require(TemporalGridPartition(wholeMinutes: [0, 120, 360, 720, 960, 1020, 1080, 1140, 1440], totalHeight: 480))
+    return (a, b)
+}
+
+@Test func aFixedGridAxisBetweenDaysIsTheRestLayoutAtTheEndsAndTheBlendOfThemBetween() throws {
+    let (a, b) = try farApartDays()
+    let metrics = HourAxis.Metrics()
+    #expect(HourAxis.fixedGridLayout(partition: try #require(TemporalGridPartition.interpolated(from: a, to: b, progress: 0)), metrics: metrics) == HourAxis.fixedGridLayout(partition: a, metrics: metrics))
+    #expect(HourAxis.fixedGridLayout(partition: try #require(TemporalGridPartition.interpolated(from: a, to: b, progress: 1)), metrics: metrics) == HourAxis.fixedGridLayout(partition: b, metrics: metrics))
+    let from = HourAxis.fixedGridLayout(partition: a, metrics: metrics), to = HourAxis.fixedGridLayout(partition: b, metrics: metrics)
+    let mid = HourAxis.fixedGridLayout(partition: try #require(TemporalGridPartition.interpolated(from: a, to: b, progress: 0.3)), metrics: metrics)
+    for hour in 0...24 {
+        #expect(abs(mid[hour].y - (0.7 * from[hour].y + 0.3 * to[hour].y)) < 1e-9)
+        #expect(abs(mid[hour].labelOpacity - (0.7 * from[hour].labelOpacity + 0.3 * to[hour].labelOpacity)) < 1e-12)
+        #expect(abs(mid[hour].gridWeight - (0.7 * from[hour].gridWeight + 0.3 * to[hour].gridWeight)) < 1e-12)
+    }
+}
+
+@Test func labelsNeitherPopNorJumpWhileTheDaysMoveFarApart() throws {
+    let (a, b) = try farApartDays()
+    let metrics = HourAxis.Metrics()
+    let steps = 200
+    var previous: [HourAxisState]?
+    var worstOpacity = 0.0, worstWeight = 0.0, worstMove: CGFloat = 0
+    for step in 0...steps {
+        let partition = try #require(TemporalGridPartition.interpolated(from: a, to: b, progress: Double(step) / Double(steps)))
+        let states = HourAxis.fixedGridLayout(partition: partition, metrics: metrics)
+        for state in states {
+            #expect(state.labelOpacity <= state.tickOpacity + 1e-12)                       // never a label without its tick
+            #expect(state.y == partition.timeToY(Double(state.hour * 60)) || abs(state.y - partition.timeToY(Double(state.hour * 60))) < 1e-9)
+        }
+        if let previous {
+            for (x, y) in zip(previous, states) {
+                worstOpacity = max(worstOpacity, abs(x.labelOpacity - y.labelOpacity), abs(x.tickOpacity - y.tickOpacity))
+                worstWeight = max(worstWeight, abs(x.gridWeight - y.gridWeight))
+                worstMove = max(worstMove, abs(x.labelCentre - y.labelCentre))
+            }
+        }
+        previous = states
+    }
+    // Each number is a straight line of the progress, so a step of 1/200 moves it by at most 1/200 of its whole way.
+    #expect(worstOpacity <= 1.0 / Double(steps) + 1e-9)
+    #expect(worstWeight <= 1.0 / Double(steps) + 1e-9)
+    #expect(worstMove <= 480.0 / CGFloat(steps) + 1e-6)
+}
