@@ -6,6 +6,8 @@ import SwiftUI
 /// went to it inside; all-day events and transactions no event holds are single lines. It reads the same `DayTimeline` as the grid.
 struct DayListView: View {
     let model: AppModel
+    /// How far from the top of the screen the list starts: it runs under the translucent top bar, so what scrolls up shows through it.
+    var topInset: CGFloat = 0
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
     /// A sideways swipe on the list: -1 for the previous day, +1 for the next.
@@ -48,6 +50,9 @@ struct DayListView: View {
             .padding(.horizontal, Theme.Space.l)
             .padding(.vertical, Theme.Space.s)
         }
+        .contentMargins(.top, topInset, for: .scrollContent)
+        .contentMargins(.top, topInset, for: .scrollIndicators)
+        .ignoresSafeArea(edges: .top)
         .simultaneousGesture(
             DragGesture(minimumDistance: 30).onEnded { value in
                 guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }

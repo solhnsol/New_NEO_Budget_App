@@ -140,14 +140,18 @@ struct FixedGridBrowseView: View {
         @objc private func tick(_ link: CADisplayLink) { if last > 0 { intervals.append((link.timestamp - last) * 1000) }; last = link.timestamp }
     }
 
+    /// How far the screen's own top bar reaches below the screen's top edge: the grid may show that much above its own header too.
+    let chromeInset: CGFloat
+
     private static let gutter: CGFloat = 60
     private static let trailing: CGFloat = 6
     private static let visibleColumns = 2
 
-    init(model: AppModel, today: LocalDate, zone: DisplayTimeZone, onSelect: @escaping (TimelineSelection) -> Void, onMoveDays: @escaping (Int) -> Void, pendingDays: Binding<Int>) {
+    init(model: AppModel, today: LocalDate, zone: DisplayTimeZone, chromeInset: CGFloat = 0, onSelect: @escaping (TimelineSelection) -> Void, onMoveDays: @escaping (Int) -> Void, pendingDays: Binding<Int>) {
         self.model = model
         self.today = today
         self.zone = zone
+        self.chromeInset = chromeInset
         self.onSelect = onSelect
         self.onMoveDays = onMoveDays
         _pendingDays = pendingDays
@@ -177,12 +181,13 @@ struct FixedGridBrowseView: View {
                     headerStrip(width: outer.size.width)
                     Divider()
                 }
-                .background(.ultraThinMaterial)             // the grid is drawn under it (`topOverhang`), so what scrolled up shows through
+                .background { TopBarBackground() }          // the grid is drawn under it (`topOverhang`), so what scrolled up shows through
                 .zIndex(1)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
             }
-            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width; pinch.topOverhang = DayHeaderStrip.height + 1 }
+            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width; pinch.topOverhang = DayHeaderStrip.height + 1 + chromeInset }
+            .onChange(of: chromeInset) { _, inset in pinch.topOverhang = DayHeaderStrip.height + 1 + inset }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
         }
         .confirmationDialog("무엇을 선택할까요?", isPresented: Binding(get: { choice != nil }, set: { if !$0 { choice = nil } }), titleVisibility: .visible, presenting: choice) { choice in
