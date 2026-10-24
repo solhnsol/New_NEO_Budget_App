@@ -266,10 +266,9 @@ private struct ListBox<Lines: View>: View {
                 VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, 32 + Theme.Space.s)
             }
         }
-        .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 
