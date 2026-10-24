@@ -288,23 +288,22 @@ private struct AllocationRow: View {
     var anchorDy: CGFloat?
 
     var body: some View {
-        // Written like the rows outside events: a line out of the timeline at the moment it happened, bending to this row, then the
-        // category icon (if classified), the name and the amount.
+        // Inside an event the moment does not matter, so there is no line out of the timeline: the transaction is a white bar under the
+        // title (never over it) with the category icon, the name and the amount, the amount bold so it reads first.
         HStack(spacing: 0) {
-            Color.clear.frame(width: (LeaderLayout.lineEnd - 6) * scale)
             CategoryMark(category: item.categoryID, scale: scale)
             Color.clear.frame(width: LeaderLayout.textGap * scale)
             Text(item.title ?? "거래").lineLimit(1)
             Spacer(minLength: 2)
             Text((item.flow == .refund ? "−" : "") + Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency))
-                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                .font(.system(size: 10 * scale, weight: .bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(item.flow == .refund ? Theme.accent : Theme.textPrimary)
         }
         .font(.system(size: 10 * scale))
-        .foregroundStyle(item.flow == .refund ? Color.green : Color.primary)          // a transaction keeps full contrast
+        .foregroundStyle(Theme.textPrimary)          // a transaction keeps full contrast
+        .padding(.leading, 3 * scale).padding(.trailing, 6 * scale)
         .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
-        .overlay(alignment: .topLeading) {
-            LeaderMark(originX: -6, dy: anchorDy ?? 0, height: (InlineAllocationPlan.rowHeight - 2) * scale, scale: scale)
-        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6 * scale, style: .continuous))
     }
 }
 
