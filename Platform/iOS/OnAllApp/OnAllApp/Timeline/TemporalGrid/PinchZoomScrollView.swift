@@ -25,6 +25,8 @@ final class PinchZoomModel: ObservableObject {
     /// end of the day can be brought above it. Not published: it changes the scroll, not what is drawn.
     var bottomInset: CGFloat = 0 { didSet { if abs(oldValue - bottomInset) > 0.5 { applyBottomInset?() } } }
     var applyBottomInset: (() -> Void)?
+    /// How far the content shows above the top edge of the scroll view (the header drawn over the grid is translucent). Does not move anything.
+    var topOverhang: CGFloat = 0
     /// Set by the scroll view: eases the scroll to an offset over a duration (the zoom stays). Ignored while the person has the scroll in hand.
     var scrollTo: ((CGFloat, CFTimeInterval) -> Void)?
     /// The offsets the scroll can rest at now (with `bottomInset`).
@@ -161,7 +163,17 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
     final class Container: UIView {
         var onLayout: ((CGSize) -> Void)?
-        override func layoutSubviews() { super.layoutSubviews(); onLayout?(bounds.size) }
+        /// How far the content may show above the top edge (under a translucent header drawn over the grid). Only the top is open: the bottom is cut at the
+        /// edge as before. The geometry stays the container's own, so the scroll's offsets and the touch points are unchanged.
+        var overhang: () -> CGFloat = { 0 }
+        private let reach = CAShapeLayer()
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let top = overhang()
+            reach.path = UIBezierPath(rect: CGRect(x: 0, y: -top, width: bounds.width, height: bounds.height + top)).cgPath
+            if top > 0 { layer.mask = reach } else { layer.mask = nil }
+            onLayout?(bounds.size)
+        }
     }
 
     // MARK: Coordinator
@@ -230,13 +242,15 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         func attach(to container: Container, root: AnyView) {
             self.container = container
-            container.clipsToBounds = true
+            container.clipsToBounds = false
+            container.overhang = { [weak self] in self?.model.topOverhang ?? 0 }
             container.backgroundColor = .clear
             scroll.frame = container.bounds
             scroll.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             scroll.alwaysBounceVertical = true
             scroll.showsVerticalScrollIndicator = true
             scroll.isDirectionalLockEnabled = true
+            scroll.clipsToBounds = false
             scroll.contentInsetAdjustmentBehavior = .never
             scroll.delegate = self
             container.addSubview(scroll)

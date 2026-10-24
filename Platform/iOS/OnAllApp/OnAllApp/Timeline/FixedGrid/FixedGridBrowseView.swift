@@ -67,6 +67,8 @@ struct FixedGridBrowseView: View {
     @State private var preEditOffset: CGFloat?
     @State private var keyboardDuration: TimeInterval = 0.25
     @State private var releaseInset: Task<Void, Never>?
+    /// The scroll is on its way back to where the session began: the anchor that holds the time at the middle through a re-plan must not pull it away.
+    @State private var restoringScroll = false
     @State private var gridFrame: CGRect = .zero
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -171,12 +173,16 @@ struct FixedGridBrowseView: View {
         _ = carrying                                                     // … or a transaction
         return GeometryReader { outer in
             VStack(spacing: 0) {
-                headerStrip(width: outer.size.width)
-                Divider()
+                VStack(spacing: 0) {
+                    headerStrip(width: outer.size.width)
+                    Divider()
+                }
+                .background(.ultraThinMaterial)             // the grid is drawn under it (`topOverhang`), so what scrolled up shows through
+                .zIndex(1)
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
             }
-            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
+            .onAppear { room.width = outer.size.width; knownWidth = outer.size.width; pinch.topOverhang = DayHeaderStrip.height + 1 }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
         }
         .confirmationDialog("무엇을 선택할까요?", isPresented: Binding(get: { choice != nil }, set: { if !$0 { choice = nil } }), titleVisibility: .visible, presenting: choice) { choice in
@@ -401,6 +407,7 @@ struct FixedGridBrowseView: View {
     private func sessionChanged() {
         if edit.session != nil {
             releaseInset?.cancel()
+            restoringScroll = false
             if preEditOffset == nil { preEditOffset = pinch.currentOffset?() }
             keepChosenCardVisible()
             return
@@ -409,12 +416,13 @@ struct FixedGridBrowseView: View {
         if let back = preEditOffset {
             let range = PinchZoomMath.offsetRange(zoom: pinch.zoom, viewport: pinch.viewportHeight)
             let target = min(max(back, range.lowerBound), range.upperBound)
-            if let now = pinch.currentOffset?(), abs(now - target) > 0.5 { pinch.scrollTo?(target, duration) }
+            if room.unfreezeAnchor == nil, let now = pinch.currentOffset?(), abs(now - target) > 0.5 { restoringScroll = true; pinch.scrollTo?(target, duration) }
         }
         preEditOffset = nil
         releaseInset?.cancel()
         releaseInset = Task { @MainActor in
             try? await Task.sleep(for: .seconds(duration + 0.1))
+            restoringScroll = false
             guard !Task.isCancelled, edit.session == nil else { return }
             pinch.bottomInset = 0
         }
@@ -1219,6 +1227,7 @@ struct FixedGridBrowseView: View {
     private func holdAnchor() {
         let userMoved = pinch.consumeUserMoved()
         let viewport = pinch.viewportHeight
+        if restoringScroll, room.unfreezeAnchor == nil { anchorState.release(at: move.position); return }
         guard viewport > 1, room.width > Self.gutter else { anchorState.release(at: move.position); room.unfreezeAnchor = nil; return }
         let inputs = inputs(viewport: viewport, width: room.width)
         let bounds = move.bounds
