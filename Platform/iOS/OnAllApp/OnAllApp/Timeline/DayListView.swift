@@ -57,21 +57,30 @@ struct DayListView: View {
     }
 }
 
+private extension View {
+    /// A row of the list that opens on a tap. A tap, not a `Button`: a button inside the list's scroll view still fires when the finger is lifted over it
+    /// after a sideways swipe (the rows are as wide as the screen, so the finger never leaves them), which opened the card the swipe began on. A tap gesture
+    /// fails as soon as the finger has moved, so a swipe (the day swipe, a scroll) never opens anything.
+    func listTap(_ action: @escaping () -> Void) -> some View {
+        contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .accessibilityAddTraits(.isButton)
+    }
+}
+
 private struct AllDayLine: View {
     let item: AllDayItem
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: Theme.Space.s) {
-                Circle().fill(Color(hex: item.calendarColorHex) ?? Theme.accent).frame(width: 8, height: 8)
-                Text(item.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text("하루 종일").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                Spacer()
-            }
-            .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+        HStack(spacing: Theme.Space.s) {
+            Circle().fill(Color(hex: item.calendarColorHex) ?? Theme.accent).frame(width: 8, height: 8)
+            Text(item.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Text("하루 종일").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+        .listTap(onTap)
     }
 }
 
@@ -85,21 +94,18 @@ private struct EventCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Button(action: onSelect) {
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Spacer()
-                        if let spend = block.allocatedSpend.first {
-                            Text(Formatting.aggregate(spend)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
-                        }
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Spacer()
+                    if let spend = block.allocatedSpend.first {
+                        Text(Formatting.aggregate(spend)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
                     }
-                    Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier))
-                        .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                 }
-                .contentShape(Rectangle())
+                Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier))
+                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
-            .buttonStyle(.plain)
+            .listTap(onSelect)
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(
                     title: model.transactionOverrides[item.transactionID]?.title ?? item.title ?? "거래",
@@ -143,22 +149,19 @@ private struct DayListTransactionLine: View {
     }
 
     var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: Theme.Space.m) {
-                IconTile(
-                    systemName: CategoryIcon.symbol(for: category) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"),
-                    tint: isRefund ? Theme.accent : Theme.textSecondary, size: 36
-                )
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer(minLength: Theme.Space.s)
-                Text((isRefund ? "+" : "") + amountText).font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
+        HStack(spacing: Theme.Space.m) {
+            IconTile(
+                systemName: CategoryIcon.symbol(for: category) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"),
+                tint: isRefund ? Theme.accent : Theme.textSecondary, size: 36
+            )
+            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
-            .contentShape(Rectangle())
+            Spacer(minLength: Theme.Space.s)
+            Text((isRefund ? "+" : "") + amountText).font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
         }
-        .buttonStyle(.plain)
+        .listTap(onTap)
     }
 }
 
