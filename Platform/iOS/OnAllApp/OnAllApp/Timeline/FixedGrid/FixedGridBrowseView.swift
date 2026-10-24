@@ -170,7 +170,6 @@ struct FixedGridBrowseView: View {
                 Divider()
                 if ProbeExperiment.editProbe { EditProbeLine(text: editProbeText) }
                 grid(width: outer.size.width)
-                editSlot
             }
             .onAppear { room.width = outer.size.width; knownWidth = outer.size.width }
             .onChange(of: outer.size.width) { _, width in room.width = width; knownWidth = width }
@@ -337,18 +336,6 @@ struct FixedGridBrowseView: View {
         Task { @MainActor in if editor?.scopeQuestion?.id == id { editor?.answer(nil) } }
     }
 
-    /// Under the grid, where the day totals used to be: kept empty so the grid does not change size, and holding the edit bar (title, time, cancel / done)
-    /// while a session is open. Renaming moves the bar onto the keyboard instead (`editBar`).
-    private var editSlot: some View {
-        ZStack {
-            if let editor, edit.session != nil, !editor.isRenaming { sessionBar(editor) }
-        }
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity)
-        .frame(height: 68)
-        .animation(.easeOut(duration: 0.18), value: edit.session != nil)
-    }
-
     private func sessionBar(_ editor: FixedGridEditor) -> some View {
         EditSessionBar(
             editor: editor, zone: zone, calendars: model.calendars, people: model.catalog.people.filter { !$0.isSelf }, isCommitting: edit.session?.committing == true,
@@ -357,10 +344,11 @@ struct FixedGridBrowseView: View {
         )
     }
 
-    /// Over the grid: the messages (shown above the bar, and on their own after a session), and the bar while the title is renamed (it rides on the keyboard).
+    /// Floating over the bottom of the grid (the grid itself runs down to the bottom edge and never changes size): the messages (above the bar, and on
+    /// their own after a session) and the edit bar while a session is open. The bar is the same one while the title is renamed; it only rides up on the keyboard.
     private var editBar: some View {
-        let renaming = edit.session != nil && editor?.isRenaming == true
-        let hasContent = editor?.message != nil || renaming
+        let open = edit.session != nil
+        let hasContent = editor?.message != nil || open
         return VStack(spacing: 8) {
             if let message = editor?.message {
                 EditMessageView(message: message)
@@ -370,7 +358,7 @@ struct FixedGridBrowseView: View {
                     }
                     .onTapGesture { editor?.dismissMessage(message.id) }
             }
-            if let editor, renaming { sessionBar(editor) }
+            if let editor, open { sessionBar(editor) }
         }
         .padding(.horizontal, 12)
         .padding(.bottom, hasContent ? 8 + keyboardOverlap : 0)
