@@ -181,17 +181,21 @@ struct OverflowCardView: View {
     var body: some View {
         // A summary is not at a moment of the day, so it has no line to the timeline: it is written as information, at the same x as an
         // event's own text.
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
         HStack(spacing: 0) {
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
+            // It is a chip like a single transaction's (white, hairline edge), only as long as its text.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()
                 Text(Self.countOnly(item)).minimumScaleFactor(0.5)
             }
-            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 8 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(Theme.divider, lineWidth: 0.75))
             Spacer(minLength: 2)
         }
         .padding(.leading, 6).padding(.trailing, 6)
-        .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)

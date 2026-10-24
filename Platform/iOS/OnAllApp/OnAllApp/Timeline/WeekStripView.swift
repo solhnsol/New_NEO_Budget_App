@@ -69,7 +69,7 @@ struct WeekStripView: View {
         return VStack(spacing: 2) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
-                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.system(.caption2)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
                 }
             }
             GeometryReader { geometry in
@@ -244,7 +244,7 @@ struct WeekStripView: View {
     private func capsuleShape(lead: Double, trail: Double, offset: Double, cell: CGFloat) -> some View {
         let start = (CGFloat(lead) - CGFloat(offset) + 0.5) * cell
         let end = (CGFloat(trail) - CGFloat(offset) + 2) * cell - 4
-        return Capsule().fill(Color(.systemFill))
+        return Capsule().fill(Theme.fill)
             .frame(width: max(Self.ball, end - start), height: Self.ball)
             .offset(x: start, y: (Self.numberRow - Self.ball) / 2)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -259,11 +259,11 @@ struct WeekStripView: View {
     private func circles(cell: CGFloat, offset: Double) -> some View {
         ZStack(alignment: .topLeading) {
             ForEach(ghosts) { ghost in
-                FadingBall(color: ghost.isToday ? .accentColor : .primary, size: Self.ball, fades: ghost.fades)
+                FadingBall(color: ghost.isToday ? Theme.accent : Theme.textPrimary, size: Self.ball, fades: ghost.fades)
                     .transition(.identity)
                     .offset(x: (CGFloat(ghost.day) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
             }
-            GrowingBall(color: ball == today.daysSinceUnixEpoch ? .accentColor : .primary, size: Self.ball, grows: ballGrows)
+            GrowingBall(color: ball == today.daysSinceUnixEpoch ? Theme.accent : Theme.textPrimary, size: Self.ball, grows: ballGrows)
                 .id(ballID)
                 .transition(.identity)
                 .offset(x: (CGFloat(ball) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
@@ -288,8 +288,8 @@ struct WeekStripView: View {
             }
             .frame(height: Self.numberRow)
             HStack(spacing: 3) {
-                Circle().fill((info?.eventCount ?? 0) > 0 ? Color.accentColor : .clear).frame(width: 5, height: 5)
-                Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Color.orange : .clear).frame(width: 5, height: 5)
+                Circle().fill((info?.eventCount ?? 0) > 0 ? Theme.accent : .clear).frame(width: 5, height: 5)
+                Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
             }
             .frame(height: 9)
         }
@@ -298,9 +298,9 @@ struct WeekStripView: View {
 
     private func numberColor(_ role: Role, _ day: LocalDate) -> Color {
         switch role {
-        case .first: return day == today ? .white : Color(.systemBackground)
-        case .second: return .secondary
-        case .none: return day == today ? Color.accentColor : .primary
+        case .first: return day == today ? .white : Theme.surface
+        case .second: return Theme.textSecondary
+        case .none: return day == today ? Theme.accent : Theme.textPrimary
         }
     }
 }
@@ -313,7 +313,7 @@ struct AllDayRow: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(items, id: \.id) { item in
-                    let color = Color(hex: item.calendarColorHex) ?? .accentColor
+                    let color = Color(hex: item.calendarColorHex) ?? Theme.accent
                     Button { onSelect(item) } label: {
                         Text(item.title)
                             .font(.footnote.weight(.medium))
