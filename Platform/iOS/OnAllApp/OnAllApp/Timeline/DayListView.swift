@@ -176,16 +176,23 @@ private struct DaySection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
-                .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary)
-            if let timeline {
-                let plan = DayListPlan.make(timeline)
-                if plan.items.isEmpty {
+            let plan = timeline.map(DayListPlan.make)
+            HStack(spacing: Theme.Space.s) {
+                Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
+                    .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary).fixedSize()
+                // All-day events sit beside the date, as small chips.
+                ForEach(timeline?.allDay.sorted { $0.id < $1.id } ?? [], id: \.id) { allDay in
+                    AllDayChip(item: allDay) { onSelect(.allDay(allDay)) }
+                }
+                Spacer(minLength: 0)
+            }
+            if let timeline, let plan {
+                if plan.items.isEmpty && timeline.allDay.isEmpty {
                     Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.xs)
                 }
                 ForEach(plan.items) { item in
                     switch item {
-                    case let .allDay(allDay): AllDayLine(item: allDay) { onSelect(.allDay(allDay)) }
+                    case .allDay: EmptyView()
                     case let .event(block):
                         EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
                     case let .daily(group):
@@ -214,18 +221,18 @@ private extension View {
     }
 }
 
-private struct AllDayLine: View {
+private struct AllDayChip: View {
     let item: AllDayItem
     let onTap: () -> Void
 
     var body: some View {
-        HStack(spacing: Theme.Space.s) {
-            Circle().fill(Color(hex: item.calendarColorHex) ?? Theme.accent).frame(width: 8, height: 8)
-            Text(item.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            Text("하루 종일").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-            Spacer()
+        let color = Color(hex: item.calendarColorHex) ?? Theme.accent
+        HStack(spacing: Theme.Space.xs) {
+            Circle().fill(color).frame(width: 6, height: 6)
+            Text(item.title).font(Theme.Typo.caption.weight(.medium)).foregroundStyle(color).lineLimit(1)
         }
-        .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
+        .padding(.horizontal, Theme.Space.s).padding(.vertical, Theme.Space.xs)
+        .background(color.opacity(0.14), in: Capsule())
         .listTap(onTap)
     }
 }
