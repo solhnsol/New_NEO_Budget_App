@@ -235,31 +235,35 @@ private struct AllDayLine: View {
 private struct ListBox<Lines: View>: View {
     let title: String
     let timeText: String
+    let totalText: String?
     let color: Color
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
+    /// A box shows its name, time and total; its transactions open under it on a tap of the chevron.
+    @State private var expanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                 Text(title).font(Theme.Typo.label.weight(.semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Spacer(minLength: Theme.Space.s)
+                if let totalText { Text(totalText).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary) }
                 if hasLines {
-                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    Spacer(minLength: 0)
-                } else {
-                    Spacer(minLength: Theme.Space.s)
-                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(expanded ? 180 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
+                        .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
                 }
             }
             .contentShape(Rectangle())
-            .listTap { onSelect?() }
-            if hasLines {
+            .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
+            if hasLines && expanded {
                 VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, Theme.Space.xl)
             }
         }
         .padding(.horizontal, Theme.Space.l)
-        .padding(.vertical, hasLines ? Theme.Space.m : Theme.Space.s)
+        .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
         .overlay(alignment: .leading) {
@@ -279,6 +283,7 @@ private struct EventCard: View {
     var body: some View {
         ListBox(
             title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
+            totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
             color: Color(hex: block.calendarColorHex) ?? Theme.accent, hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
@@ -305,10 +310,13 @@ private struct DailyCard: View {
 
     var body: some View {
         let start = timeline.dayStartUnixMilliseconds
-        ListBox(
+        let currency = group.markers[0].amount.currency
+        let net = group.markers.filter { $0.amount.currency == currency }.reduce(Int64(0)) { $0 + ($1.flow == .refund ? -$1.amount.minorUnits : $1.amount.minorUnits) }
+        let total: String? = Formatting.money(net, currency: currency)
+        return ListBox(
             title: "일상",
             timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
-            color: Theme.textTertiary, hasLines: true
+            totalText: total, color: Theme.textTertiary, hasLines: true
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
