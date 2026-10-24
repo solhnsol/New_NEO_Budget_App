@@ -1,0 +1,100 @@
+## experiment base / pass 1
+sections 5; frames 1683; late 14 (0.83%); worst 42.5 ms; late turn ms p50 19.4 max 27.8; sum of late turns 243 ms
+  late turns: app 18.9 ms, unattributed 224.4 ms; marks {'dragBegan': 8, 'boundary': 6}
+  app spans in late frames: {'hostLayout': 17.9, 'applyMove': 12.2, 'gridBuild': 7.8, 'haptics': 7.6, 'screenBody': 2.6, 'outerBody': 1.4}; haptics max per section [1.789, 2.116, 1.903, 1.838, 1.82]; engine spans per section [5, 3, 3, 5, 2]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 11.7 max 31.7; dayLanded n=20 mean 5.1 max 8.4; dragBegan n=25 mean 11.7 max 33.5; released n=30 mean 3.0 max 12.2; rested n=15 mean 11.5 max 18.8; selectedDayChanged n=20 mean 11.4 max 18.8
+## experiment base / pass 2
+sections 5; frames 1816; late 8 (0.44%); worst 48.8 ms; late turn ms p50 14.6 max 30.2; sum of late turns 111 ms
+  late turns: app 9.0 ms, unattributed 101.7 ms; marks {'boundary': 7, 'dragBegan': 3, 'selectedDayChanged': 2, 'dayLanded': 2}
+  app spans in late frames: {'gridBuild': 6.1, 'applyMove': 5.5, 'hostLayout': 3.3, 'screenBody': 2.0, 'haptics': 1.3, 'outerBody': 1.2}; haptics max per section [0.247, 0.171, 0.212, 0.333, 0.214]; engine spans per section [2, 2, 2, 2, 3]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 13.0 max 35.5; dayLanded n=20 mean 5.8 max 13.1; dragBegan n=25 mean 8.9 max 21.1; released n=30 mean 2.3 max 4.4; rested n=15 mean 12.7 max 20.6; selectedDayChanged n=20 mean 13.5 max 21.1
+## experiment h1strip / pass 1
+sections 5; frames 1682; late 6 (0.36%); worst 42.9 ms; late turn ms p50 25.9 max 26.0; sum of late turns 121 ms
+  late turns: app 10.0 ms, unattributed 110.7 ms; marks {'dragBegan': 5, 'boundary': 1}
+  app spans in late frames: {'hostLayout': 7.2, 'gridBuild': 4.3, 'applyMove': 4.1, 'haptics': 1.7, 'screenBody': 1.4, 'outerBody': 0.8}; haptics max per section [1.833, 1.802, 1.725, 1.829, 1.88]; engine spans per section [3, 3, 3, 3, 3]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 5.9 max 17.6; dayLanded n=20 mean 3.8 max 7.3; dragBegan n=25 mean 12.0 max 31.6; released n=30 mean 2.2 max 4.5; rested n=15 mean 14.3 max 22.9; selectedDayChanged n=20 mean 13.2 max 22.9
+## experiment h1strip / pass 2
+sections 5; frames 1807; late 16 (0.89%); worst 44.8 ms; late turn ms p50 16.4 max 19.0; sum of late turns 178 ms
+  late turns: app 11.0 ms, unattributed 166.9 ms; marks {'selectedDayChanged': 12, 'dayLanded': 12, 'dragBegan': 12, 'rested': 7, 'boundary': 5}
+  app spans in late frames: {'gridBuild': 9.8, 'hostLayout': 6.4, 'applyMove': 5.8, 'screenBody': 4.1, 'outerBody': 2.8, 'haptics': 0.8}; haptics max per section [0.229, 0.222, 0.366, 0.273, 0.33]; engine spans per section [2, 2, 2, 2, 2]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 8.0 max 28.5; dayLanded n=20 mean 6.6 max 14.0; dragBegan n=25 mean 12.2 max 28.5; released n=30 mean 2.0 max 4.8; rested n=15 mean 18.4 max 28.0; selectedDayChanged n=20 mean 21.7 max 28.5
+## experiment h1layout / pass 1
+sections 5; frames 1679; late 8 (0.48%); worst 38.1 ms; late turn ms p50 16.2 max 25.2; sum of late turns 133 ms
+  late turns: app 12.8 ms, unattributed 119.9 ms; marks {'(none)': 3, 'boundary': 3, 'dragBegan': 2}
+  app spans in late frames: {'hostLayout': 12.4, 'applyMove': 7.5, 'haptics': 4.8, 'gridBuild': 3.2, 'screenBody': 1.4, 'outerBody': 0.6}; haptics max per section [1.921, 1.969, 1.765, 2.189, 2.581]; engine spans per section [3, 3, 3, 3, 3]; {'engine runs': 44, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 10.6 max 23.0; dayLanded n=20 mean 5.3 max 8.0; dragBegan n=25 mean 9.5 max 28.0; released n=30 mean 3.2 max 9.0; rested n=15 mean 10.9 max 17.1; selectedDayChanged n=20 mean 11.2 max 17.7
+## experiment h1layout / pass 2
+sections 5; frames 1808; late 13 (0.72%); worst 41.2 ms; late turn ms p50 5.2 max 19.3; sum of late turns 108 ms
+  late turns: app 9.5 ms, unattributed 98.7 ms; marks {'boundary': 8, 'dragBegan': 7, 'dayLanded': 2, 'selectedDayChanged': 2}
+  app spans in late frames: {'gridBuild': 7.4, 'applyMove': 6.6, 'hostLayout': 4.0, 'screenBody': 3.2, 'outerBody': 1.6, 'haptics': 1.1}; haptics max per section [0.239, 0.243, 0.236, 0.261, 0.225]; engine spans per section [2, 1, 2, 2, 2]; {'engine runs': 44, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 12.6 max 24.5; dayLanded n=20 mean 5.8 max 11.1; dragBegan n=25 mean 8.4 max 22.0; released n=30 mean 2.1 max 4.0; rested n=15 mean 14.0 max 19.9; selectedDayChanged n=20 mean 13.8 max 22.0
+## experiment h1both / pass 1
+sections 5; frames 1678; late 11 (0.66%); worst 49.4 ms; late turn ms p50 24.2 max 26.8; sum of late turns 248 ms
+  late turns: app 15.0 ms, unattributed 232.3 ms; marks {'dragBegan': 9, 'selectedDayChanged': 6, 'dayLanded': 6, 'rested': 4, 'boundary': 2}
+  app spans in late frames: {'hostLayout': 10.0, 'gridBuild': 7.8, 'applyMove': 4.2, 'screenBody': 2.8, 'outerBody': 2.1, 'cacheMerge': 0.5}; haptics max per section [2.392, 2.315, 2.325, 1.794, 2.377]; engine spans per section [3, 3, 3, 5, 3]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 7.4 max 22.4; dayLanded n=20 mean 5.6 max 9.0; dragBegan n=25 mean 14.4 max 31.8; released n=30 mean 2.2 max 5.6; rested n=15 mean 18.4 max 33.6; selectedDayChanged n=20 mean 19.7 max 33.6
+## experiment h1both / pass 2
+sections 5; frames 1817; late 6 (0.33%); worst 40.4 ms; late turn ms p50 17.4 max 18.9; sum of late turns 93 ms
+  late turns: app 6.5 ms, unattributed 86.8 ms; marks {'dayLanded': 6, 'selectedDayChanged': 6, 'dragBegan': 5, 'boundary': 4, 'rested': 2}
+  app spans in late frames: {'gridBuild': 5.4, 'applyMove': 2.9, 'hostLayout': 1.9, 'screenBody': 1.3, 'outerBody': 0.9, 'haptics': 0.6}; haptics max per section [0.24, 0.215, 0.218, 0.159, 0.181]; engine spans per section [2, 2, 2, 2, 2]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 7.2 max 25.5; dayLanded n=20 mean 5.1 max 9.5; dragBegan n=25 mean 11.4 max 25.5; released n=30 mean 2.8 max 7.9; rested n=15 mean 17.0 max 25.8; selectedDayChanged n=20 mean 19.4 max 25.8
+## experiment h2hap / pass 1
+sections 5; frames 1686; late 10 (0.59%); worst 42.7 ms; late turn ms p50 23.0 max 26.4; sum of late turns 196 ms
+  late turns: app 11.9 ms, unattributed 183.6 ms; marks {'boundary': 5, 'dragBegan': 5}
+  app spans in late frames: {'hostLayout': 13.6, 'applyMove': 4.8, 'gridBuild': 4.6, 'haptics': 1.9, 'screenBody': 1.7, 'outerBody': 1.3}; haptics max per section [0.379, 0.348, 0.369, 0.493, 0.281]; engine spans per section [3, 3, 3, 3, 3]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 12.1 max 27.5; dayLanded n=20 mean 4.9 max 9.2; dragBegan n=25 mean 11.3 max 31.4; released n=30 mean 2.5 max 11.2; rested n=15 mean 13.3 max 19.2; selectedDayChanged n=20 mean 13.6 max 19.2
+## experiment h2hap / pass 2
+sections 5; frames 1814; late 5 (0.28%); worst 38.7 ms; late turn ms p50 12.7 max 18.4; sum of late turns 52 ms
+  late turns: app 4.4 ms, unattributed 48.1 ms; marks {'boundary': 4, 'dragBegan': 2, 'dayLanded': 1, 'selectedDayChanged': 1}
+  app spans in late frames: {'gridBuild': 3.0, 'applyMove': 2.6, 'hostLayout': 1.5, 'screenBody': 1.1, 'outerBody': 0.9, 'haptics': 0.6}; haptics max per section [0.466, 0.219, 0.14, 0.251, 0.24]; engine spans per section [2, 2, 2, 2, 2]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 12.8 max 21.6; dayLanded n=20 mean 4.5 max 7.6; dragBegan n=25 mean 9.2 max 21.2; released n=30 mean 3.0 max 11.4; rested n=15 mean 12.4 max 18.8; selectedDayChanged n=20 mean 14.5 max 21.2
+## experiment h3root / pass 1
+sections 5; frames 1679; late 9 (0.54%); worst 44.7 ms; late turn ms p50 20.1 max 25.7; sum of late turns 157 ms
+  late turns: app 12.8 ms, unattributed 144.5 ms; marks {'boundary': 5, 'dragBegan': 4}
+  app spans in late frames: {'applyMove': 9.9, 'hostLayout': 8.0, 'haptics': 7.2, 'gridBuild': 3.1, 'screenBody': 1.5, 'outerBody': 1.1}; haptics max per section [2.423, 2.447, 2.271, 2.483, 2.063]; engine spans per section [3, 3, 3, 3, 5]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 14.0 max 27.4; dayLanded n=20 mean 5.5 max 11.3; dragBegan n=25 mean 14.0 max 32.2; released n=30 mean 1.8 max 10.3; rested n=15 mean 10.9 max 17.7; selectedDayChanged n=20 mean 13.9 max 18.4
+## experiment h3root / pass 2
+sections 5; frames 1820; late 3 (0.16%); worst 36.7 ms; late turn ms p50 13.6 max 17.1; sum of late turns 31 ms
+  late turns: app 2.3 ms, unattributed 28.4 ms; marks {'boundary': 2, 'dragBegan': 1}
+  app spans in late frames: {'applyMove': 1.5, 'gridBuild': 1.1, 'screenBody': 0.9, 'outerBody': 0.5, 'haptics': 0.4, 'hostLayout': 0.3}; haptics max per section [0.201, 0.219, 0.208, 0.089, 0.21]; engine spans per section [2, 2, 2, 2, 2]; {'engine runs': 45, 'partitions held while a day was read': 0, 'axis transitions': 0}
+  turn at mark (incl. next turn): boundary n=40 mean 12.9 max 21.4; dayLanded n=20 mean 6.0 max 8.4; dragBegan n=25 mean 9.1 max 16.5; released n=30 mean 2.9 max 11.5; rested n=15 mean 10.7 max 16.2; selectedDayChanged n=20 mean 12.6 max 16.5
+## before/after swipes / old
+sections 10; frames 3460; late 16 (0.46%); worst 158.3 ms; late turn ms p50 19.2 max 140.6; sum of late turns 523 ms
+  late turns: app 71.6 ms, unattributed 451.1 ms; marks {'dragBegan': 7, 'boundary': 6, 'dayLanded': 6, 'selectedDayChanged': 5, 'rested': 3, '(none)': 3, 'released': 1}
+  app spans in late frames: {'screenBody': 42.3, 'applyMove': 27.3, 'gridBuild': 20.7, 'haptics': 15.4, 'hostLayout': 11.0, 'outerBody': 1.6}; haptics max per section [10.695, 0.215, 2.102, 0.211, 1.992, 0.264, 2.21, 0.264, 1.88, 0.286]; engine spans per section [3, 2, 3, 2, 3, 2, 3, 2, 3, 2]; {'engine runs': 45, 'asked for by a frame': 5, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): boundary n=80 mean 12.8 max 66.1; dayLanded n=40 mean 7.1 max 39.8; dragBegan n=50 mean 9.8 max 26.2; released n=60 mean 2.6 max 12.3; rested n=30 mean 16.1 max 159.8; selectedDayChanged n=40 mean 16.8 max 159.8
+## before/after swipes / new
+sections 10; frames 3478; late 21 (0.60%); worst 43.1 ms; late turn ms p50 15.1 max 27.4; sum of late turns 312 ms
+  late turns: app 76.0 ms, unattributed 236.3 ms; marks {'dragBegan': 8, '(none)': 7, 'boundary': 7, 'released': 2, 'selectedDayChanged': 1, 'dayLanded': 1}
+  app spans in late frames: {'hostLayout': 28.1, 'applyMove': 27.0, 'blend': 26.7, 'haptics': 17.4, 'gridBuild': 11.6, 'screenBody': 3.5}; haptics max per section [1.971, 14.601, 2.167, 0.212, 2.45, 0.206, 2.157, 0.237, 2.458, 0.216]; engine spans per section [4, 3, 5, 1, 3, 2, 3, 2, 3, 2]; {'engine runs': 44, 'asked for by a frame': 7, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 950, 'where they differed': 0}
+  turn at mark (incl. next turn): boundary n=80 mean 12.3 max 30.2; dayLanded n=40 mean 5.4 max 10.3; dragBegan n=50 mean 9.6 max 31.5; released n=60 mean 2.9 max 11.9; rested n=30 mean 12.6 max 20.9; selectedDayChanged n=40 mean 13.7 max 22.3
+## before/after days / old
+sections 5; frames 1179; late 17 (1.44%); worst 50.7 ms; late turn ms p50 20.0 max 25.3; sum of late turns 321 ms
+  late turns: app 29.0 ms, unattributed 292.0 ms; marks {'(none)': 10, 'boundary': 7}
+  app spans in late frames: {'hostLayout': 35.2, 'applyMove': 14.7, 'gridBuild': 9.7, 'haptics': 9.3, 'screenBody': 3.0, 'outerBody': 2.2}; haptics max per section [2.221, 2.202, 2.113, 2.17, 2.386]; engine spans per section [1, 1, 1, 1, 3]; {'engine runs': 25, 'asked for by a frame': 7, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): boundary n=12 mean 21.6 max 35.1; dayLanded n=10 mean 4.1 max 6.3; rested n=10 mean 15.1 max 20.4; selectedDayChanged n=10 mean 15.1 max 20.4
+## before/after days / new
+sections 5; frames 1186; late 10 (0.84%); worst 43.1 ms; late turn ms p50 14.3 max 21.5; sum of late turns 145 ms
+  late turns: app 37.6 ms, unattributed 107.4 ms; marks {'(none)': 6, 'boundary': 4}
+  app spans in late frames: {'hostLayout': 26.1, 'blend': 18.8, 'applyMove': 6.6, 'gridBuild': 4.9, 'haptics': 4.1, 'screenBody': 1.4}; haptics max per section [2.016, 1.981, 1.943, 1.986, 2.054]; engine spans per section [1, 3, 1]; {'engine runs': 23, 'asked for by a frame': 7, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 368, 'where they differed': 0}
+  turn at mark (incl. next turn): boundary n=14 mean 14.0 max 21.6; dayLanded n=10 mean 3.8 max 7.8; rested n=10 mean 16.2 max 20.5; selectedDayChanged n=10 mean 16.2 max 20.5
+## before/after zoom / old
+sections 5; frames 1009; late 4 (0.40%); worst 41.7 ms; late turn ms p50 14.1 max 17.4; sum of late turns 57 ms
+  late turns: app 7.9 ms, unattributed 48.8 ms; marks {'pinchBegan': 3, '(none)': 1}
+  app spans in late frames: {'hostLayout': 10.5, 'pinchStep': 4.4, 'gridBuild': 2.3}; haptics max per section []; engine spans per section []; {'engine runs': 20, 'asked for by a frame': 5, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): pinchEnded n=5 mean 1.2 max 1.6
+## before/after zoom / new
+sections 5; frames 1011; late 1 (0.10%); worst 33.3 ms; late turn ms p50 13.6 max 13.6; sum of late turns 14 ms
+  late turns: app 1.6 ms, unattributed 12.0 ms; marks {'pinchBegan': 1}
+  app spans in late frames: {'hostLayout': 2.6, 'pinchStep': 1.5, 'gridBuild': 0.8}; haptics max per section []; engine spans per section []; {'engine runs': 19, 'asked for by a frame': 5, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): pinchEnded n=5 mean 1.4 max 1.6
+## before/after rubber / old
+sections 5; frames 1772; late 7 (0.40%); worst 42.8 ms; late turn ms p50 16.6 max 26.5; sum of late turns 123 ms
+  late turns: app 16.1 ms, unattributed 107.1 ms; marks {'pinchBegan': 5, 'pinchEnded': 2}
+  app spans in late frames: {'hostLayout': 14.5, 'gridBuild': 6.1, 'pinchStep': 3.7, 'engine': 1.4, 'warmAhead': 0.6, 'screenBody': 0.2}; haptics max per section []; engine spans per section [6, 6, 6, 6, 6]; {'engine runs': 50, 'asked for by a frame': 20, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): pinchEnded n=20 mean 5.8 max 18.6
+## before/after rubber / new
+sections 5; frames 1778; late 7 (0.39%); worst 33.6 ms; late turn ms p50 11.7 max 23.4; sum of late turns 98 ms
+  late turns: app 13.7 ms, unattributed 84.1 ms; marks {'pinchBegan': 5, 'pinchEnded': 2}
+  app spans in late frames: {'hostLayout': 11.4, 'pinchStep': 5.7, 'gridBuild': 4.7, 'warmAhead': 1.9, 'engine': 1.5, 'screenBody': 0.1}; haptics max per section []; engine spans per section [4, 4, 4, 4, 4]; {'engine runs': 40, 'asked for by a frame': 5, 'partitions held while a day was read': 0, 'axis transitions': 0, 'frames drawing a day from two decisions': 0, 'where they differed': 0}
+  turn at mark (incl. next turn): pinchEnded n=20 mean 6.1 max 19.0

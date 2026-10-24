@@ -1,0 +1,25 @@
+script days zoom 1.00 seconds 4.00
+step cost: mean 0.070 / p50 0.051 / p99 0.293 / max 2.232 ms (n=335)
+step interval: mean 9.688 / p50 9.135 / p99 17.716 / max 69.668 ms (n=334)
+display frames: mean 16.737 / p50 16.667 / p99 16.667 / max 33.333 ms (n=237); late (>1.5x median) 1 of 237
+view build: 0.09/0.07/6.22 ms (n=379)
+partitions: background 4, planned in a frame 1, engine runs 4, found 1830
+day reads during script: 2, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+PROBE days
+recorded 4.00 s; display frames n=237 mean 16.737 p50 16.667 p99 16.667 max 33.333 ms; nominal 16.67 ms; late (>1.5x) 1
+main run-loop turns busy: n=934 mean 1.069 p50 0.386 p99 7.170 max 23.993 ms
+  screenBody: n=361 mean 0.030 p50 0.026 p99 0.094 max 0.232 ms
+  gridBuild: n=363 mean 0.073 p50 0.065 p99 0.173 max 0.266 ms
+  hostLayout: n=199 mean 0.693 p50 0.609 p99 1.796 max 2.181 ms
+  applyMove: n=335 mean 0.067 p50 0.049 p99 0.268 max 2.230 ms
+  warmLand: n=1 mean 0.002 p50 0.002 p99 0.002 max 0.002 ms
+  cacheMerge: n=17 mean 0.021 p50 0.017 p99 0.084 max 0.084 ms
+  haptics: n=2 mean 1.095 p50 2.145 p99 2.145 max 2.145 ms
+  outerBody: n=19 mean 0.066 p50 0.062 p99 0.129 max 0.129 ms
+  weekStripBody: n=18 mean 0.013 p50 0.011 p99 0.021 max 0.021 ms
+  summaryBody: n=2 mean 0.006 p50 0.006 p99 0.006 max 0.006 ms
+marks: boundary 2, dayLanded 2, rested 2
+  late +0.557s 33.3 ms: busiest turn 19.1 ms (app 0.7, unattributed 18.4) [hostLayout 1.0, gridBuild 0.5, applyMove 0.2, screenBody 0.1, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0] marks []
+late frames, summed: app spans 0.7 ms, unattributed 18.4 ms; by kind (inclusive) [hostLayout 1.0, gridBuild 0.5, applyMove 0.2, screenBody 0.1, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0]
+late frames near a mark: 

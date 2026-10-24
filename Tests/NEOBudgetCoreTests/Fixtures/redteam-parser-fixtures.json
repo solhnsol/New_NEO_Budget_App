@@ -1,0 +1,33 @@
+{
+  "negative": [
+    {"id":"neg-declined","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"승인 거절","body":"12,300원 한도초과\n승인번호 777"},
+    {"id":"neg-scheduled","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"예약이체 등록","body":"20,000원\n거래번호 S1"},
+    {"id":"neg-request","source":{"applicationIdentifier":"fixture.pay"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"송금 요청","body":"20,000원을 받아주세요\n거래번호 R1"},
+    {"id":"neg-limit","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"이체한도 변경","body":"5,000,000원으로 변경\n거래번호 L1"},
+    {"id":"neg-ad","source":{"applicationIdentifier":"fixture.pay"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"혜택 이벤트","body":"결제 시 최대 10,000원 캐시백\n거래번호 AD1"},
+    {"id":"neg-payment-pending","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"결제 대기","body":"5,000원\n거래번호 PD1"},
+    {"id":"neg-payment-pending-compact","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"결제대기","body":"5,000원\n거래번호 PD2"},
+    {"id":"neg-approval-pending","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"승인 대기","body":"5,000원\n승인번호 PD3"},
+    {"id":"neg-declined-compact","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"승인거절","body":"12,300원\n승인번호 778"}
+  ],
+  "directions": [
+    {"kind":"deposit","direction":"inflow","input":{"id":"dir-deposit","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"12,000원 입금","body":"가상상대 → 내 통장"}},
+    {"kind":"withdrawal","direction":"outflow","input":{"id":"dir-withdrawal","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"12,000원 출금","body":"내 통장 → 가상상대"}},
+    {"kind":"transferIn","direction":"inflow","input":{"id":"dir-transfer-in","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"이체 입금","body":"200,000원\n거래번호 T-IN"}},
+    {"kind":"transferOut","direction":"outflow","input":{"id":"dir-transfer-out","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"이체 출금","body":"200,000원\n거래번호 T-OUT"}},
+    {"kind":"withdrawal","direction":"outflow","input":{"id":"dir-atm","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"ATM 출금","body":"100,000원\n거래번호 ATM1"}}
+  ],
+  "amounts": [
+    {"outcome":"candidate","amount":10000,"input":{"id":"amt-partial-cancel","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"승인취소","body":"총 30,000원 중 10,000원 취소\n원승인번호 O1\n승인번호 C1"}},
+    {"outcome":"candidate","amount":12300,"input":{"id":"amt-cumulative","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"카드 알림","body":"누적 사용액 450,000원\n승인 12,300원\n승인번호 N2"}},
+    {"outcome":"candidate","amount":12300,"input":{"id":"amt-remaining-limit","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"카드 알림","body":"승인 12,300원 일시불\n이용한도 5,000,000원\n남은한도 1,550,000원\n승인번호 N3"}},
+    {"outcome":"amountMissing","input":{"id":"amt-limit-only","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"카드 승인","body":"신용 5678 승인\n잔여한도 1,550,000원\n승인번호 X1"}},
+    {"outcome":"amountMissing","input":{"id":"amt-usage-only","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"카드 승인","body":"신용 5678 승인\n이번달 사용액 450,000원\n승인번호 X2"}},
+    {"outcome":"amountMissing","input":{"id":"amt-balance-only","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"출금","body":"현재 잔고 70,000원\n거래번호 X3"}},
+    {"outcome":"candidate","amount":30000,"input":{"id":"amt-oneline-jango","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"출금","body":"출금 30,000원 잔고 70,000원\n거래번호 X4"}},
+    {"outcome":"candidate","amount":12000,"input":{"id":"amt-balance","source":{"applicationIdentifier":"fixture.bank"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"[출금]","body":"가상상대 12,000원 000***계좌 잔액 100,000원 01/01 09:00:00"}},
+    {"outcome":"amountUnparseable","input":{"id":"amt-fraction","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"승인","body":"5,000.50원\n승인번호 N4"}},
+    {"outcome":"unsupportedCurrency","input":{"id":"amt-fx","source":{"applicationIdentifier":"fixture.card"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"해외승인","body":"USD 12.34 (약 16,800원)\n승인번호 N7"}},
+    {"outcome":"amountAmbiguous","input":{"id":"amt-ambiguous","source":{"applicationIdentifier":"fixture.pay"},"capturedAtUnixMilliseconds":1790000000000,"notificationAtUnixMilliseconds":1790000000000,"title":"결제","body":"1,234원 / 5,678원 결제"}}
+  ]
+}

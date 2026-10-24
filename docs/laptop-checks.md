@@ -1,0 +1,54 @@
+# 노트북 확인 목록
+
+클라우드에서는 Swift 패키지 테스트(`swift test`)만 돌린다. Xcode·시뮬레이터·실기기가 필요한 확인은 여기에 쌓아 두고, 노트북이 연결될 때 한 번에 실행한다. 확인한 항목은 결과와 함께 지운다.
+
+## 공통
+
+```zsh
+git fetch origin && git checkout claude/project-thread-hstee5
+tools/dev/check.sh full
+```
+
+## 대기 중
+
+10/16 오후 노트북 실행(hstee5 `36c0417` 빌드·설치)은 세션이 응답을 멈춰 중단됐고 앱 테스트 결과가 남지 않았다. 아래 `check.sh full` 항목은 모두 다시 돌린다.
+
+| 브랜치/커밋 | 확인할 것 | 방법 |
+|---|---|---|
+| `claude/project-thread-3pg436` | 앱 빌드와 앱 테스트 통과 (새 `DayRenderPlanTests` 항목 포함). 화면 코드는 클라우드에서 컴파일하지 못했다. 첫 확인(10/16)에서 만들기·이동·칩·핸들·완료·취소는 통과. | `tools/dev/check.sh full` |
+| `claude/project-thread-3pg436` | 접힌 시간대(오전 6–9시)에 길게 눌러 만들어도 카드가 제목과 시간이 보이는 높이로 그려진다. 끝 핸들을 끌면 첫 움직임에 끝 시각이 튀지 않는다. | `tools/dev/check.sh ui -demo -browse-temporal` → 6–9시 빈 곳 길게 누르기 → 끝 핸들 끌기 |
+| `claude/project-thread-3pg436` | 스터디를 품는 새 일정(예: 12:30–15:45)을 저장해도 "스터디" 제목이 바깥 카드의 "거래 N건" 줄과 겹치지 않는다. | 위 실행에서 만들고 완료 |
+| `claude/project-thread-3pg436` | **직접 확인:** 손을 떼면 키보드가 바로 올라오고 이름을 쳐서 저장된다. 끄는 도중 점선 미리보기와 시간축 시작 시각이 손가락을 따라 움직인다. | Hans가 시뮬레이터나 실기기에서 직접 |
+| `claude/project-thread-5mrles` | 고정 그리드에서 거래 줄을 길게 누르면 거래가 손가락을 따라오고, 일정 카드 위에서는 카드 테두리가 굵어지며 "→ 일정 이름"이 보인다. 놓으면 그 일정 카드 안으로 들어간다. 빈 곳에 놓으면 아무것도 바뀌지 않는다. (길게 눌러 일정 만들기 브랜치를 합친 위에서) `FixedGridTransactionCarryTests` 통과. | `tools/dev/check.sh ui -demo -browse-temporal` → 카드 밖 거래 줄 길게 누르기 → 다른 일정 위에 놓기 |
+| `claude/project-thread-hstee5` | 단축어 연결 코드가 Xcode에서 빌드되고 앱 테스트가 통과한다 (`RecordNotificationIntent`, 받은 알림 화면은 클라우드에서 컴파일하지 못했다). | `tools/dev/check.sh full` |
+| `claude/project-thread-hstee5` | **실기기, `-live`로 실행** (인자 없이 켜면 더미 데이터라 받은 알림 버튼이 없다. 단축어 동작은 그래도 알림을 저장한다): 단축어 앱 동작 목록에 "OnAll · 알림 기록하기"가 보인다. 기존 자동화의 서버 전송 단계를 이 동작으로 바꾸고 결제 알림을 받으면, 가계부 탭 오른쪽 위 "받은 알림"에 제목·본문이 나뉘어 보인다(한 덩어리로 보이면 사전이 JSON으로 넘어오지 않은 것). | Hans가 폰에서 직접 |
+| `claude/project-thread-hstee5` | **실기기:** "이 계좌가 맞나요?"에서 계좌를 등록·연결하면 앞서 받은 알림까지 "가계부에 반영됨"으로 바뀌고, 소비 목록과 캘린더 거래 줄에 앱을 다시 켜지 않아도 나타난다. 앱을 껐다 켜도 남아 있다. 잠긴 화면에서 온 알림도 기록된다. | Hans가 폰에서 직접 |
+| `claude/project-thread-hstee5` | 실행 인자 없이 켜도(폰 설치본 포함) 캘린더가 고정 그리드로 열리고, 맨 아래 안내 줄이 없다. `-browse-classic`을 주면 예전 화면이 나온다. `FixedGridBrowseTests`의 기본값 테스트가 통과한다. | `tools/dev/check.sh ui` (인자 없이) |
+| `claude/project-thread-01q0du` (UI 통일) | 앱이 빌드된다(`Support/Design/` 새 파일, 정산·활동 정보 시트, 가계부 탭, 받은 알림은 클라우드에서 컴파일하지 못했다). 앱 테스트 통과. | `tools/dev/check.sh full` |
+| `claude/project-thread-01q0du` (UI 통일) | 가계부 탭: 회색 없는 흰 목록에 날짜 줄(회색 작은 글씨, 오늘은 파란 "오늘" 배지), 각 거래 앞에 둥근 회색 아이콘 타일, 환불은 파란 "+금액". 거래를 누르면 금액이 맨 위에 크게. 계좌·카드 보기는 회색 바탕에 흰 카드, 계좌/카드 아이콘 타일. 다크 모드에서도 글씨가 읽힌다. | `tools/dev/check.sh ui -demo` → 가계부 탭, 다크 모드도 |
+| `claude/project-thread-01q0du` (UI 통일) | 정산 시트: 맨 위 "결제한 금액"이 크게, "함께한 사람"은 얼굴 동그라미 줄("나"가 맨 앞, 고른 사람은 진하고 체크, 안 고른 사람은 흐림, 끝에 "+ 추가" → 이름 입력 창), 그 아래 "총 인원 − N명 +"(나 포함 설명). 나눠 낼 금액은 얼굴과 함께, 맨 아래 파란 큰 버튼 "N명에게 정산 요청 만들기". 요청 뒤에는 사람 고르기가 잠기고 상태가 주황/파랑 배지로. | 데모 일정 상세 → 정산하기 |
+| `claude/project-thread-01q0du` (UI 통일) | 일정 상세의 "무엇을, 어디서, 누구와" 시트: "누구와"가 정산과 같은 얼굴 줄이고, 누르면 바로 저장된다. | 데모 일정 상세 → 무엇을, 어디서, 누구와 |
+| `claude/project-thread-01q0du` (UI 통일) | 새 일정 만들 때 키보드 위 줄: "누구와" + 작은 얼굴 칩, 오른쪽 끝에 고정된 "− N명 +"(사람 칩만 가로로 스크롤). 사람을 고르면 최소 인원이 따라 올라간다. 아는 사람이 없으면 안내 문구가 보인다. | 빈 곳 길게 눌러 새 일정 → 키보드 위 줄 |
+| `claude/project-thread-yu6o5o` | 앱 빌드와 새 `whileTheDaysMoveALineIsWritten…` 테스트 통과 (`DayRenderPlan.holdingVisibility`, 화면 코드는 클라우드에서 컴파일하지 못했다). | `tools/dev/check.sh full` |
+| `claude/project-thread-yu6o5o` | 좌우로 천천히 끌어 날짜를 옮기는 동안 거래 줄 글자·카드 위 제목 탭(헤더)·짧아진 제목이 나타났다 사라지지 않는다. 정지했을 때 보이던 것이 그대로 따라 움직이고, 가운데 날(0.3–0.7 구간)만 서서히 바뀐다. | `tools/dev/check.sh ui -demo -browse-temporal` → 거래 많은 날에서 천천히 끌기, 중간에 멈췄다 되돌리기 |
+| `claude/project-thread-yu6o5o` | **직접 확인:** 상단 주간 달력을 옆으로 밀어 다음/이전 주로 넘기면, 떠나는 검은 공이 그 주와 함께 밀려 나가며 사라지고 새 주가 미끄러져 들어온다(제자리에서 사라지거나 반대로 튀지 않는다). 날 탭, 그리드 스와이프 때 공·캡슐 움직임은 예전과 같다. | Hans가 시뮬레이터나 실기기에서 직접 |
+| `claude/project-thread-5trncm` | 인자 없이 켜면 6주치 더미 일정과 소비가 열리고(오늘 기준 4주 전–2주 후), `-live`로 켜면 기기 캘린더와 실제 장부가 열린다. 앱 테스트는 예전 샘플 하루를 그대로 본다. | `tools/dev/check.sh ui` (인자 없이), `tools/dev/check.sh ui -live` |
+| `claude/project-thread-2bhmma` (UI 점검) | 앱이 빌드되고 앱 테스트가 통과한다(새 `FormattingTests` 포함). 화면 코드는 클라우드에서 컴파일하지 못했다. 새 파일: `Assets.xcassets`(강조색), `Model/AppModel+Locate.swift`. | `tools/dev/check.sh full` |
+| `claude/project-thread-2bhmma` (UI 점검) | 정산 시트: 사람 금액 칸에 결제한 금액보다 큰 수를 치면 줄과 칸이 그대로 남고, 빨간 "직접 적은 금액이 결제한 N원보다 많아요"와 회색 "나눠 낼 금액을 고쳐 주세요" 버튼이 보인다. 고치면 원래대로. 거래가 없는 일정은 "아직 없어요"와 연결 안내, 환불이 더 큰 일정은 "나눌 금액이 없어요". "다시 나누기"는 확인 창을 거친다. | 데모 일정 상세 → 정산하기 |
+| `claude/project-thread-2bhmma` (UI 점검) | 강조색이 한 가지 파랑(#3182F6)이다: 고정 그리드의 편집 테두리·핸들, 주간 달력의 오늘·선택 표시가 탭 바·버튼과 같은 파랑. 다크 모드도. | `tools/dev/check.sh ui -demo` |
+| `claude/project-thread-2bhmma` (UI 점검) | 가계부 거래 상세의 "분류"가 `food` 대신 "식비"처럼 한국어. 환불이 더 큰 날의 날짜 줄 합계가 파란 "+N원". | `tools/dev/check.sh ui -demo -demo-txn` → 가계부 탭 |
+| `claude/project-thread-2bhmma` (UI 점검) | "무엇을, 어디서, 누구와"에서 새 장소 이름을 치고 키보드의 완료를 누르면 바로 추가된다. 저장 실패·편집 불가 안내가 해요체이고 빨강/파랑이 디자인 토큰 색이다. | 데모 일정 상세 → 무엇을, 어디서, 누구와 |
+| `claude/project-thread-2bhmma` (UI 점검) | 캘린더 머리의 ‹ › 화살표가 손가락으로 누르기 쉽고(44pt), 머리 높이는 전과 거의 같다. 정산 시트에서 금액 칸을 누르면 키보드 위에 "완료"가 있어 키보드를 내릴 수 있고, 목록을 끌어도 내려간다. 받은 알림에서 "어느 계좌인지 모름"인 줄에만 파란 "계좌 정하기 ›"가 보인다. | `tools/dev/check.sh ui` → 캘린더 머리, 정산하기; 받은 알림은 `-live` |
+| `claude/project-thread-fz77s0` (표시 규칙) | 앱 빌드와 앱 테스트 통과. 화면 코드(`EventTitleLayer` 작은 제목, `TransactionLineView` 칩, `TransactionTailView`, 시간축 라벨)는 클라우드에서 컴파일하지 못했다. 순수 로직 테스트는 클라우드에서 통과. `DayContentLayoutTests`의 "같이 시작하는 일정 제목" 두 테스트는 이 변경 전부터 클라우드에서 실패했다(노트북에서도 실패하는지 확인). | `tools/dev/check.sh full` |
+| `claude/project-thread-fz77s0` (표시 규칙) | 데모 16일에 12:30–15:45 새 일정을 만들면 점심(0칸) · 새 일정(1칸) · 스터디(2칸)로 계단처럼 들여써지고, 점심 카드는 혼자일 때와 같은 폭·제목 자리다. 제목끼리 포개지지 않는다. | `tools/dev/check.sh ui -demo` → 빈 곳 길게 눌러 12:30–15:45 만들기 |
+| `claude/project-thread-fz77s0` (표시 규칙) | 얇은 일정(접힌 시간대, 핀치로 줄였을 때)은 카드 위 탭 없이 카드 안에 작은 글씨 제목이 보이고, 더 얇아지면 글자 없이 카드/선만 남는다. 핀치로 키우면 작은 제목이 보통 제목으로 자연스럽게 넘어간다. | 데모에서 핀치 줌 아웃/인 |
+| `claude/project-thread-fz77s0` (표시 규칙) | 거래가 흰 둥근 칩(아이콘·이름·금액)으로 보인다. 일정에 연결된 거래는 칩 테두리와 점이 일정 색이고, 일정 시간 밖이면 일정 카드 왼쪽 띠에서 거래 시각까지 점선 꼬리가 이어진다. 연결 안 된 거래는 회색 테두리. 칩을 누르면 상세, 길게 누르면 옮기기가 그대로 된다. 다크 모드에서도 칩 글자가 읽힌다. | 데모 16일 "배달", 점심 약속 뒤 거래 |
+| `claude/project-thread-fz77s0` (표시 규칙) | 왼쪽 시간축: 가로 격자 줄에 걸린 시각은 진하고 굵게, 나머지는 회색 작은 글씨. 같은 색인데 일부만 흐린 라벨이 쉬고 있을 때 없다. 날짜를 넘길 때 라벨이 깜빡이지 않는다. | 데모에서 날짜 넘기기, 핀치 |
+| `claude/project-thread-95yi27` (Actual 가져오기) | 앱이 빌드되고 앱 테스트가 통과한다. 클라우드에서 컴파일하지 못한 파일: `Support/SettingsView.swift`(파일 선택·알림), `Intake/IntakeInboxView.swift`(새 구역), `Model/AppModel.swift`(`makeService`의 `importedLife`). 패키지 쪽과 `AppLedger`·`NotificationStore`·`IntakeText`는 클라우드에서 컴파일하고 경고가 없었다. 예상 10분 안팎(콜드 빌드 포함). | `tools/dev/check.sh full` |
+| `claude/project-thread-95yi27` (Actual 가져오기) | **실기기 또는 시뮬레이터, `-live`:** 설정 → 지난 가계부 → `imported-history.json` 선택. "N건을 가져왔어요" 확인 창에 잔액이 다른 계좌가 없다. 받은 알림 맨 위에 "가져온 기록 중 정리할 것"이 보이고, 가계부 탭에 지난 소비와 정리할 입금이 나온다. 정산된 지출은 "60,000 → 내 몫"처럼 순지출로 보인다. 앱을 껐다 켜도 남고 같은 파일을 다시 가져와도 금액이 늘지 않는다. **실제 데이터 파일이 필요하다(Hans가 프로젝트 파일에서 받아 옮김).** 시뮬레이터면 Files에 넣어 선택. 예상 15분. | Hans가 폰에서 직접, 끝나면 폰과 프로젝트 파일의 원본 삭제 |
+
+## 확인 완료 (2026-10-16, 노트북)
+
+- `claude/project-thread-hstee5` `tools/dev/check.sh full`: 패키지 582개, 앱 499개 통과.
+- `claude/project-thread-hstee5` 고정 그리드 "무엇을 선택할까요?": 데모 16일 "배달"(저녁 운동과 겹침)에서 거래를 고르면 상세 시트가, 일정을 고르면 편집 세션(핸들, 취소/완료 막대)이 열린다.
+- 7일 실제 데이터 재검증: 결과는 `docs/correlator-design.md` 6절 5번.
