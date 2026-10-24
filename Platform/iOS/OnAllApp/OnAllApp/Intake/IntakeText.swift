@@ -37,6 +37,7 @@ enum IntakeText {
         case .unsupportedEvent: "다른 알림으로 설명되지 않은 출금"
         case .missingOriginalEntry: "원래 결제를 찾지 못함"
         case .possibleReturnOfEarlierPurchase: "이전 결제의 환불일 수 있음"
+        case .possibleSameMoneyRecorded: "이미 기록된 것과 같은 돈일 수 있음"
         case .parserUncertain: "알림 해석이 불확실"
         case .ambiguousWithoutStrongIdentity, .conflictingStrongIdentity: "같은 거래인지 불확실"
         case .missingAmount, .invalidAmount: "금액 확인 필요"

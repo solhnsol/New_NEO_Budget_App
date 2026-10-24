@@ -30,7 +30,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             )
             issues.append(.timeAbsentFallback)
         }
-        let counterparty = parseCounterparty(lines, direction: classification.direction)
+        let counterparty = parseCounterparty(lines, direction: classification.direction, text: text, kind: classification.kind)
         if counterparty.merchantRaw == nil, counterparty.payeeRaw == nil { issues.append(.merchantMissing) }
         let instrument = parseInstrumentHint(text)
         if instrument.kind == .unknown { issues.append(.instrumentHintMissing) }
@@ -299,13 +299,21 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
     /// The first line of a Hyundai Card app alert (`<이름> 님, 현대 MM 승인`); the merchant is the line after the amount.
     private static let issuerApprovalHeader = try! NSRegularExpression(pattern: #"현대\s*[A-Za-z가-힣0-9]+\s*(?:해외)?(?:승인|취소)\s*$"#)
 
-    private func parseCounterparty(_ lines: [String], direction: TransactionDirection) -> DraftCounterparty {
+    /// The word a bank withdrawal's counterparty starts with when it begins with `토스` (`토스퀵계좌이체`, or `토스` before a name),
+    /// wherever the bank lays it out in the message. `토스뱅크` is the bank itself, not a Toss payment. The correlator pairs such
+    /// a withdrawal with a Toss payment of the same amount.
+    private static let tossWithdrawalName = #"(?<![가-힣A-Za-z0-9])토스(?!뱅크)\S*"#
+
+    private func parseCounterparty(_ lines: [String], direction: TransactionDirection, text: String, kind: DraftEventKind) -> DraftCounterparty {
         let labels = ["승인번호", "거래번호", "거래ID", "원승인번호", "원거래번호", "잔액"]
         let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제"]
         let candidate = lines.first {
             !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0) && !Self.matches(Self.issuerApprovalHeader, $0)
         }
-        return direction == .outflow ? DraftCounterparty(merchantRaw: candidate) : DraftCounterparty(payeeRaw: candidate)
+        let tossName: String? = kind == .withdrawal
+            ? text.range(of: Self.tossWithdrawalName, options: .regularExpression).map { String(text[$0]) }
+            : nil
+        return direction == .outflow ? DraftCounterparty(merchantRaw: candidate, memoRaw: tossName) : DraftCounterparty(payeeRaw: candidate)
     }
 
     private func evidence(notification: RawNotification, lines: [String]) -> [DraftEvidence] {
