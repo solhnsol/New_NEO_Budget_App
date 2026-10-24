@@ -2,58 +2,167 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The calendar's list style: the two days on screen as cards. An event is one card with its time, what was spent on it, and the transactions that
-/// went to it inside; all-day events and transactions no event holds are single lines. It reads the same `DayTimeline` as the grid.
+/// The calendar's list style: one endless column of days, each a header and its cards, with a line between days. An event is one card with its time,
+/// what was spent on it, and the transactions that went to it inside; all-day events and transactions no event holds are single lines. It reads the
+/// same `DayTimeline` as the grid.
+///
+/// The day at the top of the screen is the selected day: scrolling moves `AppModel.selectedDay` (the header and the week strip follow, and a tick is felt
+/// each time the day changes), and picking a day elsewhere scrolls the list to it. The days sit in one lazy column over a fixed range, so scrolling up
+/// never moves what is on screen; each day is read when it comes near (`readAhead` days either side of the top) and kept only while it stays near.
 struct DayListView: View {
     let model: AppModel
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
-    /// A sideways swipe on the list: -1 for the previous day, +1 for the next.
-    let onMoveDay: (Int) -> Void
+    /// The day at the top of the screen changed because the list was scrolled.
+    let onScrollToDay: (LocalDate) -> Void
+
+    /// The range of days the column holds, either side of the day the list opened on (about five years).
+    static let reach = 1825
+    /// Days read either side of the one at the top, and the distance after which a read day is dropped.
+    static let readAhead = 4
+    static let keepDistance = 40
+    /// A jump further than this many days is instant; a nearer one scrolls.
+    static let animatedJump = 10
+
+    private let center: Int
+    @State private var timelines: [Int: DayTimeline] = [:]
+    @State private var reading: Set<Int> = []
+    @State private var topEpoch: Int?
+    /// The day a programmatic scroll is heading for: scroll positions reported on the way there are not the reader's.
+    @State private var headingFor: Int?
+    /// Days handed to the model from the scroll, and when, so the model's answer is not mistaken for a pick made elsewhere.
+    @State private var pushed: [Int: Date] = [:]
+
+    init(model: AppModel, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onScrollToDay: @escaping (LocalDate) -> Void) {
+        self.model = model
+        self.onSelect = onSelect
+        self.onOpenTransaction = onOpenTransaction
+        self.onScrollToDay = onScrollToDay
+        let start = model.selectedDay.daysSinceUnixEpoch
+        center = start
+        _topEpoch = State(initialValue: start)
+    }
 
     var body: some View {
         let zone = model.dayZone
-        // The same two days as the grid's two columns (and the header's range): the selected day and the one after it.
-        let days = [model.selectedDay, model.selectedDay.adding(days: 1)]
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
-                ForEach(days, id: \.self) { day in
-                    Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
-                        .foregroundStyle(day == model.today ? Theme.accent : Theme.textSecondary)
-                        .padding(.top, Theme.Space.s)
-                    if let timeline = model.cachedTimeline(for: day) {
-                        let plan = DayListPlan.make(timeline)
-                        if plan.items.isEmpty {
-                            Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.s)
-                        }
-                        ForEach(plan.items) { item in
-                            switch item {
-                            case let .allDay(allDay): AllDayLine(item: allDay) { onSelect(.allDay(allDay)) }
-                            case let .event(block):
-                                EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
-                            case let .marker(marker):
-                                DayListTransactionLine(
-                                    title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
-                                    detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
-                                    amount: marker.amount, isRefund: marker.flow == .refund,
-                                    category: model.transactionOverrides[marker.transactionID]?.category ?? marker.categoryID
-                                ) { onOpenTransaction(marker.transactionID) }
-                            }
-                        }
-                    } else {
-                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, Theme.Space.l)
-                    }
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach((center - Self.reach)...(center + Self.reach), id: \.self) { epoch in
+                    DaySection(
+                        day: LocalDate(daysSinceUnixEpoch: epoch), timeline: timelines[epoch], isToday: LocalDate(daysSinceUnixEpoch: epoch) == model.today,
+                        model: model, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction
+                    )
+                    .id(epoch)
+                    .onAppear { if timelines[epoch] == nil { Task { await read(epoch) } } }
                 }
             }
-            .padding(.horizontal, Theme.Space.l)
-            .padding(.vertical, Theme.Space.s)
+            .scrollTargetLayout()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 30).onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
-                onMoveDay(value.translation.width < 0 ? 1 : -1)
+        .scrollPosition(id: $topEpoch, anchor: .top)
+        .task(id: topEpoch) { await readAround(topEpoch) }
+        .onChange(of: topEpoch) { _, epoch in scrolled(to: epoch) }
+        .onChange(of: model.selectedDay) { _, day in selectionChanged(to: day.daysSinceUnixEpoch) }
+        .onChange(of: model.dataGeneration) { _, _ in Task { await refreshAll() } }
+    }
+
+    // MARK: Following the model, and leading it
+
+    private func scrolled(to epoch: Int?) {
+        guard let epoch else { return }
+        if let target = headingFor {
+            if epoch == target { headingFor = nil }
+            return
+        }
+        guard epoch != model.selectedDay.daysSinceUnixEpoch else { return }
+        Haptics.snap()
+        pushed[epoch] = Date()
+        onScrollToDay(LocalDate(daysSinceUnixEpoch: epoch))
+    }
+
+    private func selectionChanged(to epoch: Int) {
+        guard epoch != topEpoch else { return }
+        if let at = pushed[epoch], Date().timeIntervalSince(at) < 1 { return }
+        guard abs(epoch - center) <= Self.reach else { return }
+        let jump = abs(epoch - (topEpoch ?? epoch))
+        headingFor = epoch
+        if jump > Self.animatedJump {
+            topEpoch = epoch
+        } else {
+            withAnimation(.easeOut(duration: 0.3)) { topEpoch = epoch }
+        }
+        // A scroll that never reports its target must not leave the list deaf to the reader.
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.8))
+            if headingFor == epoch { headingFor = nil }
+        }
+    }
+
+    // MARK: Reading days
+
+    private func readAround(_ top: Int?) async {
+        guard let top else { return }
+        for epoch in ([top] + (1...Self.readAhead).flatMap { [top + $0, top - $0] }) {
+            if Task.isCancelled { return }
+            await read(epoch)
+        }
+        for epoch in timelines.keys where abs(epoch - top) > Self.keepDistance { timelines[epoch] = nil }
+    }
+
+    private func read(_ epoch: Int, force: Bool = false) async {
+        guard force || (timelines[epoch] == nil && !reading.contains(epoch)) else { return }
+        reading.insert(epoch)
+        defer { reading.remove(epoch) }
+        let day = LocalDate(daysSinceUnixEpoch: epoch)
+        if let timeline = await model.readDays([day]).first?.timeline { timelines[epoch] = timeline }
+    }
+
+    /// The calendar or the ledger changed: the days held are read again, and each is replaced as it lands so nothing blinks.
+    private func refreshAll() async {
+        for epoch in timelines.keys.sorted() { await read(epoch, force: true) }
+    }
+}
+
+/// One day of the column: its date, then its cards, with a line above it that divides it from the day before.
+private struct DaySection: View {
+    let day: LocalDate
+    let timeline: DayTimeline?
+    let isToday: Bool
+    let model: AppModel
+    let zone: DisplayTimeZone
+    let onSelect: (TimelineSelection) -> Void
+    let onOpenTransaction: (LedgerEntryID) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
+                .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary)
+            if let timeline {
+                let plan = DayListPlan.make(timeline)
+                if plan.items.isEmpty {
+                    Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.xs)
+                }
+                ForEach(plan.items) { item in
+                    switch item {
+                    case let .allDay(allDay): AllDayLine(item: allDay) { onSelect(.allDay(allDay)) }
+                    case let .event(block):
+                        EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
+                    case let .marker(marker):
+                        DayListTransactionLine(
+                            title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
+                            detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
+                            amount: marker.amount, isRefund: marker.flow == .refund,
+                            category: model.transactionOverrides[marker.transactionID]?.category ?? marker.categoryID
+                        ) { onOpenTransaction(marker.transactionID) }
+                    }
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 48)
             }
-        )
+        }
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.vertical, Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 
