@@ -6,7 +6,9 @@ import SwiftUI
 /// split into.
 struct TransactionDetailView: View {
     let entry: LedgerListEntry
-    let zone: DisplayTimeZone
+    let model: AppModel
+    @State private var editing = false
+    private var zone: DisplayTimeZone { model.dayZone }
     private var zoneIdentifier: String { zone.identifier }
 
     var body: some View {
@@ -38,6 +40,24 @@ struct TransactionDetailView: View {
                 }
             }
             .onAllCardRow()
+            if let memo = entry.override?.memo, !memo.isEmpty || !(entry.override?.tags ?? []).isEmpty {
+                Section {
+                    if !memo.isEmpty { Text(memo).foregroundStyle(Theme.textPrimary) }
+                    if let tags = entry.override?.tags, !tags.isEmpty {
+                        Text(tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
+                    }
+                } header: {
+                    Text("메모·태그")
+                }
+                .onAllCardRow()
+            } else if let tags = entry.override?.tags, !tags.isEmpty {
+                Section {
+                    Text(tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
+                } header: {
+                    Text("태그")
+                }
+                .onAllCardRow()
+            }
             if !entry.offsets.isEmpty, let net = entry.netMinorUnits {
                 Section {
                     ForEach(entry.offsets) { offset in
@@ -92,6 +112,8 @@ struct TransactionDetailView: View {
         .onAllGroupedScreen()
         .navigationTitle(transaction.title ?? "거래")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("수정") { editing = true } } }
+        .sheet(isPresented: $editing) { TransactionEditSheet(entry: entry, model: model) }
     }
 
     private func offsetTitle(_ offset: LedgerListEntry.Offset) -> String {

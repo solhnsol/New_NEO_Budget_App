@@ -37,7 +37,7 @@ enum DemoFull {
         let args = ProcessInfo.processInfo.arguments
         // Tests build the sample ledger and demo themselves and expect the usual day.
         let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        return args.contains("-demo-full") || (!testing && !args.contains("-demo") && !args.contains("-live"))
+        return args.contains("-demo-full") || (!testing && !args.contains("-demo") && AppMode.resolve(arguments: args) == .demo)
     }
 
     static let firstOffset = -28, lastOffset = 14
