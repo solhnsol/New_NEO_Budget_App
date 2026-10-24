@@ -246,10 +246,10 @@ private struct ListBox<Lines: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                Text(title).font(Theme.Typo.label.weight(.semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 Spacer(minLength: Theme.Space.s)
-                if let totalText { Text(totalText).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary) }
+                if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
                 if hasLines {
                     Image(systemName: "chevron.down").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(expanded ? 180 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
