@@ -274,6 +274,25 @@ private struct AllDayCount: View {
     }
 }
 
+/// A stand-in for choosing an icon per kind of event: it is guessed from the title until the reader can pick one.
+private enum EventIcon {
+    private static let rules: [(words: [String], symbol: String)] = [
+        (["헬스", "운동", "러닝", "요가", "필라테스"], "dumbbell"),
+        (["알바", "근무", "출근", "회의", "미팅"], "briefcase"),
+        (["점심", "저녁", "아침", "식사", "밥", "브런치", "회식"], "fork.knife"),
+        (["수업", "강의", "스터디", "공부", "시험", "과제", "기말", "중간"], "book.closed"),
+        (["회화", "영어", "어학"], "bubble.left.and.bubble.right"),
+        (["커피", "카페"], "cup.and.saucer"),
+        (["생일", "약속", "모임", "데이트", "가족"], "person.2"),
+        (["병원", "진료", "치과"], "cross.case"),
+        (["여행", "비행", "출장"], "airplane"),
+    ]
+
+    static func symbol(for title: String) -> String {
+        rules.first { rule in rule.words.contains { title.contains($0) } }?.symbol ?? "calendar"
+    }
+}
+
 /// A box of the list: a bar in its colour, a small header that is only a name and a time, and under it the transactions, set in from the header so
 /// the two read as levels. A box with no transactions is one thin line.
 private struct ListBox<Lines: View>: View {
@@ -328,7 +347,7 @@ private struct EventCard: View {
         ListBox(
             title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
             totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
-            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: "calendar", hasLines: !block.allocations.isEmpty, onSelect: onSelect
+            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: EventIcon.symbol(for: block.title), hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(

@@ -148,9 +148,20 @@ enum DemoData {
         let weekRange = try? DayRange(firstDay: today, lastDay: tomorrow)
         let seriesStart = at(today.adding(days: -7), 16, 0)
 
+        // `-demo-icons`: tomorrow holds events of several kinds, to see the list's per-kind icons.
+        let iconDrafts: [CalendarEventDraft] = ProcessInfo.processInfo.arguments.contains("-demo-icons") ? [
+            draft(school, "알고리즘 수업", tomorrow, (9, 0), (10, 30)),
+            draft(life, "점심 약속", tomorrow, (12, 0), (13, 0)),
+            draft(life, "스터디", tomorrow, (14, 0), (16, 0)),
+            draft(life, "치과 진료", tomorrow, (16, 30), (17, 0)),
+            draft(life, "헬스", tomorrow, (18, 0), (19, 0)),
+            draft(appointments, "카페 알바", tomorrow, (19, 30), (21, 0)),
+            draft(appointments, "친구 생일 모임", tomorrow, (21, 30), (23, 0)),
+        ] : []
+
         let failFirstWrite = ProcessInfo.processInfo.arguments.contains("-demo-fail-next-write")
         let seed: @Sendable () async -> Void = {
-            for item in drafts { _ = await provider.createEvent(item) }
+            for item in drafts + iconDrafts { _ = await provider.createEvent(item) }
             if let weekRange {
                 _ = await provider.createEvent(CalendarEventDraft(calendarID: life, title: "기말 준비 주간", time: .allDay(weekRange)))
             }
