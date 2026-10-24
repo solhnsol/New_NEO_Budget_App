@@ -1,0 +1,374 @@
+{
+  "schemaVersion": 1,
+  "policyVersion": "coverage-synthesis-v1",
+  "purpose": "synthetic format coverage; not transaction ground truth",
+  "contentDigest": "f8a6c508fa9c80b926cb136b37969eacd5deb625702ae1ab29f7b512d613838d",
+  "notifications": [
+    {
+      "id": "synthetic-card_approval-installment",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 체크 승인",
+      "subtitle": "12,000원 3개월, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-card_approval-single",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 체크 승인",
+      "subtitle": "12,000원 일시불, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-card_cancel-installment",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 체크 승인취소",
+      "subtitle": "12,000원 3개월, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-card_cancel-single",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 체크 승인취소",
+      "subtitle": "12,000원 일시불, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-credit_approval-installment",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 가상카드 승인",
+      "subtitle": "12,000원 3개월, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-credit_approval-single",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 가상카드 승인",
+      "subtitle": "12,000원 일시불, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-credit_cancel-installment",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 가상카드 승인취소",
+      "subtitle": "12,000원 3개월, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-credit_cancel-single",
+      "source": {
+        "applicationIdentifier": "fixture.hyundai",
+        "providerHint": "hyundai"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "가상본인 님, 현대 가상카드 승인취소",
+      "subtitle": "12,000원 일시불, 1/1 09:00",
+      "body": "가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-kp_charge-default",
+      "source": {
+        "applicationIdentifier": "fixture.kakaopay",
+        "providerHint": "kakaopay"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": null,
+      "subtitle": null,
+      "body": "12,000원 충전이 완료되었어요",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-kp_receive_request-default",
+      "source": {
+        "applicationIdentifier": "fixture.kakaopay",
+        "providerHint": "kakaopay"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "송금을 받아주세요",
+      "subtitle": null,
+      "body": "가**대님이 12,000원을 보냈어요",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-kp_send-other",
+      "source": {
+        "applicationIdentifier": "fixture.kakaopay",
+        "providerHint": "kakaopay"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "송금이 완료되었어요",
+      "subtitle": null,
+      "body": "가상은행 (가**대) 계좌로 12,000원을 송금했어요",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-kp_send-self",
+      "source": {
+        "applicationIdentifier": "fixture.kakaopay",
+        "providerHint": "kakaopay"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "송금이 완료되었어요",
+      "subtitle": null,
+      "body": "우리은행 (가**인) 계좌로 12,000원을 송금했어요",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tb_in-other",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 입금",
+      "subtitle": null,
+      "body": "가상상대 → 내 토스뱅크 통장",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tb_in-self",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 입금",
+      "subtitle": null,
+      "body": "가상본인 → 내 토스뱅크 통장",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tb_interest-default",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "오늘은 토스뱅크 이자 받는 날🎉",
+      "subtitle": null,
+      "body": "10원을 통장에 쏙! 넣어드렸어요.",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tb_out-default",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 출금",
+      "subtitle": null,
+      "body": "내 토스뱅크 통장 → 가상상대",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tmoney-balance",
+      "source": {
+        "applicationIdentifier": "fixture.wallet",
+        "providerHint": "wallet"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "Tmoney",
+      "subtitle": null,
+      "body": "Your current balance is ₩100,000.",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-tmoney-ride",
+      "source": {
+        "applicationIdentifier": "fixture.wallet",
+        "providerHint": "wallet"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "Tmoney",
+      "subtitle": "₩1,000 for Metro",
+      "body": "Your new balance is ₩100,000.",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-toss_pay-credit",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 결제",
+      "subtitle": null,
+      "body": "페이스페이 (현대카드가상카드) | 가상상점 (일시불)",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-toss_pay-debit",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 결제",
+      "subtitle": null,
+      "body": "페이스페이 (M CHECK) | 가상상점 (일시불)",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-toss_pay_acct-default",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "12,000원 결제 완료",
+      "subtitle": null,
+      "body": "우리은행 ・ 가상상점",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-toss_person_in-default",
+      "source": {
+        "applicationIdentifier": "fixture.toss",
+        "providerHint": "toss"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "송금",
+      "subtitle": null,
+      "body": "가상상대님이 보낸 12,000원이 내 가상은행 계좌로 입금됐어요",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-woori_in-other",
+      "source": {
+        "applicationIdentifier": "fixture.woori",
+        "providerHint": "woori"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "[입금]",
+      "subtitle": null,
+      "body": "가상상대 12,000원 000***계좌 잔액 100,000원 01/01 09:00:00",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-woori_in-self",
+      "source": {
+        "applicationIdentifier": "fixture.woori",
+        "providerHint": "woori"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "[입금]",
+      "subtitle": null,
+      "body": "가상본인 12,000원 000***계좌 잔액 100,000원 01/01 09:00:00",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-woori_out-other",
+      "source": {
+        "applicationIdentifier": "fixture.woori",
+        "providerHint": "woori"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "[출금]",
+      "subtitle": null,
+      "body": "가상상대 12,000원 000***계좌 잔액 100,000원 01/01 09:00:00",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    },
+    {
+      "id": "synthetic-woori_out-self",
+      "source": {
+        "applicationIdentifier": "fixture.woori",
+        "providerHint": "woori"
+      },
+      "capturedAtUnixMilliseconds": 946684800000,
+      "title": "[출금]",
+      "subtitle": null,
+      "body": "토뱅가상본인 12,000원 000***계좌 잔액 100,000원 01/01 09:00:00",
+      "sourceDeliveryID": null,
+      "notificationAtUnixMilliseconds": null,
+      "rawPayload": null
+    }
+  ],
+  "inboxShapes": [],
+  "localReport": {}
+}
