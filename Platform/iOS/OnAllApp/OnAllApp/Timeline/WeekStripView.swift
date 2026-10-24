@@ -88,7 +88,7 @@ struct WeekStripView: View {
                     InterpolatedView(value: viewOffset) { offset in
                         ZStack(alignment: .topLeading) {
                             ForEach(capsuleGhosts) { ghost in
-                                capsuleShape(lead: ghost.lead, trail: ghost.trail, offset: offset, cell: cell)
+                                capsuleShape(lead: ghost.lead, trail: ghost.trail, offset: offset, cell: cell).transition(.identity)
                             }
                             circles(cell: cell, offset: offset)
                             ForEach(low..<high, id: \.self) { number in
@@ -148,6 +148,11 @@ struct WeekStripView: View {
         let number = day.daysSinceUnixEpoch
         if number == ball { return .first }
         if showsNextDay, number == ball + 1 { return .second }
+        // The circle and capsule that are leaving with their week still sit on their own days, so those numbers keep how they were written on them.
+        for ghost in ghosts where !ghost.fades {
+            if number == ghost.day { return .first }
+            if showsNextDay, number == ghost.day + 1 { return .second }
+        }
         return .none
     }
 
@@ -255,10 +260,12 @@ struct WeekStripView: View {
         ZStack(alignment: .topLeading) {
             ForEach(ghosts) { ghost in
                 FadingBall(color: ghost.isToday ? .accentColor : .primary, size: Self.ball, fades: ghost.fades)
+                    .transition(.identity)
                     .offset(x: (CGFloat(ghost.day) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
             }
             GrowingBall(color: ball == today.daysSinceUnixEpoch ? .accentColor : .primary, size: Self.ball, grows: ballGrows)
                 .id(ballID)
+                .transition(.identity)
                 .offset(x: (CGFloat(ball) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
         }
     }
