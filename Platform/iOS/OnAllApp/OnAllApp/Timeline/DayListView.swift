@@ -274,24 +274,6 @@ private struct AllDayCount: View {
     }
 }
 
-/// An icon for the kind of calendar an event is on. It is guessed from the calendar's name until the reader can pick one.
-private enum EventIcon {
-    private static let rules: [(words: [String], symbol: String)] = [
-        (["학교", "수업", "강의", "공부", "학업"], "graduationcap"),
-        (["약속", "모임", "친구", "데이트", "가족"], "person.2"),
-        (["일상", "생활", "개인", "집"], "house"),
-        (["회사", "업무", "직장", "알바", "근무", "일정"], "briefcase"),
-        (["운동", "헬스", "건강"], "dumbbell"),
-        (["여행", "휴가"], "airplane"),
-        (["구독", "공휴일", "휴일", "기념일", "생일"], "flag"),
-    ]
-
-    static func symbol(forCalendar title: String?) -> String {
-        guard let title else { return "calendar" }
-        return rules.first { rule in rule.words.contains { title.contains($0) } }?.symbol ?? "calendar"
-    }
-}
-
 /// A box of the list: a bar in its colour, a small header that is only a name and a time, and under it the transactions, set in from the header so
 /// the two read as levels. A box with no transactions is one thin line.
 private struct ListBox<Lines: View>: View {
@@ -346,7 +328,7 @@ private struct EventCard: View {
         ListBox(
             title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
             totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
-            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: EventIcon.symbol(forCalendar: block.calendarTitle), hasLines: !block.allocations.isEmpty, onSelect: onSelect
+            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: model.calendarSymbol(id: block.eventKey.calendarID, title: block.calendarTitle), hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(

@@ -82,6 +82,21 @@ public protocol CalendarProvider: Sendable {
         expectedRevision: String?
     ) async -> CalendarProviderResult<Bool>
 
+    /// Makes a new, empty, writable calendar. A provider whose platform has nowhere to put one answers `.unsupported`.
+    func createCalendar(title: String, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor>
+    /// Removes a calendar **and every event in it**. Only a writable calendar can be removed (`.calendarNotWritable` otherwise).
+    func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool>
+
     /// A stream of "something may have changed" signals. Each call returns an independent stream.
     func changes() async -> AsyncStream<Void>
+}
+
+extension CalendarProvider {
+    public func createCalendar(title: String, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        .failure(.unsupported("create calendar"))
+    }
+
+    public func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool> {
+        .failure(.unsupported("delete calendar"))
+    }
 }
