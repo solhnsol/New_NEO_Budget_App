@@ -2,8 +2,8 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The calendar's list style: one endless column of days, each a header and its cards, with a line between days. An event is one card with its time,
-/// what was spent on it, and the transactions that went to it inside; all-day events and transactions no event holds are single lines. It reads the
+/// The calendar's list style: one endless column of days, each a header and its boxes, with a line between days. An event is a box with only its name and
+/// time and, set in under it, the transactions that went to it; the stretches between events are boxes named 일상 that hold the rest; all-day events are single lines. It reads the
 /// same `DayTimeline` as the grid.
 ///
 /// The day at the top of the screen is the selected day: scrolling moves `AppModel.selectedDay` (the header and the week strip follow, and a tick is felt
@@ -188,13 +188,8 @@ private struct DaySection: View {
                     case let .allDay(allDay): AllDayLine(item: allDay) { onSelect(.allDay(allDay)) }
                     case let .event(block):
                         EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
-                    case let .marker(marker):
-                        DayListTransactionLine(
-                            title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
-                            detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
-                            amount: marker.amount, isRefund: marker.flow == .refund,
-                            category: model.transactionOverrides[marker.transactionID]?.category ?? marker.categoryID
-                        ) { onOpenTransaction(marker.transactionID) }
+                    case let .daily(group):
+                        DailyCard(group: group, timeline: timeline, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
                     }
                 }
             } else {
@@ -235,7 +230,45 @@ private struct AllDayLine: View {
     }
 }
 
-/// An event as one white card with a bar in its calendar's colour, what was spent on it, and the transactions that went to it.
+/// A box of the list: a bar in its colour, a small header that is only a name and a time, and under it the transactions, set in from the header so
+/// the two read as levels. A box with no transactions is one thin line.
+private struct ListBox<Lines: View>: View {
+    let title: String
+    let timeText: String
+    let color: Color
+    let hasLines: Bool
+    var onSelect: (() -> Void)?
+    @ViewBuilder let lines: () -> Lines
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                Text(title).font(Theme.Typo.label.weight(.semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                if hasLines {
+                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Spacer(minLength: 0)
+                } else {
+                    Spacer(minLength: Theme.Space.s)
+                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                }
+            }
+            .contentShape(Rectangle())
+            .listTap { onSelect?() }
+            if hasLines {
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, Theme.Space.xl)
+            }
+        }
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.vertical, hasLines ? Theme.Space.m : Theme.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .overlay(alignment: .leading) {
+            Capsule().fill(color).frame(width: 4).padding(.vertical, Theme.Space.m)
+        }
+    }
+}
+
+/// An event: its name and time, and the transactions that went to it inside.
 private struct EventCard: View {
     let block: EventBlock
     let model: AppModel
@@ -243,35 +276,11 @@ private struct EventCard: View {
     let onSelect: () -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
-    /// An event nothing was spent on is a thin card: title and time on one line, with less padding.
-    private var hasSpending: Bool { !block.allocations.isEmpty || !block.allocatedSpend.isEmpty }
-
     var body: some View {
-        let timeText = Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier)
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            Group {
-                if hasSpending {
-                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                            Spacer()
-                            if let spend = block.allocatedSpend.first {
-                                Text(Formatting.aggregate(spend)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
-                            }
-                        }
-                        Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                    }
-                    .contentShape(Rectangle())
-                } else {
-                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
-                        Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Spacer(minLength: Theme.Space.s)
-                        Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                    }
-                    .contentShape(Rectangle())
-                }
-            }
-            .listTap(onSelect)
+        ListBox(
+            title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
+            color: Color(hex: block.calendarColorHex) ?? Theme.accent, hasLines: !block.allocations.isEmpty, onSelect: onSelect
+        ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(
                     title: model.transactionOverrides[item.transactionID]?.title ?? item.title ?? "거래",
@@ -283,12 +292,32 @@ private struct EventCard: View {
                 ) { onOpenTransaction(item.transactionID) }
             }
         }
-        .padding(.horizontal, Theme.Space.l)
-        .padding(.vertical, hasSpending ? Theme.Space.l : Theme.Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .overlay(alignment: .leading) {
-            Capsule().fill(Color(hex: block.calendarColorHex) ?? Theme.accent).frame(width: 4).padding(.vertical, Theme.Space.m)
+    }
+}
+
+/// The stretch of ordinary life between events, as an event named 일상 that holds the transactions no event does.
+private struct DailyCard: View {
+    let group: DayListPlan.DailyGroup
+    let timeline: DayTimeline
+    let model: AppModel
+    let zone: DisplayTimeZone
+    let onOpenTransaction: (LedgerEntryID) -> Void
+
+    var body: some View {
+        let start = timeline.dayStartUnixMilliseconds
+        ListBox(
+            title: "일상",
+            timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
+            color: Theme.textTertiary, hasLines: true
+        ) {
+            ForEach(group.markers, id: \.transactionID) { marker in
+                DayListTransactionLine(
+                    title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
+                    detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
+                    amount: marker.amount, isRefund: marker.flow == .refund,
+                    category: model.transactionOverrides[marker.transactionID]?.category ?? marker.categoryID
+                ) { onOpenTransaction(marker.transactionID) }
+            }
         }
     }
 }
