@@ -32,7 +32,7 @@ struct DayListView: View {
                             case let .event(block):
                                 EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
                             case let .marker(marker):
-                                TransactionLine(
+                                DayListTransactionLine(
                                     title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
                                     detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
                                     amount: marker.amount, isRefund: marker.flow == .refund,
@@ -101,7 +101,7 @@ private struct EventCard: View {
             }
             .buttonStyle(.plain)
             ForEach(block.allocations, id: \.allocationID) { item in
-                TransactionLine(
+                DayListTransactionLine(
                     title: model.transactionOverrides[item.transactionID]?.title ?? item.title ?? "거래",
                     detail: item.occursOnSelectedDay ? Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier)
                         : Formatting.shortDate(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
@@ -121,7 +121,7 @@ private struct EventCard: View {
 }
 
 /// One transaction: its category on a tile, what and when, the amount; money coming back is blue with a plus.
-private struct TransactionLine: View {
+private struct DayListTransactionLine: View {
     let title: String
     let detail: String
     let amountText: String
