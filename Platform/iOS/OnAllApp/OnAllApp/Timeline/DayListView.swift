@@ -2,7 +2,7 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The calendar's list style: the selected day as cards. An event is one card with its time, what was spent on it, and the transactions that
+/// The calendar's list style: the two days on screen as cards. An event is one card with its time, what was spent on it, and the transactions that
 /// went to it inside; all-day events and transactions no event holds are single lines. It reads the same `DayTimeline` as the grid.
 struct DayListView: View {
     let model: AppModel
@@ -13,13 +13,18 @@ struct DayListView: View {
 
     var body: some View {
         let zone = model.dayZone
-        Group {
-            if let timeline = model.cachedTimeline(for: model.selectedDay) {
-                let plan = DayListPlan.make(timeline)
-                ScrollView {
-                    LazyVStack(spacing: Theme.Space.s) {
+        // The same two days as the grid's two columns (and the header's range): the selected day and the one after it.
+        let days = [model.selectedDay, model.selectedDay.adding(days: 1)]
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
+                ForEach(days, id: \.self) { day in
+                    Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
+                        .foregroundStyle(day == model.today ? Theme.accent : Theme.textSecondary)
+                        .padding(.top, Theme.Space.s)
+                    if let timeline = model.cachedTimeline(for: day) {
+                        let plan = DayListPlan.make(timeline)
                         if plan.items.isEmpty {
-                            Text("이날은 일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.top, Theme.Space.xxl)
+                            Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.s)
                         }
                         ForEach(plan.items) { item in
                             switch item {
@@ -35,15 +40,14 @@ struct DayListView: View {
                                 ) { onOpenTransaction(marker.transactionID) }
                             }
                         }
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity).padding(.vertical, Theme.Space.l)
                     }
-                    .padding(.horizontal, Theme.Space.l)
-                    .padding(.vertical, Theme.Space.m)
                 }
-            } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .padding(.horizontal, Theme.Space.l)
+            .padding(.vertical, Theme.Space.s)
         }
-        .background(Theme.background)
         .simultaneousGesture(
             DragGesture(minimumDistance: 30).onEnded { value in
                 guard abs(value.translation.width) > abs(value.translation.height) * 1.5 else { return }
@@ -109,7 +113,7 @@ private struct EventCard: View {
         }
         .padding(Theme.Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
         .overlay(alignment: .leading) {
             Capsule().fill(Color(hex: block.calendarColorHex) ?? Theme.accent).frame(width: 4).padding(.vertical, Theme.Space.m)
         }
