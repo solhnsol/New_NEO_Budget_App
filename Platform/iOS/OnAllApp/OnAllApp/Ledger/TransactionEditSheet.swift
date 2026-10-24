@@ -42,7 +42,9 @@ struct TransactionEditSheet: View {
                 } footer: {
                     Text("금액과 카드·계좌 내역은 바뀌지 않아요. 이 화면에서 보이는 모습만 바뀌어요.")
                 }
-                if entry.override != nil {
+                if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) {
+                    Section { Button("이 내역 지우기", role: .destructive) { model.removeManual(entry.id); dismiss() } }
+                } else if entry.override != nil {
                     Section { Button("원래대로 되돌리기", role: .destructive) { model.edit(entry.id, to: nil); dismiss() } }
                 }
             }

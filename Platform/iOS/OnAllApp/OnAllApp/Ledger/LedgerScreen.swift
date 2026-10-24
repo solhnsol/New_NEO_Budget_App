@@ -19,6 +19,7 @@ struct LedgerScreen: View {
     @State private var merging: (deposit: LedgerDeposit, purchase: LedgerListEntry)?
     @State private var senderName = ""
     @State private var mergeMessage: String?
+    @State private var adding = false
 
     var body: some View {
         NavigationStack {
@@ -42,6 +43,11 @@ struct LedgerScreen: View {
                     .pickerStyle(.segmented)
                     .frame(maxWidth: 280)
                 }
+                if mode != .accounts {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { adding = true } label: { Label("내역 추가", systemImage: "plus") }
+                    }
+                }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
@@ -54,6 +60,7 @@ struct LedgerScreen: View {
             }
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
+        .sheet(isPresented: $adding) { ManualTransactionSheet(model: model) }
         .task(id: [model.dataGeneration, model.overrideRevision]) { await load() }
         .alert("정산으로 합칠까요?", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })) {
             TextField("보낸 사람", text: $senderName)
@@ -235,6 +242,7 @@ struct LedgerRow: View {
     private var subtitle: String {
         var parts = [Formatting.time(entry.transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)]
         if entry.transaction.flow == .refund { parts.append("환불") }
+        if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) { parts.append("직접 입력") }
         parts.append(contentsOf: entry.activityTitles)
         parts.append(contentsOf: (entry.override?.tags ?? []).map { "#" + $0 })
         return parts.joined(separator: " · ")

@@ -30,6 +30,30 @@ struct TransactionOverride: Codable, Equatable {
 /// The overrides by transaction, kept as one small file next to the app's data.
 struct TransactionOverrideStore: Codable, Equatable {
     var byTransaction: [String: TransactionOverride] = [:]
+    /// Transactions the user typed in because no notification came for them. They sit beside the ledger, never in it.
+    var manual: [ManualTransaction] = []
+
+    init(byTransaction: [String: TransactionOverride] = [:], manual: [ManualTransaction] = []) {
+        self.byTransaction = byTransaction
+        self.manual = manual
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        byTransaction = try values.decodeIfPresent([String: TransactionOverride].self, forKey: .byTransaction) ?? [:]
+        manual = try values.decodeIfPresent([ManualTransaction].self, forKey: .manual) ?? []
+    }
+
+    /// The typed-in transactions as the list reads them.
+    var manualMarkers: [TransactionMarker] {
+        manual.compactMap { entry in
+            guard let amount = try? Money(minorUnits: entry.amount, currency: "KRW") else { return nil }
+            return TransactionMarker(
+                id: LedgerEntryID(rawValue: entry.id), occurredAtUnixMilliseconds: entry.occurredAtUnixMilliseconds, amount: amount,
+                flow: entry.isRefund ? .refund : .spend, title: entry.title, timePrecision: .exact
+            )
+        }
+    }
 
     subscript(id: LedgerEntryID) -> TransactionOverride? {
         get { byTransaction[id.rawValue] }
@@ -50,4 +74,17 @@ struct TransactionOverrideStore: Codable, Equatable {
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
     }
+}
+
+/// A transaction typed in by hand: a positive amount in won, whether it is money coming back, and when it happened.
+struct ManualTransaction: Codable, Equatable, Identifiable {
+    static let idPrefix = "manual/"
+
+    let id: String
+    var title: String
+    var amount: Int64
+    var isRefund: Bool
+    var occurredAtUnixMilliseconds: Int64
+
+    var isManual: Bool { id.hasPrefix(Self.idPrefix) }
 }

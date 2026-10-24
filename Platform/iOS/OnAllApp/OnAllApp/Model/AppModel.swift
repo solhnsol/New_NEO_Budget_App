@@ -470,11 +470,30 @@ final class AppModel {
         overrideRevision += 1
     }
 
+    /// Adds a transaction the user typed in (and what they set on it), then shows it.
+    func addManual(title: String, won: Int64, isRefund: Bool, at unixMilliseconds: Int64, override: TransactionOverride?) {
+        let id = ManualTransaction.idPrefix + UUID().uuidString
+        transactionOverrides.manual.append(.init(id: id, title: title, amount: won, isRefund: isRefund, occurredAtUnixMilliseconds: unixMilliseconds))
+        transactionOverrides[LedgerEntryID(rawValue: id)] = override
+        saveOverrides()
+    }
+
+    /// Deletes a typed-in transaction. Ledger transactions cannot be deleted.
+    func removeManual(_ id: LedgerEntryID) {
+        transactionOverrides.manual.removeAll { $0.id == id.rawValue }
+        transactionOverrides[id] = nil
+        saveOverrides()
+    }
+
+    private func saveOverrides() {
+        if let url = overridesURL { transactionOverrides.save(to: url) }
+        overrideRevision += 1
+    }
+
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
     func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
         transactionOverrides[id] = override
-        if let url = overridesURL { transactionOverrides.save(to: url) }
-        overrideRevision += 1
+        saveOverrides()
     }
 
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
@@ -482,7 +501,8 @@ final class AppModel {
     /// transactions are still listed, without allocations.
     func ledgerSections() async -> [LedgerDaySection]? {
         let overrides = transactionOverrides.lookup
-        guard let transactions = try? await ledger.transactions() else { return nil }
+        guard let ledgerTransactions = try? await ledger.transactions() else { return nil }
+        let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
         return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)

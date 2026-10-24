@@ -1,3 +1,4 @@
+import Foundation
 import NEOBudgetCalendar
 import NEOBudgetCore
 import Testing
@@ -61,4 +62,18 @@ private func marker(_ id: String, minute: Int, won: Int64) throws -> Transaction
     store[t.id] = o
     store[t.id] = TransactionOverride()
     #expect(store.lookup.isEmpty)
+}
+
+@Test func aTypedInTransactionIsListedBesideTheLedgerAndSurvivesSaving() throws {
+    var store = TransactionOverrideStore()
+    store.manual.append(.init(id: ManualTransaction.idPrefix + "1", title: "현금 점심", amount: 8_000, isRefund: false, occurredAtUnixMilliseconds: zone.instant(of: day, minuteOfDay: 700)))
+    let decoded = try JSONDecoder().decode(TransactionOverrideStore.self, from: JSONEncoder().encode(store))
+    #expect(decoded == store)
+    let markers = decoded.manualMarkers
+    #expect(markers.map(\.title) == ["현금 점심"])
+    #expect(markers.first?.timePrecision == .exact)
+    #expect(LedgerList.sections(markers, life: .empty, zone: zone).first?.totals == [LedgerTotal(currency: "KRW", minorUnits: 8_000)])
+    // A file saved before typed-in transactions existed still reads.
+    let old = try JSONDecoder().decode(TransactionOverrideStore.self, from: Data(#"{"byTransaction":{}}"#.utf8))
+    #expect(old.manual.isEmpty)
 }
