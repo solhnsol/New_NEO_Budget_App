@@ -11,6 +11,8 @@ struct HourAxisState: Equatable {
     let labelCentre: CGFloat
     /// 0 ... 1: how much of the label there is. Never more than the tick's.
     let labelOpacity: Double
+    /// 0 ... 1: how much the hour is a line of the grid (a cell boundary) rather than only an hour with room. Set by `fixedGridLayout`, else 0.
+    var gridWeight: Double = 0
 }
 
 /// The hour ticks and labels of the time axis. Where an hour is drawn and whether it is drawn are two separate things:
@@ -76,5 +78,38 @@ enum HourAxis {
             result.append(HourAxisState(hour: hour, y: y[hour], tickOpacity: tick, labelCentre: centre[hour], labelOpacity: min(label, tick)))
         }
         return result
+    }
+
+    /// 1 when the whole hour is a boundary of the partition, down to 0 five minutes away from every boundary.
+    static func gridWeight(hour: Int, partition: TemporalGridPartition) -> Double {
+        let nearest = partition.boundaries.map { abs($0 - Double(hour * 60)) }.min() ?? 5
+        return max(0, 1 - nearest / 5)
+    }
+
+    /// The hours of a fixed grid: those on a cell boundary go first in the order of importance. A partition between two days is NOT laid out as
+    /// one: which hours are boundaries and which hours have room are decisions that flip at a point, and between days far apart in shape the boundaries
+    /// sweep over the hours, so deciding on the blended partition made labels pop in and out, swap bold and gray, and jump to another winner when the order
+    /// changed. Each end is laid out as it is at rest and every number of the hour (y, label centre, opacities, grid weight) is the straight blend of the
+    /// two ends' with the same progress as the cards' y: a label slides with its card, fades to its value at the other day and never pops. At 0 and 1,
+    /// and for a planned partition, it is exactly the layout at rest.
+    static func fixedGridLayout(partition: TemporalGridPartition, metrics: Metrics) -> [HourAxisState] {
+        guard let blend = partition.blend else {
+            let weights = (0...24).map { gridWeight(hour: $0, partition: partition) }
+            let first = Set((0...24).filter { weights[$0] >= 0.5 })
+            var states = layout(partition: partition, metrics: metrics, first: first)
+            for hour in 0...24 { states[hour].gridWeight = weights[hour] }
+            return states
+        }
+        let a = fixedGridLayout(partition: blend.from, metrics: metrics)
+        let b = fixedGridLayout(partition: blend.to, metrics: metrics)
+        let p = blend.progress, cp = CGFloat(p)
+        func mix(_ x: Double, _ y: Double) -> Double { (1 - p) * x + p * y }
+        return zip(a, b).map { x, y in
+            HourAxisState(
+                hour: x.hour, y: (1 - cp) * x.y + cp * y.y, tickOpacity: mix(x.tickOpacity, y.tickOpacity),
+                labelCentre: (1 - cp) * x.labelCentre + cp * y.labelCentre, labelOpacity: mix(x.labelOpacity, y.labelOpacity),
+                gridWeight: mix(x.gridWeight, y.gridWeight)
+            )
+        }
     }
 }
