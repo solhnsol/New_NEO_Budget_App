@@ -93,11 +93,11 @@ struct TopBarBackground: View {
     @Environment(\.colorScheme) private var scheme
 
     var body: some View {
-        // The dark material lifts black to gray, so in dark it is used lightly and the screen's own black carries the color.
+        // The dark material lifts black to gray, so in dark it is used lightly and the screen's own black carries the color. The color is mostly opaque; the blur only hints at what is under it.
         let dark = scheme == .dark
         ZStack {
             Rectangle().fill(.ultraThinMaterial).opacity(dark ? 0.3 : 1)
-            Rectangle().fill(Color(.systemBackground).opacity(dark ? 0.7 : 0.45))
+            Rectangle().fill(Color(.systemBackground).opacity(dark ? 0.88 : 0.82))
         }
     }
 }
