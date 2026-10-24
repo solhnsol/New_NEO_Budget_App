@@ -154,6 +154,12 @@ enum DemoData {
             if let weekRange {
                 _ = await provider.createEvent(CalendarEventDraft(calendarID: life, title: "기말 준비 주간", time: .allDay(weekRange)))
             }
+            // `-demo-allday`: more all-day events on today, for the list's "종일 N개" chip.
+            if ProcessInfo.processInfo.arguments.contains("-demo-allday"), let oneDay = try? DayRange(firstDay: today, lastDay: today) {
+                for title in ["친구 생일", "도서관 반납일"] {
+                    _ = await provider.createEvent(CalendarEventDraft(calendarID: school, title: title, time: .allDay(oneDay)))
+                }
+            }
             await provider.seedSeries(
                 calendarID: school, title: "영어 회화",
                 firstStartUnixMilliseconds: seriesStart, durationMilliseconds: 3_600_000, count: 4

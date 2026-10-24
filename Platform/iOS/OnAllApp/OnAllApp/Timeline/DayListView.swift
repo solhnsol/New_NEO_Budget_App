@@ -181,8 +181,11 @@ private struct DaySection: View {
                 Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
                     .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary).fixedSize()
                 // All-day events sit beside the date, as small chips.
-                ForEach(timeline?.allDay.sorted { $0.id < $1.id } ?? [], id: \.id) { allDay in
-                    AllDayChip(item: allDay) { onSelect(.allDay(allDay)) }
+                let allDays = timeline?.allDay.sorted { $0.id < $1.id } ?? []
+                if allDays.count == 1, let only = allDays.first {
+                    AllDayChip(item: only) { onSelect(.allDay(only)) }
+                } else if allDays.count > 1 {
+                    AllDayCount(items: allDays, onSelect: { onSelect(.allDay($0)) })
                 }
                 Spacer(minLength: 0)
             }
@@ -234,6 +237,40 @@ private struct AllDayChip: View {
         .padding(.horizontal, Theme.Space.s).padding(.vertical, Theme.Space.xs)
         .background(color.opacity(0.14), in: Capsule())
         .listTap(onTap)
+    }
+}
+
+/// Several all-day events as one chip with their count; a tap opens a bubble listing them.
+private struct AllDayCount: View {
+    let items: [AllDayItem]
+    let onSelect: (AllDayItem) -> Void
+    @State private var open = false
+
+    var body: some View {
+        HStack(spacing: Theme.Space.xs) {
+            Image(systemName: "sun.horizon").font(.system(.caption2, weight: .semibold))
+            Text("종일 \(items.count)개").font(Theme.Typo.caption.weight(.medium))
+        }
+        .foregroundStyle(Theme.accent)
+        .padding(.horizontal, Theme.Space.s).padding(.vertical, Theme.Space.xs)
+        .background(Theme.accent.opacity(0.14), in: Capsule())
+        .listTap { open = true }
+        .popover(isPresented: $open, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: Theme.Space.m) {
+                ForEach(items, id: \.id) { item in
+                    HStack(spacing: Theme.Space.s) {
+                        Circle().fill(Color(hex: item.calendarColorHex) ?? Theme.accent).frame(width: 8, height: 8)
+                        Text(item.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { open = false; onSelect(item) }
+                }
+            }
+            .padding(Theme.Space.l)
+            .frame(minWidth: 220, alignment: .leading)
+            .presentationCompactAdaptation(.popover)
+        }
     }
 }
 
