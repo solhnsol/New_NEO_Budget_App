@@ -50,6 +50,8 @@ struct DayListView: View {
     @State private var scrollView = ScrollViewBox()
     /// The day a programmatic scroll is heading for: scroll positions reported on the way there are not the reader's.
     @State private var headingFor: Int?
+    /// True from arriving on a day until the reader first touches the list: days read after that change the heights above, and the day is kept on the line.
+    @State private var untouched = false
     /// Days handed to the model from the scroll, and when, so the model's answer is not mistaken for a pick made elsewhere.
     @State private var pushed: [Int: Date] = [:]
 
@@ -63,6 +65,7 @@ struct DayListView: View {
         _center = State(initialValue: start)
         _topEpoch = State(initialValue: start)
         _readingEpoch = State(initialValue: start)
+        _headingFor = State(initialValue: start)
     }
 
     var body: some View {
@@ -76,7 +79,9 @@ struct DayListView: View {
                     )
                     .id(epoch)
                     .background(GeometryReader { proxy in
-                        Color.clear.preference(key: DayTopKey.self, value: [epoch: proxy.frame(in: .named(Self.space)).minY])
+                        // The space's own origin rides along under `Int.min`: it sits below the status bar, not at the top of the screen.
+                        let top = proxy.frame(in: .named(Self.space)).minY
+                        Color.clear.preference(key: DayTopKey.self, value: [epoch: top, Int.min: proxy.frame(in: .global).minY - top])
                     })
                     .onAppear { if timelines[epoch] == nil { Task { await read(epoch) } } }
                 }
@@ -91,6 +96,11 @@ struct DayListView: View {
         .scrollPosition(id: $topEpoch, anchor: .top)
         .onPreferenceChange(DayTopKey.self) { moved(to: $0) }
         .task(id: readingEpoch) { await readAround(readingEpoch) }
+        .task {
+            // Opening on a day: the day the model is on is what the list opened on.
+            let epoch = model.selectedDay.daysSinceUnixEpoch
+            if headingFor != nil { headingFor = epoch; readingEpoch = epoch; await arrive(at: epoch, after: 0.3) }
+        }
         .onChange(of: model.selectedDay) { _, day in selectionChanged(to: day.daysSinceUnixEpoch) }
         .onChange(of: model.dataGeneration) { _, _ in Task { await refreshAll() } }
     }
@@ -98,13 +108,21 @@ struct DayListView: View {
     // MARK: Following the model, and leading it
 
     /// The sections reported where they are. The day at the top follows them; a new day coming onto the screen is felt once.
-    private func moved(to now: [Int: CGFloat]) {
+    private func moved(to reported: [Int: CGFloat]) {
+        var now = reported
+        let origin = now.removeValue(forKey: Int.min) ?? 0
         guard !now.isEmpty else { return }
-        let height = scrollView.view?.bounds.height ?? 0
+        // Where the bottom of the bar (the top of what can really be seen) and the bottom edge of the list are, in the space the days are reported in.
+        let scrollTop = scrollView.view?.convert(CGPoint.zero, to: nil).y ?? 0
+        let line = scrollTop + topInset - origin
+        let height = scrollTop + (scrollView.view?.bounds.height ?? 0) - origin
+        scrollView.tops = now
+        scrollView.line = line
         // The header is drawn over the top of the list: the day at the top is the one at the top of what can really be seen below it.
-        let top = now.filter { $0.value <= topInset + 0.5 }.keys.max() ?? now.keys.min()!
+        let top = now.filter { $0.value <= line + 0.5 }.keys.max() ?? now.keys.min()!
         let bottom = now.filter { $0.value <= height }.keys.max() ?? top
         defer { lastBottom = bottom }
+        if scrollView.view?.isTracking == true { untouched = false }
         guard headingFor == nil else { return }
         // A new day comes onto the screen when the line between days enters from the bottom edge (the list moves up) or from the top edge (it
         // moves down: the day at the top changes to the one before). A day leaving the screen is not felt.
@@ -114,8 +132,8 @@ struct DayListView: View {
             Haptics.snap()
             scrollView.snag(rate: Self.snagRate, seconds: Self.snagSeconds)
         }
-        if let old = readingEpoch, old != top, let line = now[top > old ? top : old] {
-            scrollView.hold(dir: top > old ? 1 : -1, lineGap: line - topInset, give: Self.holdGive, release: Self.releasePull)
+        if let old = readingEpoch, old != top, let boundary = now[top > old ? top : old] {
+            scrollView.hold(dir: top > old ? 1 : -1, lineGap: boundary - line, give: Self.holdGive, release: Self.releasePull)
         }
         scrolled(to: top)
     }
@@ -140,11 +158,19 @@ struct DayListView: View {
         } else {
             withAnimation(.easeOut(duration: 0.3)) { topEpoch = epoch }
         }
-        // The list is deaf to the reader's position until it has arrived (or for as long as a scroll takes).
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(jump > Self.animatedJump ? 0.3 : 0.6))
-            if headingFor == epoch { headingFor = nil }
+        Task { await arrive(at: epoch, after: jump > Self.animatedJump ? 0.3 : 0.6) }
+    }
+
+    /// The list is deaf to the reader's position until it has arrived (or for as long as a scroll takes). It then brings the day's top to the line a few
+    /// times: the lazy column lands the day where its estimate of the days above puts it, and the estimate settles as they are drawn.
+    private func arrive(at epoch: Int, after delay: Double) async {
+        try? await Task.sleep(for: .seconds(delay))
+        for _ in 0..<5 {
+            guard headingFor == epoch else { return }
+            scrollView.align(epoch)
+            try? await Task.sleep(for: .milliseconds(120))
         }
+        if headingFor == epoch { headingFor = nil; untouched = true }
     }
 
     // MARK: Reading days
@@ -163,7 +189,13 @@ struct DayListView: View {
         reading.insert(epoch)
         defer { reading.remove(epoch) }
         let day = LocalDate(daysSinceUnixEpoch: epoch)
-        if let timeline = await model.readDays([day]).first?.timeline { timelines[epoch] = timeline }
+        if let timeline = await model.readDays([day]).first?.timeline {
+            timelines[epoch] = timeline
+            if untouched, let at = readingEpoch {
+                try? await Task.sleep(for: .milliseconds(60))
+                if untouched { scrollView.align(at) }
+            }
+        }
     }
 
     /// The calendar or the ledger changed: the days held are read again, and each is replaced as it lands so nothing blinks.
@@ -463,6 +495,16 @@ private struct DayTopKey: PreferenceKey {
     private var normalRate: UIScrollView.DecelerationRate?
     private var observation: NSKeyValueObservation?
     private var writing = false
+    /// Where each day's top last was reported, in the list's own space, and where the visible part of the list starts (under the bar).
+    var tops: [Int: CGFloat] = [:]
+    var line: CGFloat = 0
+
+    /// Moves the list by whatever it takes for `epoch`'s top to sit exactly at `line`: a scroll to a day lands where the lazy column's estimate of the
+    /// days above puts it, which can be well short of the line, and the day would change at the first touch.
+    func align(_ epoch: Int) {
+        guard let view, !view.isTracking, !view.isDecelerating, let y = tops[epoch], abs(y - line) > 0.5 else { return }
+        view.contentOffset.y += y - line
+    }
 
     /// A day's line held under the finger: where the offset is held, which way the list was moving, and where the finger and the offset were when it was caught.
     private struct Hold {
