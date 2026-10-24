@@ -177,6 +177,7 @@ struct EventBlockView: View {
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
+    @Environment(\.colorScheme) private var colorScheme
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
     /// The stack's padding and spacing, which `DayRenderPlan.rowsFrame` also places the rows by.
@@ -184,15 +185,16 @@ struct EventBlockView: View {
     static let rowSpacing: CGFloat = 1
 
     var body: some View {
-        let color = Color(hex: block.calendarColorHex) ?? .accentColor
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
         let missing = block.state == .eventMissing
         let card = presentation.card
+        let tint = colorScheme == .dark ? 0.30 : 0.22
         let shownRows = presentation.shownRows
         let hiddenRows = presentation.hiddenRows
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
         // With a header above it, the card's top corners are square: the header's own corners are the pair's, and its sides continue
         // straight down into the card's, so the two read as one event.
-        let radius = min(6, height / 2)
+        let radius = min(10, height / 2)
         let shape = UnevenRoundedRectangle(
             topLeadingRadius: hasHeader ? 0 : radius, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: hasHeader ? 0 : radius
         )
@@ -220,11 +222,12 @@ struct EventBlockView: View {
         .frame(height: max(0, height), alignment: .top)
         .clipped()
         .opacity(presentation.transactions)
-        .background(color.opacity((missing ? 0.08 : 0.22) * card), in: shape)
+        .background(color.opacity((missing ? 0.08 : tint) * card), in: shape)
         .background(Color(.systemBackground).opacity(card), in: shape)
         // The colour of the line it thins into: solid when the card is only a line, gone when it is a card (the stripe stays).
         .background(color.opacity(1 - card), in: shape)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: min(3, max(1, height))) }
+        // The left stripe is only the line the card thins into; a full card is one tinted fill, with no stripe and no outline.
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: min(3, max(1, height))).opacity(1 - card) }
         .overlay(alignment: .bottom) {
             // The last line: how many transactions the event holds (where there is no room for rows) on the left, the end time on the
             // right. The count gives way to the time, never the other way round.
@@ -249,7 +252,7 @@ struct EventBlockView: View {
             }
         }
         .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
-        .overlay(shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
+        .overlay { if missing { shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
         .opacity(missing ? 0.7 : 1)
         .clipShape(shape)
         .accessibilityElement(children: .combine)
@@ -264,7 +267,7 @@ struct EventBlockView: View {
     }
 }
 
-/// "거래 3건 · 12,300원" in the room of one small line; the count alone where the total does not fit.
+/// "3건 · 12,300원" as one pill; the total alone, then the count alone, where it does not fit.
 private struct SummaryCount: View {
     let count: Int
     let total: String?
@@ -272,11 +275,20 @@ private struct SummaryCount: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            if let total { Text("거래 \(count)건 · \(total)").fixedSize() }
-            Text("거래 \(count)건").fixedSize()
+            // The total is what matters, so it is what stays when room is short: count and total, then the total alone, then the count.
+            if let total { pill("\(count)건 · \(total)") }
+            if let total { pill(total) }
+            pill("\(count)건")
             Color.clear.frame(width: 0)
         }
-        .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    /// A white pill on the card (a step up from it, in the dark too), so the total reads as one thing to touch.
+    private func pill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1).fixedSize()
+            .padding(.horizontal, 9 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: Capsule())
     }
 }
 
