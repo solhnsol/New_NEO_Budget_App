@@ -123,6 +123,20 @@ public actor EventKitCalendarProvider: CalendarProvider {
         return .success(descriptor(calendar))
     }
 
+    public func updateCalendar(_ id: CalendarID, title: String?, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        do { try requireAccess() } catch { return .failure(.accessUnavailable) }
+        if let failure = calendarGate(id) { return .failure(failure) }
+        guard let calendar = calendar(withID: id.rawValue) else { return .failure(.calendarMissing(id)) }
+        if let title { calendar.title = title }
+        if let colorHex, let color = cgColor(hex: colorHex) { calendar.cgColor = color }
+        do {
+            try store.saveCalendar(calendar, commit: true)
+        } catch {
+            return .failure(map(error, calendarID: id))
+        }
+        return .success(descriptor(calendar))
+    }
+
     public func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool> {
         do { try requireAccess() } catch { return .failure(.accessUnavailable) }
         if let failure = calendarGate(id) { return .failure(failure) }

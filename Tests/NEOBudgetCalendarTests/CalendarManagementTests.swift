@@ -24,3 +24,19 @@ import NEOBudgetInMemoryCalendar
     let provider = InMemoryCalendarProvider(calendars: [CalendarDescriptor(id: id, title: "구독", isWritable: false)])
     #expect(await provider.deleteCalendar(id) == .failure(.calendarNotWritable(id)))
 }
+
+@Test func updatingACalendarChangesOnlyTheGivenFields() async throws {
+    let id = CalendarID(rawValue: "c")
+    let provider = InMemoryCalendarProvider(calendars: [CalendarDescriptor(id: id, title: "일상", colorHex: "#111111")])
+    guard case let .success(renamed) = await provider.updateCalendar(id, title: "운동", colorHex: nil) else { Issue.record("no update"); return }
+    #expect(renamed.title == "운동" && renamed.colorHex == "#111111")
+    guard case let .success(recolored) = await provider.updateCalendar(id, title: nil, colorHex: "#222222") else { Issue.record("no update"); return }
+    #expect(recolored.title == "운동" && recolored.colorHex == "#222222")
+    #expect(try await provider.calendars() == [recolored])
+}
+
+@Test func aReadOnlyCalendarCannotBeRenamed() async {
+    let id = CalendarID(rawValue: "ro")
+    let provider = InMemoryCalendarProvider(calendars: [CalendarDescriptor(id: id, title: "구독", isWritable: false)])
+    #expect(await provider.updateCalendar(id, title: "x", colorHex: nil) == .failure(.calendarNotWritable(id)))
+}

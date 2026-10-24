@@ -145,6 +145,19 @@ public actor InMemoryCalendarProvider: CalendarProvider {
         return .success(calendar)
     }
 
+    public func updateCalendar(_ id: CalendarID, title: String?, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        guard accessAvailable else { return .failure(.accessUnavailable) }
+        guard let calendar = calendarsByID[id] else { return .failure(.calendarMissing(id)) }
+        guard calendar.isWritable else { return .failure(.calendarNotWritable(id)) }
+        let changed = CalendarDescriptor(
+            id: id, title: title ?? calendar.title, colorHex: colorHex ?? calendar.colorHex,
+            isWritable: calendar.isWritable, sourceTitle: calendar.sourceTitle
+        )
+        calendarsByID[id] = changed
+        signalChange()
+        return .success(changed)
+    }
+
     public func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool> {
         guard accessAvailable else { return .failure(.accessUnavailable) }
         guard let calendar = calendarsByID[id] else { return .failure(.calendarMissing(id)) }

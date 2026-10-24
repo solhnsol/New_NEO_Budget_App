@@ -490,6 +490,22 @@ final class AppModel {
         }
     }
 
+    /// Renames and recolors a calendar (what is unchanged is left alone) and sets its icon. Returns why it failed, or `nil`.
+    func editCalendar(_ calendar: CalendarDescriptor, title: String, colorHex: String, symbol: String) async -> String? {
+        setCalendarIcon(symbol, for: calendar.id)
+        let newTitle = title == calendar.title ? nil : title
+        let newColor = colorHex == calendar.colorHex ? nil : colorHex
+        if newTitle != nil || newColor != nil {
+            switch await provider.updateCalendar(calendar.id, title: newTitle, colorHex: newColor) {
+            case .success: break
+            case let .failure(failure): return Self.message(for: failure)
+            case .conflict: return "캘린더를 바꾸지 못했어요."
+            }
+        }
+        await reload()
+        return nil
+    }
+
     /// Removes a calendar with all its events. The events are gone from the device calendar too.
     func removeCalendar(_ id: CalendarID) async -> String? {
         switch await provider.deleteCalendar(id) {
