@@ -29,6 +29,8 @@ struct DayListView: View {
     /// (the normal rate is 0.998; each 0.001 lower is roughly a tenth more speed lost per second at that rate).
     static let snagRate: CGFloat = 0.9975
     static let snagSeconds = 0.05
+    /// While the finger is dragging, a new day's line makes the list lag behind it by this many points, then spring over to catch up.
+    static let jellyDistance: CGFloat = 12
 
     /// The day the column was built around. It is kept for the life of the view: the parent builds this struct again on every change of the selected
     /// day, and a centre that followed it would slide the whole range of days under the scroll position by a day at a time.
@@ -102,6 +104,7 @@ struct DayListView: View {
         if enteredBelow || enteredAbove {
             Haptics.snap()
             scrollView.snag(rate: Self.snagRate, seconds: Self.snagSeconds)
+            scrollView.jelly(lag: enteredBelow ? Self.jellyDistance : -Self.jellyDistance)
         }
         scrolled(to: top)
     }
@@ -345,8 +348,23 @@ private struct DayTopKey: PreferenceKey {
 /// The `UIScrollView` under the SwiftUI list, found so it can be held back for a moment as it coasts past a day's line.
 @MainActor private final class ScrollViewBox {
     weak var view: UIScrollView?
+    /// What the scroll view holds: moved a little against the finger and let go, it reads as the list being pulled through something soft.
+    weak var content: UIView?
     private var releasing: Task<Void, Never>?
     private var normalRate: UIScrollView.DecelerationRate?
+
+    /// While the finger drags: the content is held back by `lag` points (down when the list moves up, up when it moves down), then springs over to where it
+    /// belongs. Only a transform on the content, so the scroll position and what the list reports are untouched.
+    func jelly(lag: CGFloat) {
+        guard let view, view.isTracking, let content else { return }
+        UIView.animate(withDuration: 0.09, delay: 0, options: [.beginFromCurrentState, .curveEaseOut, .allowUserInteraction]) {
+            content.transform = CGAffineTransform(translationX: 0, y: lag)
+        } completion: { _ in
+            UIView.animate(withDuration: 0.5, delay: 0, usingSpringWithDamping: 0.4, initialSpringVelocity: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                content.transform = .identity
+            }
+        }
+    }
 
     func snag(rate: CGFloat, seconds: Double) {
         guard let view, view.isDecelerating, !view.isTracking else { return }
@@ -368,8 +386,10 @@ private struct ScrollViewFinder: UIViewRepresentable {
     func updateUIView(_ view: UIView, context: Context) {
         DispatchQueue.main.async {
             var up: UIView? = view
-            while let current = up, !(current is UIScrollView) { up = current.superview }
+            var below: UIView?
+            while let current = up, !(current is UIScrollView) { below = current; up = current.superview }
             box.view = up as? UIScrollView
+            box.content = below
         }
     }
 }
