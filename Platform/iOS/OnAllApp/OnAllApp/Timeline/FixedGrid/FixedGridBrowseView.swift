@@ -62,6 +62,11 @@ struct FixedGridBrowseView: View {
     @State private var editBarHeight: CGFloat = 0
     /// How far the keyboard reaches up over the grid (the edit bar rides on it), and where the grid is on screen.
     @State private var keyboardOverlap: CGFloat = 0
+    /// The scroll offset before the session began (the scroll goes back to it when the session ends, with the keyboard), how long the keyboard takes to
+    /// move, and the pending release of the bar's room once the keyboard is gone.
+    @State private var preEditOffset: CGFloat?
+    @State private var keyboardDuration: TimeInterval = 0.25
+    @State private var releaseInset: Task<Void, Never>?
     @State private var gridFrame: CGRect = .zero
     @State private var planningVersion = 0
     @State private var restedZoomKey = 4
@@ -203,7 +208,7 @@ struct FixedGridBrowseView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { keyboardChanged($0) }
         .onChange(of: editBarHeight) { _, _ in keepChosenCardVisible() }
-        .onChange(of: edit.session?.id) { _, _ in keepChosenCardVisible() }
+        .onChange(of: edit.session?.id) { _, _ in sessionChanged() }
         .onChange(of: edit.session?.target) { _, _ in keepChosenCardVisible() }
         .onChange(of: editor?.isRenaming) { _, _ in keepChosenCardVisible() }
         // The grid keeps its size under the keyboard: its partition is planned for the room it has, and a rename must not re-plan the day.
@@ -373,8 +378,9 @@ struct FixedGridBrowseView: View {
     /// handles when it fits, else its top; while renaming, its title. The scroll may go past the end of the day by the bar's height (`bottomInset`), so a
     /// card at the end of the day can come above the bar even at 1×.
     private func keepChosenCardVisible() {
-        pinch.bottomInset = edit.session != nil ? editBarHeight : 0                   // kept through a save, so the card does not move while it is answered
-        guard edit.session != nil, edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
+        guard edit.session != nil else { return }                                      // the room is released by `sessionChanged`, once the keyboard is gone
+        pinch.bottomInset = editBarHeight
+        guard edit.session?.committing != true, let card = gestureMode.target?.frame, !card.isNull else { return }
         let viewport = pinch.viewportHeight, offset = pinch.currentOffset?() ?? 0
         let top: CGFloat = 8, bottom = viewport - editBarHeight - 8
         guard viewport > 1, bottom - top > 44 else { return }
@@ -387,7 +393,31 @@ struct FixedGridBrowseView: View {
         else { target += span.upperBound - bottom }
         let range = pinch.offsetRange(zoom: pinch.zoom)
         target = min(max(target, range.lowerBound), range.upperBound)
-        if abs(target - offset) > 0.5 { pinch.scrollTo?(target) }
+        if abs(target - offset) > 0.5 { pinch.scrollTo?(target, 0.32) }
+    }
+
+    /// A session began: the offset it began at is kept. It ended (done or cancelled): the scroll goes back to that offset in the time the keyboard takes to
+    /// leave, and the bar's room (`bottomInset`) is kept until the keyboard is gone, then let go without moving the content.
+    private func sessionChanged() {
+        if edit.session != nil {
+            releaseInset?.cancel()
+            if preEditOffset == nil { preEditOffset = pinch.currentOffset?() }
+            keepChosenCardVisible()
+            return
+        }
+        let duration = keyboardOverlap > 0 ? keyboardDuration : 0.25
+        if let back = preEditOffset {
+            let range = PinchZoomMath.offsetRange(zoom: pinch.zoom, viewport: pinch.viewportHeight)
+            let target = min(max(back, range.lowerBound), range.upperBound)
+            if let now = pinch.currentOffset?(), abs(now - target) > 0.5 { pinch.scrollTo?(target, duration) }
+        }
+        preEditOffset = nil
+        releaseInset?.cancel()
+        releaseInset = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(duration + 0.1))
+            guard !Task.isCancelled, edit.session == nil else { return }
+            pinch.bottomInset = 0
+        }
     }
 
     /// How much of the grid the keyboard covers (the grid itself keeps its size: its partition is planned for the room it has).
@@ -395,6 +425,7 @@ struct FixedGridBrowseView: View {
         let frame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
         let hiding = note.name == UIResponder.keyboardWillHideNotification
         keyboardOverlap = hiding ? 0 : max(0, gridFrame.maxY - frame.minY)
+        if let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval, duration > 0 { keyboardDuration = duration }
     }
 
     /// A day on screen that is not kept yet says whether it is being read or could not be read (a kept day with nothing on it is drawn as the empty day it is).

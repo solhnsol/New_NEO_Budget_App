@@ -25,8 +25,8 @@ final class PinchZoomModel: ObservableObject {
     /// end of the day can be brought above it. Not published: it changes the scroll, not what is drawn.
     var bottomInset: CGFloat = 0 { didSet { if abs(oldValue - bottomInset) > 0.5 { applyBottomInset?() } } }
     var applyBottomInset: (() -> Void)?
-    /// Set by the scroll view: eases the scroll to an offset (the zoom stays). Ignored while the person has the scroll in hand.
-    var scrollTo: ((CGFloat) -> Void)?
+    /// Set by the scroll view: eases the scroll to an offset over a duration (the zoom stays). Ignored while the person has the scroll in hand.
+    var scrollTo: ((CGFloat, CFTimeInterval) -> Void)?
     /// The offsets the scroll can rest at now (with `bottomInset`).
     func offsetRange(zoom: CGFloat) -> ClosedRange<CGFloat> {
         let base = PinchZoomMath.offsetRange(zoom: zoom, viewport: viewportHeight)
@@ -287,9 +287,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 return true
             }
             model.applyBottomInset = { [weak self] in self?.applyBottomInset() }
-            model.scrollTo = { [weak self] offset in
+            model.scrollTo = { [weak self] offset, duration in
                 guard let self, self.pinchStart == nil, !self.scroll.isDragging, !self.scroll.isDecelerating else { return }
-                self.animate(to: (self.model.zoom, offset))
+                self.animate(to: (self.model.zoom, offset), duration: duration)
             }
             model.startPace = { [weak self] in self?.startMeter() }
             model.drivePinch = { [weak self] state, scale, focal in self?.pinch(state, scale: scale, focal: focal) }
@@ -615,9 +615,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Easing back inside the range
 
-        private func animate(to target: (zoom: CGFloat, offset: CGFloat)) {
+        private func animate(to target: (zoom: CGFloat, offset: CGFloat), duration: CFTimeInterval = 0.32) {
             stopAnimation()
-            animation = (start: (model.zoom, scroll.contentOffset.y), end: (target.zoom, target.offset), began: CACurrentMediaTime(), duration: 0.32)
+            animation = (start: (model.zoom, scroll.contentOffset.y), end: (target.zoom, target.offset), began: CACurrentMediaTime(), duration: max(0.05, duration))
             let link = CADisplayLink(target: self, selector: #selector(tick))
             link.add(to: .main, forMode: .common)
             self.link = link
