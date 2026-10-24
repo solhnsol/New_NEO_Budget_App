@@ -19,18 +19,27 @@ enum LedgerDestination: String, Identifiable {
 /// A transaction picked in the calendar, to open its details.
 struct TransactionRef: Identifiable { let id: LedgerEntryID }
 
-/// The calendar's one menu: how the day is shown, adding a transaction, and the ledger's list and account statements.
+/// One tap switches how the day is shown (the button shows the style it switches to); the menu next to it adds a transaction and opens the
+/// ledger's list and account statements.
 struct CalendarMenu: View {
     @Binding var style: CalendarStyle
     let onAdd: () -> Void
     let onOpen: (LedgerDestination) -> Void
 
+    private var other: CalendarStyle { style == .grid ? .list : .grid }
+
     var body: some View {
-        Menu {
-            Picker("보기", selection: $style) {
-                ForEach(CalendarStyle.allCases, id: \.self) { Label($0.title, systemImage: $0.symbol).tag($0) }
+        HStack(spacing: 0) {
+            Button { style = other } label: {
+                Image(systemName: other.symbol).font(.body.weight(.semibold)).frame(width: 40, height: 44).contentShape(Rectangle())
             }
-            Divider()
+            .accessibilityLabel(other.title + " 보기로 바꾸기")
+            menu
+        }
+    }
+
+    private var menu: some View {
+        Menu {
             Button { onAdd() } label: { Label("내역 추가", systemImage: "plus") }
             Button { onOpen(.list) } label: { Label("가계부 목록", systemImage: "list.bullet.rectangle") }
             Button { onOpen(.accounts) } label: { Label("계좌·카드", systemImage: "creditcard") }
