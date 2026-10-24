@@ -140,7 +140,7 @@ struct FixedGridBrowseView: View {
         @objc private func tick(_ link: CADisplayLink) { if last > 0 { intervals.append((link.timestamp - last) * 1000) }; last = link.timestamp }
     }
 
-    private static let gutter: CGFloat = 60
+    private static let gutter: CGFloat = 62
     private static let trailing: CGFloat = 6
     private static let visibleColumns = 2
 
@@ -1970,27 +1970,12 @@ private struct FixedHourAxis: View {
                 Rectangle().fill(Color.secondary.opacity(0.25)).frame(width: max(0, width - gutter), height: 0.5)
                     .offset(x: gutter, y: partition.top(ofSlot: slot))
             }
-            // The time axis: one thin solid line at the gutter's edge, a tick at the real y of every whole hour that has room (the same as the debug grid's).
-            Path { path in path.move(to: CGPoint(x: rail, y: 0)); path.addLine(to: CGPoint(x: rail, y: partition.totalHeight)) }
-                .stroke(Color.secondary.opacity(0.5), lineWidth: 0.8)
             ForEach(states, id: \.hour) { state in
-                if state.tickOpacity > 0.003 {
-                    // An hour that is a boundary of the grid itself (a cell edge) is longer and darker than one that only has room; it fades to the plain
-                    // tick over a few minutes while the boundaries move between days.
-                    let grid = state.gridWeight
-                    Path { path in
-                        path.move(to: CGPoint(x: rail, y: state.y))
-                        path.addLine(to: CGPoint(x: rail + 3 + 3 * CGFloat(state.labelOpacity) + 4 * CGFloat(grid), y: state.y))
-                    }
-                    .stroke(Color.secondary.opacity((0.7 + 0.3 * grid) * state.tickOpacity), lineWidth: 0.8 + 0.5 * grid)
-                }
                 if state.labelOpacity > 0.003 {
-                    // Every hour is written the same: one gray, one size (Hans, 2026-10-23). Which hours have room is still decided by `HourAxis.layout`,
-                    // where the hours on a line of the grid keep theirs first.
-                    ZStack(alignment: .trailing) {
-                        Text(Formatting.hourLabel(state.hour))
-                            .font(.system(size: metrics.labelFontSize * 0.9).monospacedDigit()).foregroundStyle(Theme.textTertiary)
-                    }
+                    // Every hour is written the same, as Apple's Calendar writes it: period and hour on one line, centred on the line it belongs to
+                    // (Hans picked this over four other axes, 2026-10-24). Which hours have room is still decided by `HourAxis.layout`.
+                    Text(Formatting.axisHourLabel(state.hour))
+                        .font(.system(size: metrics.labelFontSize * 0.95).monospacedDigit()).foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
                     .opacity(state.labelOpacity)

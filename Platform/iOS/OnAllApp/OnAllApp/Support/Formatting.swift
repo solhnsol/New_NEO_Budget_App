@@ -130,6 +130,15 @@ enum Formatting {
         }
     }
 
+    /// "오후 2시" for the hour axis; midnight and noon keep their own names.
+    static func axisHourLabel(_ hour: Int) -> String {
+        switch hour {
+        case 0, 24: return "자정"
+        case 12: return "정오"
+        default: return "\(hour < 12 ? "오전" : "오후") \(hour % 12)시"
+        }
+    }
+
     private static let weekdaySymbols = ["일", "월", "화", "수", "목", "금", "토"]
     static func weekdayShort(_ day: LocalDate) -> String { weekdaySymbols[day.weekday] }
     /// "10월 9일 – 10일", or with both months when the two days are in different ones.
