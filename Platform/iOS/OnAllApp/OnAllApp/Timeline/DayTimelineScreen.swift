@@ -230,10 +230,13 @@ private struct DayHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
+            // Only the month: the days themselves are named once, over their columns.
+            Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
             Spacer()
-            Button("오늘") { goTo(model.today) }
-                .buttonStyle(.bordered).disabled(model.isToday)
+            Button { goTo(model.today) } label: {
+                Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)
+            }
+            .disabled(model.isToday)
             // The arrows get a full 44pt square to hit (the bare symbol was about half that); the header keeps its height.
             HStack(spacing: 0) {
                 Button { goTo(model.selectedDay.adding(days: -1)) } label: { arrow("chevron.left") }
@@ -248,7 +251,7 @@ private struct DayHeader: View {
     }
 
     private func arrow(_ symbol: String) -> some View {
-        Image(systemName: symbol).font(.body.weight(.semibold)).frame(width: 44, height: 44).contentShape(Rectangle())
+        Image(systemName: symbol).font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).frame(width: 44, height: 44).contentShape(Rectangle())
     }
 }
 

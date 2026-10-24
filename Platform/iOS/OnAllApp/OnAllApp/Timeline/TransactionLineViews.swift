@@ -104,7 +104,7 @@ struct TransactionLineView: View {
                 if nameRoom >= 30 * scale {
                     Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
-                Spacer(minLength: 2)
+                Color.clear.frame(width: 4 * scale)
                 amountText(display, refund: refund)
             }
             .padding(.leading, 3 * scale).padding(.trailing, 7 * scale)
@@ -112,6 +112,8 @@ struct TransactionLineView: View {
             .background(Theme.surface, in: chip)
             .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: linkColor == nil ? 0.75 : 1.2))
             .shadow(color: Color.black.opacity(overEvent ? 0.12 : 0.06), radius: 1.5, y: 0.5)
+            // The chip is only as long as its text, so a transaction over an event leaves the event's title and times readable.
+            Spacer(minLength: 0)
         }
         .padding(.trailing, 2)
         .revealed(item.reveal)
@@ -131,7 +133,7 @@ struct TransactionLineView: View {
     private func amountText(_ display: DayRenderPlan.TransactionDisplay?, refund: Bool) -> some View {
         if let display {
             Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
-                .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
+                .font(.system(size: 11 * scale, weight: .bold).monospacedDigit())
                 .foregroundStyle(refund ? Theme.accent : Theme.textPrimary)
                 .lineLimit(1).fixedSize()
         }
@@ -179,17 +181,21 @@ struct OverflowCardView: View {
     var body: some View {
         // A summary is not at a moment of the day, so it has no line to the timeline: it is written as information, at the same x as an
         // event's own text.
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
         HStack(spacing: 0) {
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
+            // It is a chip like a single transaction's (white, hairline edge), only as long as its text.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()
                 Text(Self.countOnly(item)).minimumScaleFactor(0.5)
             }
-            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 8 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(Theme.divider, lineWidth: 0.75))
             Spacer(minLength: 2)
         }
         .padding(.leading, 6).padding(.trailing, 6)
-        .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
