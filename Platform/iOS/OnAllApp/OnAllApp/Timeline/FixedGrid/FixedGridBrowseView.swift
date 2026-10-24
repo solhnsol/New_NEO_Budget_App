@@ -255,7 +255,7 @@ struct FixedGridBrowseView: View {
             return StripDay(day: day, timeline: model.cachedTimeline(for: day))
         }
         // While editing, a tap on the header is a tap outside the event (it opens nothing).
-        return DayHeaderStrip(strip: strip, today: today, swipeOffset: -CGFloat(position - Double(first)) * columnWidth, onSelect: { item in
+        return DayHeaderStrip(strip: strip, today: today, swipeOffset: -CGFloat(position - Double(first)) * columnWidth, gutter: Self.gutter, onSelect: { item in
             if edit.state.editing != nil { edit.send(.tapOutside) } else { onSelect(.allDay(item)) }
         })
     }
