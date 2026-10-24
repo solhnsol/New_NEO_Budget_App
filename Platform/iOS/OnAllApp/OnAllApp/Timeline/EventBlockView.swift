@@ -172,8 +172,6 @@ struct EventBlockView: View {
     var rows: [AllocationItem] = []
     var presentation = EventPresentation.make(height: 1000)
     var scale: CGFloat = 1
-    /// The title is in a header above the card: the card's own top edge is then drawn firmly, as the real start.
-    var hasHeader = false
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
@@ -183,6 +181,8 @@ struct EventBlockView: View {
     /// The stack's padding and spacing, which `DayRenderPlan.rowsFrame` also places the rows by.
     static let verticalPadding: CGFloat = 3
     static let rowSpacing: CGFloat = 1
+    /// The dot a card too thin for any text becomes.
+    static let dotDiameter: CGFloat = 6
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
@@ -192,15 +192,10 @@ struct EventBlockView: View {
         let shownRows = presentation.shownRows
         let hiddenRows = presentation.hiddenRows
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
-        // With a header above it, the card's top corners are square: the header's own corners are the pair's, and its sides continue
-        // straight down into the card's, so the two read as one event.
-        let radius = min(10, height / 2)
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: hasHeader ? 0 : radius, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: hasHeader ? 0 : radius
-        )
-        let titleRow = hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset
+        let shape = RoundedRectangle(cornerRadius: min(10, height / 2))
+        let titleRow = InlineAllocationPlan.titleHeight * scale + titleOffset
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
-            // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
+            // The title itself is in `EventTitleLayer`; this keeps its room.
             Color.clear.frame(height: titleRow)
             ForEach(Array(rows.prefix(shownRows).enumerated()), id: \.element.allocationID) { index, item in
                 // The row's own middle, from the card's top, as the stack below lays it out.
@@ -243,18 +238,15 @@ struct EventBlockView: View {
             }
             .padding(.horizontal, 6).padding(.bottom, 4 * scale)
         }
-        .overlay(alignment: .topTrailing) {
-            // The header has no time of its own: the start is in this card's top right corner.
-            if hasHeader, !startIsCovered, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty {
-                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
-                    .padding(.horizontal, 6).padding(.top, 5 * scale)
-                    .opacity(presentation.startTime)
-            }
-        }
-        .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
         .overlay { if missing { shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
         .opacity(missing ? 0.7 : 1)
         .clipShape(shape)
+        // Thinner than the small title needs, the card narrows to a dot and gives way to it (the dot is drawn over the card's middle, taller than the card may be).
+        .opacity(1 - presentation.dot)
+        .mask { GeometryReader { proxy in Rectangle().frame(width: proxy.size.width + (Self.dotDiameter * scale + 4 - proxy.size.width) * presentation.dot) } }
+        .overlay(alignment: .leading) {
+            Circle().fill(color).frame(width: Self.dotDiameter * scale, height: Self.dotDiameter * scale).padding(.leading, 2).opacity(presentation.dot)
+        }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
@@ -347,5 +339,30 @@ struct CornerTime: View {
 
     var body: some View {
         Text(text).font(.system(size: 9 * scale)).monospacedDigit().foregroundStyle(Color.secondary.opacity(0.7)).lineLimit(1).fixedSize()
+    }
+}
+
+/// The name of an event that is only a dot: a white chip like a transaction's, outlined in the event's colour, at the dot's height. It is drawn with the titles,
+/// above every card, and is touched as the event.
+struct EventDotLabel: View {
+    let block: EventBlock
+    let label: DayRenderPlan.DotLabel
+    let presentation: EventPresentation
+    var scale: CGFloat = 1
+
+    var body: some View {
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+        Text(block.title)
+            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 6 * scale)
+            .frame(width: label.frame.width, height: label.frame.height, alignment: .leading)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(color.opacity(0.7), lineWidth: 1.2))
+            .shadow(color: Color.black.opacity(0.06), radius: 1.5, y: 0.5)
+            .opacity(presentation.dot * label.reveal)
+            .offset(x: label.frame.minX, y: label.frame.minY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }

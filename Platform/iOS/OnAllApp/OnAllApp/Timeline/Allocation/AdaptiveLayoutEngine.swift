@@ -428,10 +428,8 @@ private extension AdaptiveLayoutEngine {
         var axis = fixedAxis ?? context.axis(for: state)
         var extra: [Demand] = []
         var resolutions: [ItemKey: TitleResolution] = [:]
-        var headers: [ItemKey: EventHeader] = [:]
 
-        // Title and transaction lines wanting the same place, resolved in a fixed order on the axis as it stands: a header above the
-        // event if there is clear room, else a shorter title, else more room for the stretch, else a cut title.
+        // Title and transaction lines wanting the same place, resolved in a fixed order on the axis as it stands: a shorter title, else more room for the stretch, else a cut title.
         func layoutIntervals(_ day: DayContext, on axis: TimelineAxis) -> (events: [Interval], units: [Interval]) {
             let eventIntervals = day.events.map { event -> Interval in
                 let top = axis.y(minute: event.startMinute)
@@ -457,15 +455,6 @@ private extension AdaptiveLayoutEngine {
                 let conflicting = unitIntervals.filter { $0.maxY > own.minY + 0.01 && $0.minY < titleBottom - 0.01 }
                 guard !conflicting.isEmpty, titleEnd > width - lineWidth - 4 else { resolutions[key] = TitleResolution.none; continue }
 
-                let headerHeight = p.headerRow * scale
-                let regionMin = own.minY - headerHeight
-                let free = regionMin >= -0.01 && !occupied.contains { $0.id != event.id && $0.maxY > regionMin + 0.01 && $0.minY < own.minY - 0.01 }
-                if free {
-                    resolutions[key] = .externalHeader
-                    headers[key] = EventHeader(eventID: event.id, height: headerHeight, attachedToMinute: event.startMinute)
-                    occupied.append(Interval(minY: regionMin, maxY: own.minY, id: "header-\(event.id)"))
-                    continue
-                }
                 let available = titleRoom - indent
                 if available >= p.minimumTitleWidth {
                     resolutions[key] = .abbreviated(maxWidth: available)
@@ -511,7 +500,7 @@ private extension AdaptiveLayoutEngine {
                     minimumHeight: heights.title, preferredHeight: heights.preview, expandedHeight: heights.full,
                     requiredHeight: heights.height(of: level), shownInsideRows: rows.shown, hiddenInsideCount: rows.hidden,
                     linkedTotals: AmountSum.totals(of: event.linked, allocated: true), outsideLinkedCount: event.outsideRange.count,
-                    overlap: overlap, titleResolution: resolutions[key] ?? TitleResolution.none, header: headers[key]
+                    overlap: overlap, titleResolution: resolutions[key] ?? TitleResolution.none
                 ))
             }
         }
