@@ -3,15 +3,16 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The ledger tab, in two readings of the same ledger:
-/// - **소비**: every spend and refund as a plain list, newest day first, as the timeline shows them. No grid; tapping a row opens its details.
+/// The ledger tab, in three readings of the same ledger:
+/// - **일정형**: the calendar's reading: a week strip, and the chosen day with each activity as a card holding its transactions (`LedgerScheduleView`).
+/// - **목록형**: every spend and refund as a plain list, newest day first, as the timeline shows them. No grid; tapping a row opens its details.
 ///   Recent deposits nothing explains yet sit on top; dragging one onto a purchase records it as that purchase's settlement (`DepositMerge`).
 /// - **계좌·카드**: what really moved on each account and card, unnetted, to compare with the bank, and each card's usage this month.
 struct LedgerScreen: View {
-    enum Mode: Hashable { case spending, accounts }
+    enum Mode: Hashable { case schedule, spending, accounts }
 
     let model: AppModel
-    @State private var mode = Mode.spending
+    @State private var mode = Mode.schedule
     @State private var sections: [LedgerDaySection]?
     @State private var deposits: [LedgerDeposit] = []
     /// A deposit dropped on a purchase, waiting for the user to confirm who sent it.
@@ -23,6 +24,7 @@ struct LedgerScreen: View {
         NavigationStack {
             Group {
                 switch mode {
+                case .schedule: scheduleContent
                 case .spending: content.refreshable { await load() }
                 case .accounts: AccountsView(model: model)
                 }
@@ -33,11 +35,12 @@ struct LedgerScreen: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     Picker("보기", selection: $mode) {
-                        Text("소비").tag(Mode.spending)
+                        Text("일정형").tag(Mode.schedule)
+                        Text("목록형").tag(Mode.spending)
                         Text("계좌·카드").tag(Mode.accounts)
                     }
                     .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
+                    .frame(maxWidth: 280)
                 }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -66,6 +69,15 @@ struct LedgerScreen: View {
             Button("확인", role: .cancel) {}
         } message: {
             Text(mergeMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var scheduleContent: some View {
+        if let sections {
+            LedgerScheduleView(sections: sections, model: model)
+        } else {
+            ProgressView("거래를 불러오고 있어요").frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 

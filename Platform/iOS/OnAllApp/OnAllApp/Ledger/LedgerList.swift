@@ -12,6 +12,9 @@ struct LedgerListEntry: Identifiable, Equatable {
         let amount: AmountKnowledge
         let categoryID: CanonicalCategoryID?
         let eventMissing: Bool
+        /// The activity it went to, and when that activity happens; both `nil` for a portion that belongs to none.
+        var activityID: ActivityID? = nil
+        var activityTime: EventTimeRange? = nil
     }
 
     /// Money that came back for this purchase and is shown on it instead of on its own line (`docs/ledger-behavior.md`, 2 and Q2·Q3): a refund
@@ -98,7 +101,9 @@ enum LedgerList {
                 activityTitle: activity?.displayTitle,
                 amount: allocation.amount.knowledge,
                 categoryID: allocation.category.categoryID,
-                eventMissing: activity?.isEventMissing ?? false
+                eventMissing: activity?.isEventMissing ?? false,
+                activityID: activity?.id,
+                activityTime: activity?.time
             )
         }
         return LedgerListEntry(transaction: transaction, portions: portions)
