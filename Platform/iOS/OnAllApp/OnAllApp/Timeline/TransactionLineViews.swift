@@ -1,0 +1,260 @@
+import NEOBudgetCalendar
+import NEOBudgetCore
+import SwiftUI
+
+/// How a transaction line, an overflow and an event header look. They only draw what `DayRenderPlan` placed; no policy is decided here.
+/// Fonts follow Dynamic Type through `scale` (the same number the layout engine was given), so the room it reserved is the room used.
+
+enum AmountKindNames {
+    static func name(_ kind: AmountKind) -> String {
+        switch kind {
+        case .spend: return "소비"
+        case .income: return "수입"
+        case .refund: return "환불"
+        case .transfer: return "이체"
+        }
+    }
+}
+
+/// How a row leads out of the timeline: a dot at the moment it happened on the day's left edge and a thin line to the row's text, bending
+/// when the text is not at that moment. The text then starts after a small margin, where the category icon (if classified) sits.
+enum LeaderLayout {
+    static let dotSize: CGFloat = 4
+    static let lineEnd: CGFloat = 12
+    static let iconSlot: CGFloat = 11
+    static let textGap: CGFloat = 2
+    static func textStart(_ scale: CGFloat) -> CGFloat { (lineEnd + iconSlot + textGap) * scale }
+}
+
+struct LeaderMark: View {
+    /// Where the line starts, left of the view's own left edge (a row inside a card starts at the card's edge).
+    var originX: CGFloat = 0
+    /// How far above (negative) or below the row's middle the transaction really happened.
+    let dy: CGFloat
+    let height: CGFloat
+    var dashed = false
+    let scale: CGFloat
+    /// 0 … 1: how much of the line out to the text there is (the dot at the time is always there).
+    var lineOpacity: CGFloat = 1
+    /// The linked event's colour for the dot; grey for a transaction linked to nothing here.
+    var dotColor: Color? = nil
+
+    var body: some View {
+        let s = scale
+        let start = CGPoint(x: originX + LeaderLayout.dotSize / 2, y: height / 2 + dy)
+        let end = CGPoint(x: originX + LeaderLayout.lineEnd * s, y: height / 2)
+        let bendX = abs(dy) > 1 ? originX + 7 * s : end.x
+        ZStack(alignment: .topLeading) {
+            Path { path in
+                path.move(to: start)
+                path.addLine(to: CGPoint(x: bendX, y: start.y))
+                path.addLine(to: CGPoint(x: bendX, y: end.y))
+                path.addLine(to: end)
+            }
+            .stroke(Color.secondary.opacity(0.6 * lineOpacity), style: StrokeStyle(lineWidth: 0.75, lineJoin: .round, dash: dashed ? [2, 2] : []))
+            Circle().fill(dotColor ?? Color.secondary.opacity(0.8))
+                .frame(width: LeaderLayout.dotSize * s, height: LeaderLayout.dotSize * s)
+                .position(start)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+struct CategoryMark: View {
+    let category: CanonicalCategoryID?
+    let scale: CGFloat
+
+    var body: some View {
+        Group {
+            if let symbol = CategoryIcon.symbol(for: category) {
+                Image(systemName: symbol).font(.system(size: 10 * scale)).foregroundStyle(Color.secondary)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: LeaderLayout.iconSlot * scale)
+    }
+}
+
+/// One transaction on its own line, at the time it happened: a dot and a line out of the timeline, then a chip with its category icon, name
+/// and amount. The chip is a white rounded card like the app's other buttons, so it reads as something to tap (it opens the transaction) and
+/// to hold (it is carried to an event). A transaction linked to an event is outlined in the event's colour and its dot takes that colour; one
+/// linked to nothing is grey. Both are ordinary text at full contrast: a transaction is never drawn as if it were disabled.
+struct TransactionLineView: View {
+    let item: DayRenderPlan.LineItem
+    let scale: CGFloat
+    /// Where the day's own column begins (after the hour gutter): the line leads out from there.
+    var edge: CGFloat = 60
+    /// The row sits over an event: its text gets a thin halo in the page colour so it stays readable, and no background.
+    var overEvent = false
+
+    var body: some View {
+        let display = item.display
+        let refund = display?.flow == .refund
+        let linkColor = item.linkColorHex.flatMap { Color(hex: $0) }
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+        HStack(spacing: 0) {
+            Color.clear.frame(width: LeaderLayout.lineEnd * scale)
+            HStack(spacing: 0) {
+                CategoryMark(category: display?.categoryID, scale: scale)
+                Color.clear.frame(width: LeaderLayout.textGap * scale)
+                // The name and the amount; when the room left for the name is a sliver (a narrow column, large text) the amount stands alone.
+                let amount = display.map { (refund ? "−" : "") + Formatting.money($0.amount.minorUnits, currency: $0.amount.currency) } ?? ""
+                let nameRoom = item.frame.maxX - edge - 14 - LeaderLayout.textStart(scale) - 10 - CGFloat(amount.count) * 7 * scale
+                if nameRoom >= 30 * scale {
+                    Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
+                Color.clear.frame(width: 4 * scale)
+                amountText(display, refund: refund)
+            }
+            .padding(.leading, 3 * scale).padding(.trailing, 7 * scale)
+            .frame(height: max(0, item.frame.height - 4 * scale))
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: linkColor == nil ? 0.75 : 1.2))
+            .shadow(color: Color.black.opacity(overEvent ? 0.12 : 0.06), radius: 1.5, y: 0.5)
+            // The chip is only as long as its text, so a transaction over an event leaves the event's title and times readable.
+            Spacer(minLength: 0)
+        }
+        .padding(.trailing, 2)
+        .revealed(item.reveal)
+        .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .overlay(alignment: .topLeading) {
+            LeaderMark(
+                dy: (item.anchorY ?? item.frame.midY) - item.frame.midY, height: item.frame.height, dashed: display?.isApproximate ?? false, scale: scale,
+                lineOpacity: item.reveal, dotColor: linkColor
+            )
+        }
+        .offset(x: edge, y: item.frame.minY)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessibilityText(item))
+    }
+
+    @ViewBuilder
+    private func amountText(_ display: DayRenderPlan.TransactionDisplay?, refund: Bool) -> some View {
+        if let display {
+            Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
+                .font(.system(size: 11 * scale, weight: .bold).monospacedDigit())
+                .foregroundStyle(refund ? Theme.accent : Theme.textPrimary)
+                .lineLimit(1).fixedSize()
+        }
+    }
+
+    static func accessibilityText(_ item: DayRenderPlan.LineItem) -> String {
+        guard let display = item.display else { return "거래" }
+        var text = (display.flow == .refund ? "환불 " : "지출 ") + (display.title.map { $0 + " " } ?? "")
+        text += Formatting.money(display.amount.minorUnits, currency: display.amount.currency)
+        if let label = item.linkedEventTitle { text += ", 연결된 일정 \(label)" }
+        return text
+    }
+}
+
+/// The linked event's stripe carried on from its card to a transaction of it that happened outside its time: a thin dashed line in the
+/// event's colour down (or up) the card's left edge to the transaction's time, then across to the transaction's dot.
+struct TransactionTailView: View {
+    let tail: DayRenderPlan.Tail
+    let colorHex: String?
+    /// Where the transaction's dot is (the day's own column's left edge).
+    var dotX: CGFloat
+    var opacity: Double = 1
+
+    var body: some View {
+        let color = colorHex.flatMap { Color(hex: $0) } ?? Theme.accent
+        Path { path in
+            path.move(to: CGPoint(x: tail.x, y: tail.fromY))
+            path.addLine(to: CGPoint(x: tail.x, y: tail.toY))
+            path.addLine(to: CGPoint(x: dotX, y: tail.toY))
+        }
+        .stroke(color.opacity(0.7 * opacity), style: StrokeStyle(lineWidth: 1.2, lineCap: .round, lineJoin: .round, dash: [3, 2.5]))
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Transaction lines that could not each have a line of their own, written the same way: a dot and a line out of the timeline, "거래 5건",
+/// and under it only the total when it is one kind in one currency (else the kinds). It says nothing about the transactions belonging together.
+struct OverflowCardView: View {
+    let item: DayRenderPlan.OverflowItem
+    let scale: CGFloat
+    var edge: CGFloat = 60
+    var overEvent = false
+
+    var body: some View {
+        // A summary is not at a moment of the day, so it has no line to the timeline: it is written as information, at the same x as an
+        // event's own text.
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+        HStack(spacing: 0) {
+            // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
+            // It is a chip like a single transaction's (white, hairline edge), only as long as its text.
+            ViewThatFits(in: .horizontal) {
+                Text(Self.summary(item)).fixedSize()
+                Text(Self.countOnly(item)).minimumScaleFactor(0.5)
+            }
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 8 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(Theme.divider, lineWidth: 0.75))
+            Spacer(minLength: 2)
+        }
+        .padding(.leading, 6).padding(.trailing, 6)
+        .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
+        .offset(x: edge, y: item.frame.minY)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Self.accessibilityText(item))
+        .accessibilityHint("거래 목록을 열어요")
+    }
+
+    /// The total under the count, or the kinds when there is no single total.
+    static func secondLine(_ item: DayRenderPlan.OverflowItem) -> String? {
+        if item.showsAmountTotal, let total = item.amountTotals.first { return Formatting.money(total.minorUnits, currency: total.currency) }
+        if item.countsByKind.count > 1 { return item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)" }.joined(separator: " ") }
+        return nil
+    }
+
+    /// "거래 5건", "거래 5건 · 소비 3 · 환불 2", and for one kind in one currency "소비 5건 · 12,300원".
+    static func summary(_ item: DayRenderPlan.OverflowItem) -> String {
+        let count = item.members.count
+        if item.showsAmountTotal, let total = item.amountTotals.first {
+            return "거래 \(count)건 · " + Formatting.money(total.minorUnits, currency: total.currency)
+        }
+        if item.countsByKind.count > 1 {
+            return "거래 \(count)건 · " + item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)" }.joined(separator: " ")
+        }
+        return "거래 \(count)건"
+    }
+
+    static func countOnly(_ item: DayRenderPlan.OverflowItem) -> String { "거래 \(item.members.count)건" }
+
+    static func accessibilityText(_ item: DayRenderPlan.OverflowItem) -> String {
+        "거래 \(item.members.count)건, " + item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)건" }.joined(separator: ", ")
+    }
+}
+
+/// A row of text coming in from the left: the part of it up to `progress` of its width is shown, fading in with it. The text keeps its
+/// size and spacing throughout; only how much of it is uncovered changes.
+private struct RevealMask: ViewModifier {
+    let progress: CGFloat
+
+    func body(content: Content) -> some View {
+        if progress >= 1 {
+            content
+        } else {
+            content.opacity(progress).mask(alignment: .leading) {
+                GeometryReader { proxy in Rectangle().frame(width: proxy.size.width * progress) }
+            }
+        }
+    }
+}
+
+extension View {
+    func revealed(_ progress: CGFloat) -> some View { modifier(RevealMask(progress: min(1, max(0, progress)))) }
+
+    /// A thin outline of the page colour around text that sits over something coloured, so it stays readable without a background.
+    @ViewBuilder
+    func halo(_ on: Bool) -> some View {
+        if on {
+            self.shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8).shadow(color: Color(.systemBackground).opacity(0.9), radius: 0.8)
+        } else {
+            self
+        }
+    }
+}

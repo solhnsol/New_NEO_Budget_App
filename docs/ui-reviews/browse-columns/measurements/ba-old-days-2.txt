@@ -1,0 +1,36 @@
+script days zoom 1.00 seconds 4.02
+step cost: mean 0.061 / p50 0.049 / p99 0.160 / max 2.311 ms (n=332)
+step interval: mean 9.867 / p50 9.160 / p99 21.006 / max 92.175 ms (n=331)
+display frames: mean 17.096 / p50 16.667 / p99 33.333 / max 47.926 ms (n=233); late (>1.5x median) 5 of 233
+view build: 0.11/0.09/6.43 ms (n=383)
+partitions: background 4, planned in a frame 1, engine runs 5 (asked for by a frame 1), found 1852
+day reads during script: 2, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 0, where they differed 0, most things crossfaded at once 0
+PROBE days
+recorded 4.03 s; display frames n=233 mean 17.096 p50 16.667 p99 33.333 max 47.926 ms; nominal 16.67 ms; late (>1.5x) 5
+main run-loop turns busy: n=918 mean 1.174 p50 0.397 p99 8.213 max 22.352 ms
+  screenBody: n=360 mean 0.029 p50 0.027 p99 0.110 max 0.215 ms
+  gridBuild: n=364 mean 0.087 p50 0.085 p99 0.180 max 0.504 ms
+  hostLayout: n=197 mean 0.773 p50 0.708 p99 1.586 max 1.720 ms
+  applyMove: n=332 mean 0.058 p50 0.046 p99 0.152 max 2.295 ms
+  engine: n=1 mean 0.027 p50 0.027 p99 0.027 max 0.027 ms
+  warmAhead: n=1 mean 0.049 p50 0.049 p99 0.049 max 0.049 ms
+  warmLand: n=1 mean 0.001 p50 0.001 p99 0.001 max 0.001 ms
+  cacheMerge: n=17 mean 0.023 p50 0.019 p99 0.092 max 0.092 ms
+  haptics: n=2 mean 1.137 p50 2.202 p99 2.202 max 2.202 ms
+  outerBody: n=18 mean 0.081 p50 0.078 p99 0.201 max 0.201 ms
+  weekStripBody: n=21 mean 0.013 p50 0.012 p99 0.036 max 0.036 ms
+  summaryBody: n=2 mean 0.006 p50 0.006 p99 0.006 max 0.006 ms
+marks: boundary 2, dayLanded 2, rested 2, selectedDayChanged 2
+  turn at boundary: n=2 mean 25.777 p50 35.088 p99 35.088 max 35.088 ms
+  turn at dayLanded: n=2 mean 4.291 p50 5.792 p99 5.792 max 5.792 ms
+  turn at rested: n=2 mean 13.421 p50 18.618 p99 18.618 max 18.618 ms
+  turn at selectedDayChanged: n=2 mean 13.421 p50 18.618 p99 18.618 max 18.618 ms
+  late +0.049s 41.6 ms: busiest turn 18.5 ms (app 1.8, unattributed 16.7) [hostLayout 3.8, applyMove 0.8, gridBuild 0.7, screenBody 0.3, outerBody 0.2, cacheMerge 0.1, weekStripBody 0.0] marks []
+  late +0.074s 25.0 ms: busiest turn 10.3 ms (app 0.0, unattributed 10.3) [hostLayout 1.1, applyMove 0.2, gridBuild 0.2, screenBody 0.1] marks []
+  late +0.172s 47.9 ms: busiest turn 22.4 ms (app 2.8, unattributed 19.5) [applyMove 2.4, haptics 2.2, hostLayout 2.1, gridBuild 0.7, screenBody 0.2, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0] marks [boundary]
+  late +0.540s 33.3 ms: busiest turn 21.0 ms (app 1.0, unattributed 20.0) [hostLayout 1.0, gridBuild 0.4, applyMove 0.1, screenBody 0.1, cacheMerge 0.0] marks []
+  late +2.574s 33.3 ms: busiest turn 13.9 ms (app 0.6, unattributed 13.3) [hostLayout 2.0, gridBuild 0.4, applyMove 0.3, screenBody 0.2, outerBody 0.1, haptics 0.1, weekStripBody 0.0] marks [boundary]
+late frames, summed: app spans 6.3 ms, unattributed 79.8 ms; by kind (inclusive) [hostLayout 9.9, applyMove 3.7, gridBuild 2.4, haptics 2.3, screenBody 0.8, outerBody 0.4, cacheMerge 0.1, weekStripBody 0.1]
+late frames near a mark: boundary 2

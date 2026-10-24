@@ -1,0 +1,86 @@
+samples 3119 main 3009
+stretches 1027 >=12ms 10
+
+-- stretch at 3102 ms, 14 ms, 15 samples
+   top lib: libswiftCore.dylib 6, AttributeGraph 3, libicucore.A.dylib 2, Foundation 1, CoreText 1, libdyld.dylib 1
+   in stack: dyld 15, UIKitCore 15, OnAllApp.debug.dylib 15, CoreFoundation 15, SwiftUI 15, dyld_sim 15, GraphicsServices 15, SwiftUICore 15, AttributeGraph 14, libswiftCore.dylib 6
+   first app frame / top named: static OnAllApp.$main() 11; static HourAxis.layout(partition:metrics:) 1; static Formatting.grouped(_:) 1; FixedGridBrowseView.plan(_:epoch:frame:layoutWidth:) 1; closure #1 in closure #1 in closure #1 in SummaryBar.body.getter 1
+
+-- stretch at 3427 ms, 26 ms, 27 samples
+   top lib: AttributeGraph 10, libswiftCore.dylib 4, CoreFoundation 3, SwiftUI 3, SwiftUICore 2, libobjc.A.dylib 1
+   in stack: OnAllApp.debug.dylib 27, dyld 26, UIKitCore 26, CoreFoundation 26, SwiftUI 26, dyld_sim 26, GraphicsServices 26, SwiftUICore 24, AttributeGraph 23, libswiftCore.dylib 5
+   first app frame / top named: static OnAllApp.$main() 23; FixedGridBrowseView.position.getter 1; closure #1 in DayHeaderCell.body.getter 1; DayRenderPlan.init(prepared:geometry:layoutWidth:textScale:expanded:focused:parameters:met 1; __swift_closure_destructor.114 1
+
+-- stretch at 3803 ms, 13 ms, 14 samples
+   top lib: libswiftCore.dylib 6, SwiftUICore 3, AttributeGraph 2, libsystem_platform.dylib 1, SwiftUI 1, libsystem_pthread.dylib 1
+   in stack: OnAllApp.debug.dylib 14, dyld 13, UIKitCore 13, CoreFoundation 13, SwiftUI 13, dyld_sim 13, GraphicsServices 13, SwiftUICore 13, AttributeGraph 11, libswiftCore.dylib 8
+   first app frame / top named: static OnAllApp.$main() 10; static TemporalGridPartition.violation(boundaries:totalHeight:) 1; closure #1 in DayPlanPreparations.prepared(timeline:role:layout:) 1; closure #1 in WeekStripView.dayCell(_:cell:) 1; specialized static ViewBuilder.buildBlock<each A>(_:) 1
+
+-- stretch at 4701 ms, 31 ms, 32 samples
+   top lib: libswiftCore.dylib 10, SwiftUICore 7, AttributeGraph 6, OnAllApp.debug.dylib 4, Foundation 1, CoreFoundation 1
+   in stack: OnAllApp.debug.dylib 32, SwiftUI 32, GraphicsServices 31, dyld 31, UIKitCore 31, CoreFoundation 31, dyld_sim 31, AttributeGraph 31, SwiftUICore 31, libswiftCore.dylib 12
+   first app frame / top named: static OnAllApp.$main() 24; ramp #1 (to:steps:) in FixedGridBrowseView.runDebugScript() 1; DYLD-STUB$$static VerticalAlignment.center.getter 1; FixedGridBrowseView.frame(zoom:viewport:width:) 1; _ArrayProtocol.filter<A>(_:) 1; lazy protocol witness table accessor for type CalendarEventID and conformance CalendarEven 1
+
+-- stretch at 8710 ms, 18 ms, 19 samples
+   top lib: AttributeGraph 5, libswiftCore.dylib 5, SwiftUICore 3, libswiftObservation.dylib 1, UIKitCore 1, CoreFoundation 1
+   in stack: OnAllApp.debug.dylib 19, dyld 18, UIKitCore 18, CoreFoundation 18, SwiftUI 18, dyld_sim 18, GraphicsServices 18, SwiftUICore 17, AttributeGraph 15, libswiftCore.dylib 7
+   first app frame / top named: static OnAllApp.$main() 17; AppModel.withMutation<A, B>(keyPath:_:) 1; closure #1 in closure #1 in WeekStripView.dayCell(_:cell:) 1
+
+-- stretch at 8906 ms, 14 ms, 15 samples
+   top lib: libswiftCore.dylib 6, AttributeGraph 3, SwiftUICore 1, UIKitCore 1, CoreFoundation 1, SwiftUI 1
+   in stack: dyld 15, UIKitCore 15, OnAllApp.debug.dylib 15, CoreFoundation 15, SwiftUI 15, dyld_sim 15, GraphicsServices 15, AttributeGraph 13, SwiftUICore 13, libswiftCore.dylib 7
+   first app frame / top named: static OnAllApp.$main() 12; closure #2 in closure #1 in closure #1 in WeekStripView.dayCell(_:cell:) 1; outlined init with copy of AdaptiveLayout? 1; GrowingBall.shown.getter 1
+
+-- stretch at 9050 ms, 19 ms, 20 samples
+   top lib: libswiftCore.dylib 6, AttributeGraph 5, libsystem_kernel.dylib 2, libswiftObservation.dylib 1, Foundation 1, SwiftUICore 1
+   in stack: OnAllApp.debug.dylib 20, SwiftUI 20, dyld 19, UIKitCore 19, CoreFoundation 19, dyld_sim 19, GraphicsServices 19, AttributeGraph 17, SwiftUICore 17, libswiftCore.dylib 6
+   first app frame / top named: static OnAllApp.$main() 16; AppModel.withMutation<A, B>(keyPath:_:) 1; BrowseProbeRecorder.begin(_:) 1; DYLD-STUB$$swift_retain 1; closure #1 in closure #1 in WeekStripView.dayCell(_:cell:) 1
+
+-- stretch at 9306 ms, 19 ms, 20 samples
+   top lib: SwiftUICore 7, libswiftCore.dylib 7, OnAllApp.debug.dylib 2, CoreFoundation 1, AttributeGraph 1, CoreText 1
+   in stack: SwiftUI 20, SwiftUICore 20, dyld 19, UIKitCore 19, OnAllApp.debug.dylib 19, CoreFoundation 19, dyld_sim 19, GraphicsServices 19, AttributeGraph 18, libswiftCore.dylib 7
+   first app frame / top named: static OnAllApp.$main() 13; FixedGridBrowseView._knownWidth.init 1; specialized Set.formUnion<A>(_:) 1; static TextMeasurer.textScale(contentSize:) 1; static HourAxis.layout(partition:metrics:) 1; DYLD-STUB$$Text.init(_:tableName:bundle:comment:) 1
+
+-- stretch at 9635 ms, 18 ms, 19 samples
+   top lib: libswiftCore.dylib 8, AttributeGraph 4, SwiftUI 2, libicucore.A.dylib 1, UIFoundation 1, QuartzCore 1
+   in stack: dyld 19, UIKitCore 19, OnAllApp.debug.dylib 19, CoreFoundation 19, SwiftUI 19, dyld_sim 19, GraphicsServices 19, SwiftUICore 18, AttributeGraph 16, libswiftCore.dylib 9
+   first app frame / top named: static OnAllApp.$main() 15; closure #1 in closure #1 in DayHeaderCell.body.getter 1; closure #1 in DayPlanPreparations.prepared(timeline:role:layout:) 1; View.onLongPressGesture(minimumDuration:maximumDistance:perform:onPressingChanged:) 1; destroy for FixedGridBrowseView 1
+
+-- stretch at 12456 ms, 35 ms, 36 samples
+   top lib: libswiftCore.dylib 18, libsystem_malloc.dylib 9, libsystem_platform.dylib 4, libobjc.A.dylib 2, libsystem_pthread.dylib 1, libswift_Concurrency.dylib 1
+   in stack: OnAllApp.debug.dylib 36, libswift_Concurrency.dylib 36, SwiftUI 36, libswiftCore.dylib 30, libsystem_malloc.dylib 9, Foundation 8, libsystem_platform.dylib 4, libobjc.A.dylib 2, Combine 1, libobjcMsgSend.dylib 1
+   first app frame / top named: static BrowseProbeRecorder.stats(_:) 8; BrowseProbeRecorder.report(title:) 7; _ArrayProtocol.filter<A>(_:) 6; FixedGridBrowseView.Costs.summary(_:) 5; Collection.map<A, B>(_:) 3; FixedGridBrowseView.runDebugScript() 2
+
+== all long stretches: top lib [('libswiftCore.dylib', 76), ('AttributeGraph', 39), ('SwiftUICore', 24), ('libsystem_malloc.dylib', 10), ('OnAllApp.debug.dylib', 9), ('CoreFoundation', 8), ('SwiftUI', 7), ('libsystem_platform.dylib', 7), ('libsystem_kernel.dylib', 6), ('Foundation', 5)]
+== in stack [('OnAllApp.debug.dylib', 216), ('SwiftUI', 214), ('CoreFoundation', 176), ('dyld', 175), ('UIKitCore', 175), ('dyld_sim', 175), ('GraphicsServices', 175), ('SwiftUICore', 168), ('AttributeGraph', 158), ('libswiftCore.dylib', 97), ('libswift_Concurrency.dylib', 42), ('UpdateCycle', 22), ('QuartzCore', 21), ('Foundation', 20)]
+== first app frame / top named [('static OnAllApp.$main()', 141), ('static BrowseProbeRecorder.stats(_:)', 8), ('_ArrayProtocol.filter<A>(_:)', 7), ('BrowseProbeRecorder.report(title:)', 7), ('FixedGridBrowseView.Costs.summary(_:)', 5), ('closure #1 in DayPlanPreparations.prepared(timeline:role:layout:)', 3), ('Collection.map<A, B>(_:)', 3), ('static HourAxis.layout(partition:metrics:)', 2), ('AppModel.withMutation<A, B>(keyPath:_:)', 2), ('closure #1 in closure #1 in WeekStripView.dayCell(_:cell:)', 2), ('View.onLongPressGesture(minimumDuration:maximumDistance:perform:onPressingChanged:)', 2), ('FixedGridBrowseView.runDebugScript()', 2), ('__swift_instantiateConcreteTypeFromMangledNameV2', 2), ('static Formatting.grouped(_:)', 1), ('FixedGridBrowseView.plan(_:epoch:frame:layoutWidth:)', 1)]
+
+== samples with no app frame but $main, in long stretches (except the report): which SwiftUI work
+phase keys (samples whose stack has them): [('_UIHostingView', 126), ('updateGraph', 115), ('beginTransaction', 115), ('flushTransactions', 115), ('Layout', 49), ('Text', 25), ('sizeThatFits', 22), ('DisplayList', 22), ('render', 21), ('ForEach', 19), ('commit', 17), ('CA::Transaction', 16), ('layoutSubviews', 10), ('ViewGraph.updateOutputs', 9), ('runTransaction', 5)]
+leaf-most named framework frame:
+   12 SwiftUICore GraphHost.flushTransactions()
+   12 SwiftUICore <deduplicated_symbol>
+   10 SwiftUI Button.body.getter
+   5 SwiftUICore NSAttributedString.MetricsCache.metrics(requestedSize:layoutMargins:wantsNumberOfLineFragments:context:)
+   5 SwiftUICore ObservationGraphMutation.apply()
+   4 SwiftUICore ForEachChild.updateValue()
+   4 SwiftUICore ViewGraph.setRootView<A>(_:)
+   4 SwiftUICore closure #1 in ViewBodyAccessor.updateBody(of:changed:)
+   4 UIKitCore UIApplicationMain
+   3 SwiftUI <deduplicated_symbol>
+   3 SwiftUICore __swift_instantiateGenericMetadata
+   2 SwiftUICore ResolvedStyledText.StringDrawing.draw(in:with:applyingMarginOffsets:containsResolvable:context:renderer:)
+   2 SwiftUICore _DynamicPropertyBuffer.update(container:phase:)
+   2 SwiftUICore LayoutProxy.dimensions(in:)
+   2 SwiftUICore DynamicBody.updateValue()
+   2 SwiftUICore closure #6 in find(_:key:filter:)
+   2 SwiftUICore ForEachState.item(at:offset:)
+   2 SwiftUICore GraphHost.runTransaction()
+   2 SwiftUICore LocalizedStringKey.resolve<A>(into:in:options:table:bundle:)
+   1 SwiftUICore specialized Dictionary.subscript.setter
+   1 SwiftUICore NSAttributedStringContainCharacters
+   1 SwiftUICore specialized ShapeStyledDisplayList.updateValue()
+   1 SwiftUICore closure #1 in closure #1 in ViewLayoutEngine.explicitAlignment(_:at:)
+   1 SwiftUICore __swift_closure_destructor.52
+   1 SwiftUI AlwaysOnBridge.invalidate(for:)
+app frames (not $main): [('app: closure #1 in DayPlanPreparations.prepared(timeline:role:layout:)', 3), ('app: static HourAxis.layout(partition:metrics:)', 2), ('app: AppModel.withMutation<A, B>(keyPath:_:)', 2), ('app: closure #1 in closure #1 in WeekStripView.dayCell(_:cell:)', 2), ('app: View.onLongPressGesture(minimumDuration:maximumDistance:perform:onPressingChange', 2), ('app: static Formatting.grouped(_:)', 1), ('app: FixedGridBrowseView.plan(_:epoch:frame:layoutWidth:)', 1), ('app: closure #1 in closure #1 in closure #1 in SummaryBar.body.getter', 1), ('app: FixedGridBrowseView.position.getter', 1), ('app: closure #1 in DayHeaderCell.body.getter', 1), ('app: DayRenderPlan.init(prepared:geometry:layoutWidth:textScale:expanded:focused:para', 1), ('app: __swift_closure_destructor.114', 1)]

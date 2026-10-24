@@ -1,0 +1,25 @@
+script rubber zoom 1.00 seconds 5.96
+step cost: —
+step interval: —
+display frames: mean 16.761 / p50 16.667 / p99 16.667 / max 33.333 ms (n=353); late (>1.5x median) 2 of 353
+view build: 0.09/0.08/0.60 ms (n=82)
+partitions: background 3, planned in a frame 1, engine runs 10 (asked for by a frame 4), found 534
+day reads during script: 0, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 0, where they differed 0, most things crossfaded at once 0
+PROBE rubber
+recorded 5.97 s; display frames n=353 mean 16.761 p50 16.667 p99 16.667 max 33.333 ms; nominal 16.67 ms; late (>1.5x) 2
+main run-loop turns busy: n=1331 mean 0.879 p50 0.015 p99 4.524 max 18.067 ms
+  screenBody: n=4 mean 0.053 p50 0.060 p99 0.064 max 0.064 ms
+  gridBuild: n=328 mean 0.093 p50 0.076 p99 0.597 max 0.818 ms
+  hostLayout: n=215 mean 0.602 p50 0.594 p99 1.133 max 1.766 ms
+  engine: n=6 mean 0.272 p50 0.281 p99 0.641 max 0.641 ms
+  warmAhead: n=3 mean 0.161 p50 0.163 p99 0.264 max 0.264 ms
+  pinchStep: n=240 mean 0.102 p50 0.079 p99 0.549 max 1.440 ms
+marks: pinchBegan 4, pinchEnded 4
+  turn at pinchBegan: n=3 mean 20.624 p50 19.786 p99 22.827 max 22.827 ms
+  turn at pinchEnded: n=4 mean 6.424 p50 2.573 p99 18.593 max 18.593 ms
+  late +1.517s 33.3 ms: busiest turn 13.1 ms (app 1.1, unattributed 12.0) [hostLayout 1.8, gridBuild 1.0, pinchStep 0.8] marks [pinchBegan]
+  late +4.500s 33.3 ms: busiest turn 18.1 ms (app 2.5, unattributed 15.5) [hostLayout 1.1, gridBuild 0.7, pinchStep 0.7] marks [pinchBegan]
+late frames, summed: app spans 3.7 ms, unattributed 27.5 ms; by kind (inclusive) [hostLayout 2.9, gridBuild 1.7, pinchStep 1.5]
+late frames near a mark: pinchBegan 2
