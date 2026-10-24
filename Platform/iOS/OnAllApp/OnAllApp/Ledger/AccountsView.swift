@@ -88,6 +88,11 @@ struct StatementView: View {
     var body: some View {
         let days = Dictionary(grouping: statement.lines) { zone.localDate(of: $0.occurredAtUnixMilliseconds) }
         List {
+            if statement.anchorAdjustment != 0 {
+                Text("알림에 찍힌 마지막 잔액에 맞춰 보여 드려요. 아직 확인하지 못한 입출금이 있으면 아래 내역을 더한 값과 다를 수 있어요.")
+                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                    .listRowSeparator(.hidden)
+            }
             ForEach(days.keys.sorted(by: >), id: \.self) { day in
                 Section {
                     ForEach(days[day] ?? []) { line in

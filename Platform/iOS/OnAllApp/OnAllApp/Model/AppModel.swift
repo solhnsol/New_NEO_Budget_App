@@ -148,6 +148,7 @@ final class AppModel {
 
     func start() async {
         if let prepare { await prepare() }
+        loadOverrides()
         observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
@@ -182,6 +183,9 @@ final class AppModel {
             if let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) {
                 initialLife = DemoLife.initialState(events: events)
             }
+        } else if let imported = await ledger.importedLife(now: Self.nowMilliseconds()) {
+            // Settlements from an imported Actual ledger start the calendar side with their receivables already paid.
+            initialLife = imported
         }
         let service = CalendarCommandService(
             provider: provider,
@@ -457,14 +461,54 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// What the user changed about transactions for display. Kept in a file, except in the demo (a restart gives the demo back unchanged).
+    private(set) var transactionOverrides = TransactionOverrideStore()
+    /// Moves with every edit, so the ledger tab reloads.
+    private(set) var overrideRevision = 0
+    private var overridesURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "transaction-overrides.json") }
+
+    /// Reads the saved edits; called once at start.
+    func loadOverrides() {
+        if let url = overridesURL { transactionOverrides = .load(from: url) }
+        overrideRevision += 1
+    }
+
+    /// Adds a transaction the user typed in (and what they set on it), then shows it.
+    func addManual(title: String, won: Int64, isRefund: Bool, at unixMilliseconds: Int64, override: TransactionOverride?) {
+        let id = ManualTransaction.idPrefix + UUID().uuidString
+        transactionOverrides.manual.append(.init(id: id, title: title, amount: won, isRefund: isRefund, occurredAtUnixMilliseconds: unixMilliseconds))
+        transactionOverrides[LedgerEntryID(rawValue: id)] = override
+        saveOverrides()
+    }
+
+    /// Deletes a typed-in transaction. Ledger transactions cannot be deleted.
+    func removeManual(_ id: LedgerEntryID) {
+        transactionOverrides.manual.removeAll { $0.id == id.rawValue }
+        transactionOverrides[id] = nil
+        saveOverrides()
+    }
+
+    private func saveOverrides() {
+        if let url = overridesURL { transactionOverrides.save(to: url) }
+        overrideRevision += 1
+    }
+
+    /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
+    func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
+        transactionOverrides[id] = override
+        saveOverrides()
+    }
+
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
     /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
     /// transactions are still listed, without allocations.
     func ledgerSections() async -> [LedgerDaySection]? {
-        guard let transactions = try? await ledger.transactions() else { return nil }
+        let overrides = transactionOverrides.lookup
+        guard let ledgerTransactions = try? await ledger.transactions() else { return nil }
+        let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
@@ -502,6 +546,16 @@ final class AppModel {
     func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
 
     func registeredAccounts() async -> [AccountProfile] { await ledger.registeredAccounts() }
+
+    /// Imported rows that still wait for the user, newest first.
+    func pendingImports() async -> [PendingImport] { await ledger.pendingImports() }
+
+    /// Brings in an Actual Budget ledger file (`imported-history.json`). `nil` if the file could not be used.
+    func importHistory(_ data: Data) async -> ImportSummary? {
+        guard let summary = try? await ledger.importHistory(data) else { return nil }
+        await ledgerDidChange()
+        return summary
+    }
 
     /// Applies the user's answer about an account and replays the ledger with it. `false` if it could not be applied.
     @discardableResult
