@@ -20,6 +20,8 @@ struct DayTimelineScreen: View {
     @State private var ledgerDestination: LedgerDestination?
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
+    /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
+    @State private var listSettle: Task<Void, Never>?
 
     private var style: Binding<CalendarStyle> {
         Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .grid }, set: { styleRaw = $0.rawValue })
@@ -76,6 +78,13 @@ struct DayTimelineScreen: View {
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0 else { return }
+        if style.wrappedValue == .list {
+            // The list scrolls itself to the selected day (it answers the selection changing); the week strip answers at once.
+            Haptics.snap()
+            _ = model.moveTo(day)
+            await model.loadMissing()
+            return
+        }
         // The fixed grid answers every pick, whatever is still loading from the one before (it runs the days on from where they are).
         if BrowseAxisMode.current != .fixedGrid, isChangingDay { return }
         isChangingDay = true
@@ -138,11 +147,11 @@ struct DayTimelineScreen: View {
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         return VStack(spacing: 0) {
-            DayHeader(model: model, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
+            DayHeader(model: model, singleDay: style.wrappedValue == .list, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
                 Task { await goTo(day) }
             }
             WeekStripView(
-                cells: model.weekCells, selected: model.selectedDay, today: model.today, pendingShift: pendingDays,
+                cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: style.wrappedValue != .list, pendingShift: pendingDays,
                 onSelect: { day in Task { await goTo(day) } },
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
             )
@@ -152,7 +161,16 @@ struct DayTimelineScreen: View {
                     model: model,
                     onSelect: { selection = $0 },
                     onOpenTransaction: { openTransaction = TransactionRef(id: $0) },
-                    onMoveDay: { days in Task { await goTo(model.selectedDay.adding(days: days)) } }
+                    onScrollToDay: { day in
+                        // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
+                        guard model.moveTo(day) else { return }
+                        listSettle?.cancel()
+                        listSettle = Task { @MainActor in
+                            try? await Task.sleep(for: .milliseconds(250))
+                            guard !Task.isCancelled else { return }
+                            await model.loadMissing()
+                        }
+                    }
                 )
             } else if BrowseAxisMode.current == .fixedGrid {
                 FixedGridBrowseView(
@@ -256,12 +274,14 @@ private struct StatusView: View {
 
 private struct DayHeader: View {
     let model: AppModel
+    /// The list shows one day at a time at the top, so the title names that day; the grid names its two columns.
+    let singleDay: Bool
     let menu: CalendarMenu
     let goTo: (LocalDate) -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            Text(Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
+            Text(singleDay ? "\(model.selectedDay.month)월 \(model.selectedDay.day)일" : Formatting.dayRangeTitle(model.selectedDay, model.selectedDay.adding(days: 1))).font(.title2.bold()).lineLimit(1).minimumScaleFactor(0.7)
             Spacer()
             Button("오늘") { goTo(model.today) }
                 .buttonStyle(.bordered).disabled(model.isToday)
