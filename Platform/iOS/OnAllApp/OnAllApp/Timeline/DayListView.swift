@@ -237,6 +237,7 @@ private struct ListBox<Lines: View>: View {
     let timeText: String
     let totalText: String?
     let color: Color
+    let symbol: String
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
@@ -245,9 +246,12 @@ private struct ListBox<Lines: View>: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+            HStack(alignment: .center, spacing: Theme.Space.s) {
+                Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(color)
+                    .frame(width: 32, height: 32).background(color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityHidden(true)
                 Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1).minimumScaleFactor(0.75)
                 Spacer(minLength: Theme.Space.s)
                 if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
                 if hasLines {
@@ -259,16 +263,13 @@ private struct ListBox<Lines: View>: View {
             .contentShape(Rectangle())
             .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
             if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, Theme.Space.xl)
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, 32 + Theme.Space.s)
             }
         }
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
-        .overlay(alignment: .leading) {
-            Capsule().fill(color).frame(width: 4).padding(.vertical, Theme.Space.m)
-        }
     }
 }
 
@@ -284,7 +285,7 @@ private struct EventCard: View {
         ListBox(
             title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
             totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
-            color: Color(hex: block.calendarColorHex) ?? Theme.accent, hasLines: !block.allocations.isEmpty, onSelect: onSelect
+            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: "calendar", hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(
@@ -316,7 +317,7 @@ private struct DailyCard: View {
         return ListBox(
             title: "일상",
             timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
-            totalText: total, color: Theme.textTertiary, hasLines: true
+            totalText: total, color: Theme.textSecondary, symbol: "sun.max", hasLines: true
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
