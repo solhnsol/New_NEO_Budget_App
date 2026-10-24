@@ -83,21 +83,33 @@ private struct EventCard: View {
     let onSelect: () -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
+    /// An event nothing was spent on is a thin card: title and time on one line, with less padding.
+    private var hasSpending: Bool { !block.allocations.isEmpty || !block.allocatedSpend.isEmpty }
+
     var body: some View {
+        let timeText = Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier)
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             Button(action: onSelect) {
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                        Spacer()
-                        if let spend = block.allocatedSpend.first {
-                            Text(Formatting.aggregate(spend)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+                if hasSpending {
+                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            Spacer()
+                            if let spend = block.allocatedSpend.first {
+                                Text(Formatting.aggregate(spend)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+                            }
                         }
+                        Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
-                    Text(Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier))
-                        .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                    .contentShape(Rectangle())
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
+                        Text(block.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Spacer(minLength: Theme.Space.s)
+                        Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    }
+                    .contentShape(Rectangle())
                 }
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             ForEach(block.allocations, id: \.allocationID) { item in
@@ -111,7 +123,8 @@ private struct EventCard: View {
                 ) { onOpenTransaction(item.transactionID) }
             }
         }
-        .padding(Theme.Space.l)
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.vertical, hasSpending ? Theme.Space.l : Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card))
         .overlay(alignment: .leading) {
