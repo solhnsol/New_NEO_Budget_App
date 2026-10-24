@@ -54,7 +54,7 @@ struct LedgerScreen: View {
             }
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
-        .task(id: model.dataGeneration) { await load() }
+        .task(id: [model.dataGeneration, model.overrideRevision]) { await load() }
         .alert("정산으로 합칠까요?", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })) {
             TextField("보낸 사람", text: $senderName)
             Button("합치기") { if let merging { Task { await merge(merging.deposit, onto: merging.purchase) } } }
@@ -108,7 +108,7 @@ struct LedgerScreen: View {
                     Section {
                         ForEach(section.entries) { entry in
                             NavigationLink {
-                                TransactionDetailView(entry: entry, zone: model.dayZone)
+                                TransactionDetailView(entry: entry, model: model)
                             } label: {
                                 LedgerRow(entry: entry, zoneIdentifier: model.dayZone.identifier)
                             }
@@ -236,6 +236,7 @@ struct LedgerRow: View {
         var parts = [Formatting.time(entry.transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)]
         if entry.transaction.flow == .refund { parts.append("환불") }
         parts.append(contentsOf: entry.activityTitles)
+        parts.append(contentsOf: (entry.override?.tags ?? []).map { "#" + $0 })
         return parts.joined(separator: " · ")
     }
 }

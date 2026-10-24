@@ -34,8 +34,8 @@ struct LedgerScheduleView: View {
                     }
                     ForEach(items) { item in
                         switch item {
-                        case let .activity(group): ActivityCard(group: group, zone: zone)
-                        case let .loose(entry): LooseLine(entry: entry, zone: zone)
+                        case let .activity(group): ActivityCard(group: group, model: model)
+                        case let .loose(entry): LooseLine(entry: entry, model: model)
                         }
                     }
                 }
@@ -106,7 +106,8 @@ struct LedgerScheduleView: View {
 /// An activity with the transactions that went to it, as one white card.
 private struct ActivityCard: View {
     let group: LedgerScheduleItem.Group
-    let zone: DisplayTimeZone
+    let model: AppModel
+    private var zone: DisplayTimeZone { model.dayZone }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
@@ -117,7 +118,7 @@ private struct ActivityCard: View {
             }
             if let time = timeText { Text(time).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
             ForEach(group.entries) { entry in
-                NavigationLink { TransactionDetailView(entry: entry, zone: zone) } label: {
+                NavigationLink { TransactionDetailView(entry: entry, model: model) } label: {
                     LedgerRow(entry: entry, zoneIdentifier: zone.identifier)
                 }
                 .buttonStyle(.plain)
@@ -140,10 +141,11 @@ private struct ActivityCard: View {
 /// A transaction no activity holds: one line on the grey background, like a loose transaction on the calendar.
 private struct LooseLine: View {
     let entry: LedgerListEntry
-    let zone: DisplayTimeZone
+    let model: AppModel
+    private var zone: DisplayTimeZone { model.dayZone }
 
     var body: some View {
-        NavigationLink { TransactionDetailView(entry: entry, zone: zone) } label: {
+        NavigationLink { TransactionDetailView(entry: entry, model: model) } label: {
             LedgerRow(entry: entry, zoneIdentifier: zone.identifier)
                 .padding(.horizontal, Theme.Space.l).padding(.vertical, Theme.Space.s)
         }

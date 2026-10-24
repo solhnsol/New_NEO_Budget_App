@@ -18,6 +18,9 @@ enum CategoryIcon {
         (["subscription", "telecom", "phone", "구독", "통신"], "antenna.radiowaves.left.and.right", "구독·통신"),
     ]
 
+    /// The categories the edit sheet offers: the table's rows, by the id each one matches on (its first key).
+    static var choices: [(id: String, name: String, symbol: String)] { table.map { ($0.keys[0], $0.name, $0.symbol) } }
+
     /// `nil` when there is no classified category.
     static func symbol(for category: CanonicalCategoryID?) -> String? {
         guard let category else { return nil }

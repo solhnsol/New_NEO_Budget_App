@@ -48,3 +48,17 @@ private func marker(_ id: String, minute: Int, won: Int64) throws -> Transaction
     #expect(LedgerSchedule.compactAmount(nil) == "-")
     #expect(LedgerSchedule.compactAmount(-3_000) == "+3,000")
 }
+
+@Test func overridesRenameRecategorizeAndTag() throws {
+    let t = try marker("o", minute: 600, won: 5_000)
+    let o = TransactionOverride(title: "점심", category: CanonicalCategoryID(rawValue: "food"), memo: nil, tags: TransactionOverride.parseTags("#데이트 모임, #데이트"))
+    #expect(o.tags == ["데이트", "모임"])
+    let sections = LedgerList.sections([t], life: .empty, zone: zone, overrides: [t.id: o])
+    let entry = try #require(sections.first?.entries.first)
+    #expect(entry.transaction.title == "점심")
+    #expect(entry.categoryID?.rawValue == "food")
+    var store = TransactionOverrideStore()
+    store[t.id] = o
+    store[t.id] = TransactionOverride()
+    #expect(store.lookup.isEmpty)
+}

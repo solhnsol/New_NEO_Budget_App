@@ -148,6 +148,7 @@ final class AppModel {
 
     func start() async {
         if let prepare { await prepare() }
+        loadOverrides()
         observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
@@ -457,14 +458,34 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// What the user changed about transactions for display. Kept in a file, except in the demo (a restart gives the demo back unchanged).
+    private(set) var transactionOverrides = TransactionOverrideStore()
+    /// Moves with every edit, so the ledger tab reloads.
+    private(set) var overrideRevision = 0
+    private lazy var overridesURL: URL? = isDemo ? nil : URL.applicationSupportDirectory.appending(path: "transaction-overrides.json")
+
+    /// Reads the saved edits; called once at start.
+    func loadOverrides() {
+        if let url = overridesURL { transactionOverrides = .load(from: url) }
+        overrideRevision += 1
+    }
+
+    /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
+    func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
+        transactionOverrides[id] = override
+        if let url = overridesURL { transactionOverrides.save(to: url) }
+        overrideRevision += 1
+    }
+
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
     /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
     /// transactions are still listed, without allocations.
     func ledgerSections() async -> [LedgerDaySection]? {
+        let overrides = transactionOverrides.lookup
         guard let transactions = try? await ledger.transactions() else { return nil }
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
