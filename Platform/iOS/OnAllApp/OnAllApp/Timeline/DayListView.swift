@@ -97,7 +97,9 @@ struct DayListView: View {
     private func moved(to now: [Int: CGFloat]) {
         guard !now.isEmpty else { return }
         let height = scrollView.view?.bounds.height ?? 0
-        let top = now.filter { $0.value <= 0.5 }.keys.max() ?? now.keys.min()!
+        // The day at the top rests at the content margin, under the bar's own height, not at 0: the day whose top has passed that line is the one the
+        // reader is on, so opening the list (or switching to it) does not read the day before the one it opened on as a scroll.
+        let top = now.filter { $0.value <= topInset + 0.5 }.keys.max() ?? now.keys.min()!
         let bottom = now.filter { $0.value <= height }.keys.max() ?? top
         defer { lastBottom = bottom }
         guard headingFor == nil else { return }

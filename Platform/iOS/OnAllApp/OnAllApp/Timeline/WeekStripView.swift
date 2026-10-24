@@ -227,17 +227,19 @@ struct WeekStripView: View {
     /// end of the week it runs on into the next week's days, which are simply not on screen.
     @ViewBuilder
     private func capsule(cell: CGFloat) -> some View {
-        if showsNextDay {
+        // Always laid out, so it is already on the right days when the list gives way to the grid; switching styles only fades it.
+        Group {
             InterpolatedView(value: leading) { lead in
                 InterpolatedView(value: trailing) { trail in
                     InterpolatedView(value: viewOffset) { offset in
-                        capsuleShape(lead: lead, trail: trail, offset: offset, cell: cell).opacity(capsuleOpacity)
+                        capsuleShape(lead: lead, trail: trail, offset: offset, cell: cell).opacity(showsNextDay ? capsuleOpacity : 0)
                     }
                     .animation(dragging ? nil : .interpolatingSpring(stiffness: 190, damping: 19), value: viewOffset)
                 }
                 .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: trailing)
             }
             .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: leading)
+            .animation(.easeOut(duration: 0.2), value: showsNextDay)
         }
     }
 
