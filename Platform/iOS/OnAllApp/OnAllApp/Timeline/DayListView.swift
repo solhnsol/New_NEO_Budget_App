@@ -31,6 +31,10 @@ struct DayListView: View {
     /// (the normal rate is 0.998; each 0.001 lower is roughly a tenth more speed lost per second at that rate).
     static let snagRate: CGFloat = 0.9975
     static let snagSeconds = 0.05
+    /// While the finger drags, the list holds at a day's line: it follows the finger only this fraction of the way, and lets go (to the finger's
+    /// position) once the finger has pulled `releasePull` points past the line.
+    static let holdGive: CGFloat = 0.2
+    static let releasePull: CGFloat = 60
 
     /// The day the column was built around. It is kept for the life of the view: the parent builds this struct again on every change of the selected
     /// day, and a centre that followed it would slide the whole range of days under the scroll position by a day at a time.
@@ -38,7 +42,6 @@ struct DayListView: View {
     @State private var timelines: [Int: DayTimeline] = [:]
     @State private var reading: Set<Int> = []
     /// For scrolling the list to a day. What it reports while the reader scrolls wobbles between neighbouring days, so it is never read as where the reader is.
-    @State private var topEpoch: Int?
     /// The day at the top of the screen, from where the day sections actually are: the last one whose top has reached the top edge.
     @State private var readingEpoch: Int?
     /// The last day whose line was on the screen at the bottom, to see a new one come in.
@@ -46,6 +49,8 @@ struct DayListView: View {
     @State private var scrollView = ScrollViewBox()
     /// The day a programmatic scroll is heading for: scroll positions reported on the way there are not the reader's.
     @State private var headingFor: Int?
+    /// True from arriving on a day until the reader first touches the list: days read after that change the heights above, and the day is kept on the line.
+    @State private var untouched = false
     /// Days handed to the model from the scroll, and when, so the model's answer is not mistaken for a pick made elsewhere.
     @State private var pushed: [Int: Date] = [:]
 
@@ -57,12 +62,13 @@ struct DayListView: View {
         self.onScrollToDay = onScrollToDay
         let start = model.selectedDay.daysSinceUnixEpoch
         _center = State(initialValue: start)
-        _topEpoch = State(initialValue: start)
         _readingEpoch = State(initialValue: start)
+        _headingFor = State(initialValue: start)
     }
 
     var body: some View {
         let zone = model.dayZone
+        ScrollViewReader { reader in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach((center - Self.reach)...(center + Self.reach), id: \.self) { epoch in
@@ -72,7 +78,8 @@ struct DayListView: View {
                     )
                     .id(epoch)
                     .background(GeometryReader { proxy in
-                        Color.clear.preference(key: DayTopKey.self, value: [epoch: proxy.frame(in: .named(Self.space)).minY])
+                        // On screen, not in a named space: the list's own space sits below the status bar and shifts as it scrolls.
+                        Color.clear.preference(key: DayTopKey.self, value: [epoch: proxy.frame(in: .global).minY])
                     })
                     .onAppear { if timelines[epoch] == nil { Task { await read(epoch) } } }
                 }
@@ -80,15 +87,27 @@ struct DayListView: View {
             .scrollTargetLayout()
             .background(ScrollViewFinder(box: scrollView))
         }
+        .onAppear { scrollView.jump = { epoch, animated in
+            if animated { withAnimation(.easeOut(duration: 0.3)) { reader.scrollTo(epoch, anchor: .top) } } else { reader.scrollTo(epoch, anchor: .top) }
+        } }
         .contentMargins(.top, topInset, for: .scrollContent)
         .contentMargins(.top, topInset, for: .scrollIndicators)
         .ignoresSafeArea(edges: .top)
         .coordinateSpace(name: Self.space)
-        .scrollPosition(id: $topEpoch, anchor: .top)
         .onPreferenceChange(DayTopKey.self) { moved(to: $0) }
         .task(id: readingEpoch) { await readAround(readingEpoch) }
+        .task {
+            // Opening on a day: the day the model is on is what the list opened on.
+            let epoch = model.selectedDay.daysSinceUnixEpoch
+            if headingFor != nil {
+                headingFor = epoch; readingEpoch = epoch
+                scrollView.jump?(epoch, false)
+                await arrive(at: epoch, after: 0.3)
+            }
+        }
         .onChange(of: model.selectedDay) { _, day in selectionChanged(to: day.daysSinceUnixEpoch) }
         .onChange(of: model.dataGeneration) { _, _ in Task { await refreshAll() } }
+        }
     }
 
     // MARK: Following the model, and leading it
@@ -96,10 +115,17 @@ struct DayListView: View {
     /// The sections reported where they are. The day at the top follows them; a new day coming onto the screen is felt once.
     private func moved(to now: [Int: CGFloat]) {
         guard !now.isEmpty else { return }
-        let height = scrollView.view?.bounds.height ?? 0
-        let top = now.filter { $0.value <= 0.5 }.keys.max() ?? now.keys.min()!
+        // Where the bottom of the bar (the top of what can really be seen) and the bottom edge of the list are, in the space the days are reported in.
+        let scrollTop = scrollView.view.map { $0.convert($0.bounds.origin, to: nil).y } ?? 0
+        let line = scrollTop + topInset
+        let height = scrollTop + (scrollView.view?.bounds.height ?? 0)
+        scrollView.tops = now
+        scrollView.line = line
+        // The header is drawn over the top of the list: the day at the top is the one at the top of what can really be seen below it.
+        let top = now.filter { $0.value <= line + 0.5 }.keys.max() ?? now.keys.min()!
         let bottom = now.filter { $0.value <= height }.keys.max() ?? top
         defer { lastBottom = bottom }
+        if scrollView.view?.isTracking == true { untouched = false }
         guard headingFor == nil else { return }
         // A new day comes onto the screen when the line between days enters from the bottom edge (the list moves up) or from the top edge (it
         // moves down: the day at the top changes to the one before). A day leaving the screen is not felt.
@@ -108,6 +134,9 @@ struct DayListView: View {
         if enteredBelow || enteredAbove {
             Haptics.snap()
             scrollView.snag(rate: Self.snagRate, seconds: Self.snagSeconds)
+        }
+        if let old = readingEpoch, old != top, let boundary = now[top > old ? top : old] {
+            scrollView.hold(dir: top > old ? 1 : -1, lineGap: boundary - line, give: Self.holdGive, release: Self.releasePull)
         }
         scrolled(to: top)
     }
@@ -127,16 +156,31 @@ struct DayListView: View {
         let jump = abs(epoch - (readingEpoch ?? epoch))
         headingFor = epoch
         readingEpoch = epoch
-        if jump > Self.animatedJump {
-            topEpoch = epoch
-        } else {
-            withAnimation(.easeOut(duration: 0.3)) { topEpoch = epoch }
+        scrollView.jump?(epoch, jump <= Self.animatedJump)
+        Task { await arrive(at: epoch, after: jump > Self.animatedJump ? 0.3 : 0.6) }
+    }
+
+    /// The list is deaf to the reader's position until it has arrived (or for as long as a scroll takes). It then brings the day's top to the line a few
+    /// times: the lazy column lands the day where its estimate of the days above puts it, and the estimate settles as they are drawn.
+    private func arrive(at epoch: Int, after delay: Double) async {
+        try? await Task.sleep(for: .seconds(delay))
+        var steady = 0
+        for _ in 0..<30 {
+            guard headingFor == epoch else { return }
+            if scrollView.view?.isTracking == true { break }
+            if scrollView.tops[epoch] == nil {
+                // Not drawn yet: the column has landed somewhere else; ask for the day again.
+                scrollView.jump?(epoch, false)
+                steady = 0
+            } else if scrollView.align(epoch) {
+                steady += 1
+                if steady >= 3 { break }
+            } else {
+                steady = 0
+            }
+            try? await Task.sleep(for: .milliseconds(100))
         }
-        // The list is deaf to the reader's position until it has arrived (or for as long as a scroll takes).
-        Task { @MainActor in
-            try? await Task.sleep(for: .seconds(jump > Self.animatedJump ? 0.3 : 0.6))
-            if headingFor == epoch { headingFor = nil }
-        }
+        if headingFor == epoch { headingFor = nil; untouched = true }
     }
 
     // MARK: Reading days
@@ -155,7 +199,13 @@ struct DayListView: View {
         reading.insert(epoch)
         defer { reading.remove(epoch) }
         let day = LocalDate(daysSinceUnixEpoch: epoch)
-        if let timeline = await model.readDays([day]).first?.timeline { timelines[epoch] = timeline }
+        if let timeline = await model.readDays([day]).first?.timeline {
+            timelines[epoch] = timeline
+            if untouched, let at = readingEpoch {
+                try? await Task.sleep(for: .milliseconds(60))
+                if untouched { _ = scrollView.align(at) }
+            }
+        }
     }
 
     /// The calendar or the ledger changed: the days held are read again, and each is replaced as it lands so nothing blinks.
@@ -442,17 +492,75 @@ struct LedgerEntryLoader: View {
     }
 }
 
-/// Each day section's top, in the list's own space.
+/// Each day section's top, on screen.
 private struct DayTopKey: PreferenceKey {
     static let defaultValue: [Int: CGFloat] = [:]
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) { value.merge(nextValue()) { $1 } }
 }
 
 /// The `UIScrollView` under the SwiftUI list, found so it can be held back for a moment as it coasts past a day's line.
-@MainActor private final class ScrollViewBox {
-    weak var view: UIScrollView?
+@MainActor private final class ScrollViewBox: NSObject {
+    weak var view: UIScrollView? { didSet { if view !== oldValue { observe() } } }
     private var releasing: Task<Void, Never>?
     private var normalRate: UIScrollView.DecelerationRate?
+    private var observation: NSKeyValueObservation?
+    private var writing = false
+    /// Where each day's top last was reported, in the list's own space, and where the visible part of the list starts (under the bar).
+    var jump: ((Int, Bool) -> Void)?
+    var tops: [Int: CGFloat] = [:]
+    var line: CGFloat = 0
+
+    /// Moves the list by whatever it takes for `epoch`'s top to sit exactly at `line`: a scroll to a day lands where the lazy column's estimate of the
+    /// days above puts it, which can be well short of the line, and the day would change at the first touch.
+    /// Returns whether the day was already on the line.
+    func align(_ epoch: Int) -> Bool {
+        guard let view, let y = tops[epoch] else { return false }
+        if abs(y - line) <= 0.5 { return true }
+        guard !view.isTracking, !view.isDecelerating else { return false }
+        view.contentOffset.y += y - line
+        return false
+    }
+
+    /// A day's line held under the finger: where the offset is held, which way the list was moving, and where the finger and the offset were when it was caught.
+    private struct Hold {
+        let heldY: CGFloat, dir: CGFloat, fingerY: CGFloat, offsetY: CGFloat, give: CGFloat, release: CGFloat
+    }
+    private var holding: Hold?
+
+    /// The finger lifting ends a hold: a hold left over would be released against a finger that is no longer there.
+    @objc private func panChanged(_ pan: UIPanGestureRecognizer) {
+        if pan.state == .ended || pan.state == .cancelled || pan.state == .failed { holding = nil }
+    }
+
+    private func observe() {
+        view?.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
+        observation = view?.observe(\.contentOffset) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.offsetChanged() }
+        }
+    }
+
+    /// While the finger drags past a day's line, the list stays on the line and gives only a little, until the finger has pulled hard enough: then it lets go
+    /// and lands where the finger is.
+    func hold(dir: CGFloat, lineGap: CGFloat, give: CGFloat, release: CGFloat) {
+        guard let view, view.isTracking, holding == nil, abs(lineGap) < 120 else { return }
+        let y = view.contentOffset.y
+        holding = Hold(heldY: y + lineGap, dir: dir, fingerY: view.panGestureRecognizer.location(in: nil).y, offsetY: y, give: give, release: release)
+    }
+
+    private func offsetChanged() {
+        guard !writing, let view, let hold = holding else { return }
+        guard view.isTracking else { holding = nil; return }
+        let natural = hold.offsetY - (view.panGestureRecognizer.location(in: nil).y - hold.fingerY)
+        let pull = hold.dir * (natural - hold.heldY)
+        writing = true
+        defer { writing = false }
+        if pull > 0 && pull < hold.release {
+            view.contentOffset.y = hold.heldY + hold.dir * pull * hold.give
+        } else {
+            holding = nil
+            view.contentOffset.y = natural
+        }
+    }
 
     func snag(rate: CGFloat, seconds: Double) {
         guard let view, view.isDecelerating, !view.isTracking else { return }
