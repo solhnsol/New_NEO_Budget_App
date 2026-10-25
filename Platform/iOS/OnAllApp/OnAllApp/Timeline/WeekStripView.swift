@@ -52,6 +52,8 @@ struct WeekStripView: View {
     /// A day tapped while (or just after) the strip is dragged is the drag's touch, not a pick.
     @State private var tapsBlockedUntil = Date.distantPast
     @State private var capsuleOpacity = 1.0
+    /// The trailing end's delayed catch-up: a newer move cancels the one before it, or it would land late and stretch the capsule.
+    @State private var catchUp: Task<Void, Never>?
 
     /// Whether the circle that has just appeared grows in (a day change) or only fades in (a week swipe).
     @State private var ballGrows = true
@@ -182,6 +184,7 @@ struct WeekStripView: View {
     private func move() {
         guard seeded else { return seed() }
         let target = position
+        catchUp?.cancel()
         viewOffset = Double(pageStart)
         if ball != target {
             let ghost = Ghost(day: ball, isToday: ball == today.daysSinceUnixEpoch, fades: !swipedWeek)
@@ -204,15 +207,17 @@ struct WeekStripView: View {
         // far end that moves first and the circle's end that catches up, so the capsule does the same thing in both directions.
         if target < previous {
             trailing = Double(target)
-            Task { @MainActor in
+            catchUp = Task { @MainActor in
                 try? await Task.sleep(for: .milliseconds(45))
+                guard !Task.isCancelled else { return }
                 leading = Double(target)
             }
             return
         }
         leading = Double(target)
-        Task { @MainActor in
+        catchUp = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(45))
+            guard !Task.isCancelled else { return }
             trailing = Double(target)
         }
     }

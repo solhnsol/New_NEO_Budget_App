@@ -210,7 +210,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
             if showsRule { Divider() } else if p > 0 { Divider().opacity(min(1, p * 3)).frame(height: min(1, p * 3)) }
         }
         .background { TopBarBackground().ignoresSafeArea(edges: .top) }
-        .gesture(
+        .simultaneousGesture(
             DragGesture(minimumDistance: 10)
                 .onChanged { state.drag($0.translation, selected: selected) }
                 .onEnded { state.endDrag($0.translation, velocity: $0.velocity) }
