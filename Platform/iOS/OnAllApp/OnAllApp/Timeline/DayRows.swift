@@ -134,12 +134,14 @@ private struct ListRail {
     static let gutter: CGFloat = 24
     static let barWidth: CGFloat = 6
     /// How far a transaction is set in from the line it hangs on (its dot sits on the line).
-    static let indent: CGFloat = 14
+    static let indent: CGFloat = 72
 }
 
 private extension EnvironmentValues {
     /// The colour of the box a transaction sits in, for its dot on the box's bar.
     @Entry var railColor: Color = Theme.textTertiary
+    /// A transaction inside an event is a larger ringed dot on the event's bar; one in the gap between events is a small plain dot on the grey line.
+    @Entry var railRing = false
 }
 
 /// A box of the day: a bar in its colour, a small header that is only a name and a time, and under it the transactions. A box with no transactions
@@ -226,7 +228,7 @@ private struct ListBox<Lines: View>: View {
             .contentShape(Rectangle())
             .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
             if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, ListRail.indent).environment(\.railColor, color)
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, ListRail.indent).environment(\.railColor, color).environment(\.railRing, true)
             }
         }
         .padding(.vertical, Theme.Space.m)
@@ -290,6 +292,7 @@ private struct DailyCard: View {
 /// One transaction: its category on a tile, what and when, the amount; money coming back is blue with a plus.
 private struct DayListTransactionLine: View {
     @Environment(\.railColor) private var railColor
+    @Environment(\.railRing) private var railRing
     let title: String
     let detail: String
     let amountText: String
@@ -325,8 +328,14 @@ private struct DayListTransactionLine: View {
         .listTap(onTap)
         // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
         .overlay(alignment: .leading) {
-            Circle().fill(railColor).frame(width: 7, height: 7)
-                .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 3.5)
+            Group {
+                if railRing {
+                    Circle().fill(Color(.systemBackground)).frame(width: 12, height: 12).overlay(Circle().stroke(railColor, lineWidth: 2.5))
+                } else {
+                    Circle().fill(railColor).frame(width: 7, height: 7)
+                }
+            }
+            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - (railRing ? 6 : 3.5))
                 .allowsHitTesting(false)
         }
     }
