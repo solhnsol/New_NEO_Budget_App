@@ -128,3 +128,16 @@ private let transit = CanonicalCategoryID(rawValue: "transport")
     let r = rule("a", .contains, "metro", [.setCategory(transit)])
     #expect(TransactionRuleSet.matchCount(r, in: ["Metro", "metro card", "Taxi"]) == 2)
 }
+
+@Test func theCalendarResolvesNamesAndCategoriesLikeTheLedgerList() {
+    var store = TransactionOverrideStore()
+    store.rules = [rule("m", .exact, "Metro", [.setCategory(transit), .setTitle("지하철")])]
+    let a = LedgerEntryID(rawValue: "a"), b = LedgerEntryID(rawValue: "b")
+    store[b] = TransactionOverride(title: nil, category: CanonicalCategoryID(rawValue: "food"), memo: nil, tags: [])
+    let ruled = store.display(a, title: "Metro", category: nil)
+    #expect(ruled.title == "지하철" && ruled.category == transit)                         // rule over original
+    let edited = store.display(b, title: "Metro", category: nil)
+    #expect(edited.title == "지하철" && edited.category?.rawValue == "food")              // the user's edit wins, field by field
+    let plain = store.display(a, title: "Cafe", category: CanonicalCategoryID(rawValue: "x"))
+    #expect(plain.title == "Cafe" && plain.category?.rawValue == "x")                    // nothing matched: untouched
+}

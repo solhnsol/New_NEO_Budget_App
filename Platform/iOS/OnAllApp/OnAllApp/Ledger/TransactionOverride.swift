@@ -60,6 +60,14 @@ struct TransactionOverrideStore: Codable, Equatable {
         if edits.count > Self.editLogLimit { edits.removeFirst(edits.count - Self.editLogLimit) }
     }
 
+    /// The one place that decides what a transaction is called and filed under on the calendar: the user's own edit, else a rule, else the original.
+    /// `title` is the original name the ledger has.
+    func display(_ id: LedgerEntryID, title: String?, category: CanonicalCategoryID?) -> (title: String?, category: CanonicalCategoryID?) {
+        let rule = ruleSet.outcome(forOriginalTitle: title)
+        let edit = self[id]
+        return (edit?.title ?? rule?.title ?? title, edit?.category ?? rule?.category ?? category)
+    }
+
     var ruleSet: TransactionRuleSet { TransactionRuleSet(rules: rules) }
 
     /// The typed-in transactions as the list reads them.
