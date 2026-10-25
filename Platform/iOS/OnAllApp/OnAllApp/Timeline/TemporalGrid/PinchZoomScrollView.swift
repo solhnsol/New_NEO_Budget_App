@@ -515,7 +515,13 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Holds
 
-        private func hold(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = FixedGridGestures.suppressed(while: recognizer); applyHolds() }
+        private func hold(by recognizer: FixedGridGestures.Recognizer, lifting: Bool = false) {
+            holds[recognizer] = FixedGridGestures.suppressed(while: recognizer, lifting: lifting)
+            applyHolds()
+            // An event in the hand: the finger holding it leaves the scroll and the day swipe (switched off and on again, they take only the touches
+            // that come down after), so the other hand can scroll and move the days (the pinch is held off meanwhile).
+            if lifting { for recognizer in [scroll.panGestureRecognizer, datePan] as [UIGestureRecognizer] { recognizer.isEnabled = false; recognizer.isEnabled = true } }
+        }
         private func release(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = nil; applyHolds() }
         private var held: Set<FixedGridGestures.Recognizer> { holds.values.reduce(into: []) { $0.formUnion($1) } }
 
@@ -562,7 +568,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             guard let hooks else { return }
             let point = gesture.location(in: hosting?.view)
             switch gesture.state {
-            case .began: hold(by: .longPress); hooks.longPress(.began, point, longPressStart)
+            case .began:
+                hooks.longPress(.began, point, longPressStart)
+                hold(by: .longPress, lifting: hooks.mode() == .lifting)
             case .changed: hooks.longPress(.moved, point, longPressStart)
             case .ended: release(by: .longPress); hooks.longPress(.ended, point, longPressStart)
             case .cancelled, .failed: release(by: .longPress); hooks.longPress(.cancelled, point, longPressStart)

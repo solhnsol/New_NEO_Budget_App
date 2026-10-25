@@ -121,6 +121,23 @@ private func gridCommands(_ commands: [I.Command]) -> [I.Command] { commands.fil
     #expect(machine.handle(.cancel) == [.discard(session: 1), .unfreeze(session: 1, .middle), .ended(session: 1, .discarded)])
 }
 
+@Test func aLiftedEventPutDownOnAnotherDayMovesTheSessionsTargetAndKeepsTheGridFrozen() {
+    var machine = entered()
+    _ = machine.handle(.handleTap(.end))
+    let next = day.adding(days: 1)
+    let put = lunch.moved(to: next, startMinute: 600, endMinute: 660)
+    #expect(put.day == next && put.blockDay == day && put.isDrawnFromDraft && !lunch.isDrawnFromDraft)
+    let commands = machine.handle(.moved(put))
+    #expect(commands == [.moved(session: 1, put), .handle(session: 1, .none)])
+    #expect(gridCommands(commands).isEmpty)                                                     // nothing of the grid changes
+    #expect(machine.editing?.target == put && machine.session?.lastEdited == .start)
+    // Another event is not "moved" into the session.
+    #expect(machine.handle(.moved(meeting.moved(to: next, startMinute: 0, endMinute: 60))).isEmpty)
+    // The saved time is anchored at the start, on the day it was put down on.
+    let finished = machine.handle(.confirm) + machine.handle(.commitFinished(session: 1, I.Committed(day: next, startMinute: 600, endMinute: 660)))
+    #expect(finished.contains(.unfreeze(session: 1, .edge(.start, day: next, minute: 600))))
+}
+
 @Test func anotherEventMovesTheSessionWithoutUnfreezingOrLeavesWithChanges() {
     var machine = entered()
     _ = machine.handle(.handleTap(.start))
