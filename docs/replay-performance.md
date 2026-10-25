@@ -51,10 +51,11 @@ x86_64 Linux container, release build; a phone will differ but the shape does no
 |---|---|---|
 | 1,000 | 9.8 s | 1.2 s |
 | 3,000 | about 80 s | 3.5 s |
-| 10,000 | about 14 min (extrapolated) | 10.9 s |
+| 10,000 | about 14 min (extrapolated) | 11 to 13 s |
+| 30,000 | about 2 hours (extrapolated) | 40.6 s |
 | `status(of:)` per call at 1,000 | 2.3 ms | 0.004 ms |
 
-About 1.1 ms per notification at every size. Most of that is parsing (regular expressions), so the next saving would be
+About 1.2 to 1.4 ms per notification at every size (1.2 s, 3.5 s, 13 s, 40.6 s for 1k, 3k, 10k, 30k). Most of that is parsing (regular expressions), so the next saving would be
 persisting the derived ledger instead of replaying it (not done here; the notification file and its format are unchanged).
 
 Run it yourself: `cd tools/replay-bench && swift run -c release ReplayBench 1000 3000 10000`.
