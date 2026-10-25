@@ -160,17 +160,19 @@ public struct ActivityShare: Hashable, Sendable {
     public let refundedMinorUnits: Int64
     public let receivedMinorUnits: Int64
     public let pendingMinorUnits: Int64
+    /// Surplus deposits taken off this event's cost (only with `SurplusTreatment.reduceSpending`).
+    public let surplusMinorUnits: Int64
     /// Some linked amount, or some open request, has no exact value yet, so the numbers above are a floor.
     public let hasUnknown: Bool
 
-    public var myShareMinorUnits: Int64 { spentMinorUnits - refundedMinorUnits - receivedMinorUnits - pendingMinorUnits }
+    public var myShareMinorUnits: Int64 { spentMinorUnits - refundedMinorUnits - receivedMinorUnits - pendingMinorUnits - surplusMinorUnits }
     public var isPending: Bool { pendingMinorUnits > 0 }
 }
 
 extension LifeState {
-    public func activityShares() -> [ActivityShare] {
+    public func activityShares(surplus treatment: SurplusTreatment = .income) -> [ActivityShare] {
         struct Key: Hashable { let activity: ActivityID; let currency: String }
-        struct Sums { var spent: Int64 = 0, refunded: Int64 = 0, received: Int64 = 0, pending: Int64 = 0, unknown = false }
+        struct Sums { var spent: Int64 = 0, refunded: Int64 = 0, received: Int64 = 0, pending: Int64 = 0, surplus: Int64 = 0, unknown = false }
         var sums: [Key: Sums] = [:]
         for set in allocationSets.values {
             for allocation in set.allocations {
@@ -197,10 +199,19 @@ extension LifeState {
             }
             sums[key] = entry
         }
+        if treatment == .reduceSpending {
+            // A surplus belongs to the event of the requests its settlement paid (the first, if it paid several events).
+            for residual in residuals.values where residual.direction == .surplus && residual.classification.value != .otherObligation {
+                guard let settlement = settlements[residual.settlementID],
+                      let activity = settlement.allocations.compactMap({ obligations[$0.obligationID]?.activityID }).first else { continue }
+                let key = Key(activity: activity, currency: residual.amount.currency)
+                sums[key]?.surplus += residual.amount.minorUnits
+            }
+        }
         return sums.map { key, value in
             ActivityShare(
                 activityID: key.activity, currency: key.currency, spentMinorUnits: value.spent, refundedMinorUnits: value.refunded,
-                receivedMinorUnits: value.received, pendingMinorUnits: value.pending, hasUnknown: value.unknown
+                receivedMinorUnits: value.received, pendingMinorUnits: value.pending, surplusMinorUnits: value.surplus, hasUnknown: value.unknown
             )
         }
         .sorted { ($0.activityID, $0.currency) < ($1.activityID, $1.currency) }
@@ -212,13 +223,13 @@ extension LifeState {
 public enum SurplusTreatment: String, Codable, Hashable, Sendable {
     /// Default: it is income, apart from spending (a separate income category).
     case income
-    /// The user's setting: it is not counted anywhere.
-    case excluded
+    /// The app setting: no separate income; the excess comes off the cost of the event it was paid for (`ActivityShare.surplusMinorUnits`).
+    case reduceSpending
 }
 
 extension LifeState {
-    /// Surplus received beyond what the obligations asked, in `currency`. Never reduces spending. Surplus the user said belongs to another
-    /// obligation is not income; everything else (unresolved, gift, other) is, unless the setting excludes it.
+    /// Surplus received beyond what the obligations asked, in `currency`, as income. Surplus the user said belongs to another obligation is not
+    /// income; everything else (unresolved, gift, other) is, unless the setting makes it reduce the event's cost instead (then none is income).
     public func surplusIncomeMinorUnits(currency: String, treatment: SurplusTreatment = .income) -> Int64 {
         guard treatment == .income else { return 0 }
         return residuals.values
