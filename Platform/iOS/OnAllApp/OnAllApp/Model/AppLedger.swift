@@ -12,7 +12,21 @@ actor AppLedger {
         case live(IntakeLedger, NotificationStore)
     }
 
+    /// What the launch read, kept until the full replay is in: the ledger opens on the recent notifications only
+    /// (`IntakeLedger(replayingSince:)`), and the full one is built from these in the background.
+    struct Launch: @unchecked Sendable {
+        let notifications: [RawNotification]
+        let setup: IntakeSetup
+        let intake: NotificationIntake
+        let history: ImportedHistory?
+    }
+
+    /// How far back the first replay goes. Older notifications are replayed in the background and swapped in.
+    static let recentWindow: Int64 = 56 * 86_400_000
+
     private var backing: Backing
+    private var launch: Launch?
+    private var fullReplay: Task<Void, Never>?
     private let source: UpdatableTransactionSource
     private let decoder: ShortcutNotificationDecoder
 
@@ -35,12 +49,21 @@ actor AppLedger {
         let setup = try store.setup()
         // A history that cannot be read is left out rather than keeping the whole ledger from opening.
         let history = try? store.history()
-        let ledger = try IntakeLedger(
+        let launch = Launch(
             notifications: try store.notifications(), setup: setup,
             intake: NotificationIntake(timeZoneIdentifier: zone.identifier), history: history
         )
-        // Importing registers the history's accounts in the setup; keep them.
-        if ledger.setup != setup { try store.save(setup: ledger.setup) }
+        let cutoff = Int64(Date().timeIntervalSince1970 * 1_000) - Self.recentWindow
+        let ledger = try IntakeLedger(
+            notifications: launch.notifications, setup: setup, intake: launch.intake, history: history, replayingSince: cutoff
+        )
+        // Importing registers the history's accounts in the setup; keep them. A partial replay's setup holds only what the
+        // recent notifications added, so that one waits for the full replay.
+        if ledger.isComplete {
+            if ledger.setup != setup { try store.save(setup: ledger.setup) }
+        } else {
+            self.launch = launch
+        }
         backing = .live(ledger, store)
         source = UpdatableTransactionSource(LedgerTransactionSource(processing: try ledger.repository.processingSnapshot()))
         decoder = ShortcutNotificationDecoder(timeZone: TimeZone(identifier: zone.identifier) ?? .current)
@@ -54,7 +77,8 @@ actor AppLedger {
     func transactionSource() throws -> any TransactionSource { source }
 
     /// Every account's and card's movements as the bank and the card company see them (the ledger tab's statement view).
-    func statements() throws -> [LedgerStatements.Statement] {
+    func statements() async throws -> [LedgerStatements.Statement] {
+        await completeHistory()
         let reported: [AccountID: ReportedBalance]
         if case let .live(ledger, _) = backing { reported = ledger.reportedBalances } else { reported = [:] }
         return LedgerStatements.statements(try snapshot(), configuration: configuration, reportedBalances: reported)
@@ -89,7 +113,8 @@ actor AppLedger {
     }
 
     /// Accounts and cards the notifications mention that the user has not said anything about yet.
-    func accountQuestions() -> [AccountQuestion] {
+    func accountQuestions() async -> [AccountQuestion] {
+        await completeHistory()
         guard case let .live(ledger, _) = backing else { return [] }
         let byID = Dictionary(ledger.notifications.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return ledger.setup.registry.openCandidates.map { candidate in
@@ -119,7 +144,8 @@ actor AppLedger {
     }
 
     /// Replaces the imported history with `data` (the file's bytes) and replays the ledger. Returns what was imported.
-    func importHistory(_ data: Data) throws -> ImportSummary {
+    func importHistory(_ data: Data) async throws -> ImportSummary {
+        try await completeHistoryOrThrow()
         guard case .live(let current, let store) = backing else { throw AppLedgerError.notLive }
         let history = try store.save(historyData: data)
         let ledger = try IntakeLedger(notifications: current.notifications, setup: current.setup, intake: current.intake, history: history)
@@ -141,8 +167,9 @@ actor AppLedger {
         let decoded = try decoder.decode(text, receivedAtUnixMilliseconds: Int64(Date().timeIntervalSince1970 * 1_000))
         let fresh = try ledger.receive(decoded)
         if !fresh.isEmpty {
-            try store.save(notifications: ledger.notifications)
-            try store.save(setup: ledger.setup)
+            try store.save(notifications: persistedNotifications(of: ledger))
+            // A partial ledger's setup lacks what the older notifications add; the full replay saves it.
+            if ledger.isComplete { try store.save(setup: ledger.setup) }
         }
         backing = .live(ledger, store)
         try refreshSource()
@@ -151,35 +178,81 @@ actor AppLedger {
 
     // MARK: Account answers
 
-    func confirmAsNew(_ id: AccountCandidateID, displayName: String, kind: NewTargetKind) throws {
-        try change { try $0.confirmAsNew(id, displayName: displayName, kind: kind, makeID: { "account-\(UUID().uuidString)" }) }
+    func confirmAsNew(_ id: AccountCandidateID, displayName: String, kind: NewTargetKind) async throws {
+        try await change { try $0.confirmAsNew(id, displayName: displayName, kind: kind, makeID: { "account-\(UUID().uuidString)" }) }
     }
 
-    func link(_ id: AccountCandidateID, to binding: ResolvedLedgerBinding) throws {
-        try change { try $0.link(id, to: binding) }
+    func link(_ id: AccountCandidateID, to binding: ResolvedLedgerBinding) async throws {
+        try await change { try $0.link(id, to: binding) }
     }
 
-    func dismiss(_ id: AccountCandidateID) throws {
-        try change { try $0.dismiss(id) }
+    func dismiss(_ id: AccountCandidateID) async throws {
+        try await change { try $0.dismiss(id) }
     }
 
     /// "Messages like this one are about which account?" for a notification that never names its account.
-    func ruleQuestion(for notificationID: String) -> RuleQuestion? {
+    func ruleQuestion(for notificationID: String) async -> RuleQuestion? {
+        await completeHistory()
         guard case let .live(ledger, _) = backing else { return nil }
         return ledger.ruleQuestion(for: notificationID)
     }
 
-    func answer(_ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?) throws {
+    func answer(_ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?) async throws {
         let now = Int64(Date().timeIntervalSince1970 * 1_000)
-        try change { try $0.answer(question, binding: binding, newAccount: newAccount, at: now, makeID: { "account-\(UUID().uuidString)" }) }
+        try await change { try $0.answer(question, binding: binding, newAccount: newAccount, at: now, makeID: { "account-\(UUID().uuidString)" }) }
     }
 
-    private func change(_ apply: (inout IntakeLedger) throws -> Void) throws {
+    private func change(_ apply: (inout IntakeLedger) throws -> Void) async throws {
+        try await completeHistoryOrThrow()
         guard case .live(var ledger, let store) = backing else { throw AppLedgerError.notLive }
         try apply(&ledger)
         try store.save(setup: ledger.setup)
         backing = .live(ledger, store)
         try refreshSource()
+    }
+
+    /// Builds the ledger over every notification off the actor and swaps it in; what arrived meanwhile is replayed onto it.
+    /// Returns at once when the ledger is already complete. Callers that need the whole history (balances, account
+    /// questions, anything that changes the setup) wait here.
+    var isHistoryPartial: Bool { launch != nil }
+
+    func completeHistory() async {
+        guard launch != nil else { return }
+        if fullReplay == nil { fullReplay = Task { await buildFullReplay() } }
+        await fullReplay?.value
+    }
+
+    /// For what changes the setup or the files: it must not be built on a partial ledger.
+    private func completeHistoryOrThrow() async throws {
+        await completeHistory()
+        if launch != nil { throw AppLedgerError.historyNotReady }
+    }
+
+    private struct Built: @unchecked Sendable { let ledger: IntakeLedger? }
+
+    private func buildFullReplay() async {
+        guard let launch, case .live = backing else { return }
+        let built = await Task.detached(priority: .utility) {
+            Built(ledger: try? IntakeLedger(
+                notifications: launch.notifications, setup: launch.setup, intake: launch.intake, history: launch.history
+            ))
+        }.value
+        // On failure the partial ledger stays (and `launch` with it, so nothing older is lost from the files).
+        guard var full = built.ledger, case .live(let partial, let store) = backing else { return }
+        do {
+            try full.receive(partial.notifications)
+            try store.save(setup: full.setup)
+        } catch { return }
+        backing = .live(full, store)
+        self.launch = nil
+        try? refreshSource()
+    }
+
+    /// Every notification to keep on disk: while the ledger is partial, the ones it left out are still in the file.
+    private func persistedNotifications(of ledger: IntakeLedger) -> [RawNotification] {
+        guard let launch else { return ledger.notifications }
+        let known = Set(launch.notifications.map(\.id))
+        return launch.notifications + ledger.notifications.filter { !known.contains($0.id) }
     }
 
     private func refreshSource() throws {
@@ -204,6 +277,8 @@ actor AppLedger {
 enum AppLedgerError: Error {
     /// Notifications go only to the real ledger, never to the demo or the sample.
     case notLive
+    /// The full replay of older notifications failed, so a change that rewrites the setup would lose what they added.
+    case historyNotReady
 }
 
 /// What an import brought in, for the confirmation the user reads.
