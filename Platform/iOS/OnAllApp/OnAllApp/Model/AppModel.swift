@@ -251,7 +251,7 @@ final class AppModel {
         var result: [StripDay] = []
         for day in days {
             let timeline: DayTimeline?
-            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = try? await service.dayTimeline(for: day) }
+            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = (try? await service.dayTimeline(for: day)).map(displayed) }
             result.append(StripDay(day: day, timeline: timeline))
         }
         return result
@@ -437,7 +437,7 @@ final class AppModel {
 
     private func readTimeline(_ day: LocalDate, service: CalendarCommandService) async throws -> DayTimeline {
         dayReads += 1
-        let direct: @MainActor () async throws -> DayTimeline = { try await service.dayTimeline(for: day) }
+        let direct: @MainActor () async throws -> DayTimeline = { [self] in displayed(try await service.dayTimeline(for: day)) }
         if let dayReadInterceptor { return try await dayReadInterceptor(day, direct) }
         return try await direct()
     }
@@ -566,12 +566,46 @@ final class AppModel {
     private func saveOverrides() {
         if let url = overridesURL { transactionOverrides.save(to: url) }
         overrideRevision += 1
+        Task { await reload() }                                 // the cached days were built with the old edits and rules
+    }
+
+    /// A day as the calendar shows it: transaction names and categories after the user's edits and rules (the ledger tab goes through the same resolver).
+    private func displayed(_ timeline: DayTimeline) -> DayTimeline {
+        let overrides = transactionOverrides
+        return timeline.displayingTransactions { overrides.display($0, title: $1, category: $2) }
     }
 
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
-    func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
+    /// `originalTitle` is the name the ledger has; with it, the edit is also kept in the edit log.
+    func edit(_ id: LedgerEntryID, to override: TransactionOverride?, originalTitle: String? = nil) {
         transactionOverrides[id] = override
+        if let override, !override.isEmpty {
+            transactionOverrides.record(.init(
+                id: UUID().uuidString, transactionID: id.rawValue, originalTitle: originalTitle, title: override.title, category: override.category,
+                memo: override.memo, tags: override.tags, atUnixMilliseconds: nowMilliseconds
+            ))
+        }
         saveOverrides()
+    }
+
+    /// Adds a rule, or replaces the one with the same id.
+    func saveRule(_ rule: TransactionRule) {
+        if let index = transactionOverrides.rules.firstIndex(where: { $0.id == rule.id }) {
+            transactionOverrides.rules[index] = rule
+        } else {
+            transactionOverrides.rules.append(rule)
+        }
+        saveOverrides()
+    }
+
+    func deleteRule(id: String) {
+        transactionOverrides.rules.removeAll { $0.id == id }
+        saveOverrides()
+    }
+
+    /// The original names of the ledger's transactions, for previewing how many a rule would catch.
+    func ledgerTitles() async -> [String] {
+        ((try? await ledger.transactions()) ?? []).compactMap(\.title)
     }
 
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
@@ -583,7 +617,7 @@ final class AppModel {
         let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, rules: transactionOverrides.ruleSet)
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.

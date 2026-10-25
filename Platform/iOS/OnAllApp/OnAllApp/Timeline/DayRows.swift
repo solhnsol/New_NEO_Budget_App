@@ -290,12 +290,12 @@ private struct EventCard: View {
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(
-                    title: model.transactionOverrides[item.transactionID]?.title ?? item.title ?? "거래",
+                    title: item.title ?? "거래",
                     detail: item.occursOnSelectedDay ? Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier)
                         : Formatting.shortDate(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
                     amountText: Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency),
                     isRefund: item.flow == .refund,
-                    category: model.transactionOverrides[item.transactionID]?.category ?? item.categoryID
+                    category: item.categoryID
                 ) { onOpenTransaction(item.transactionID) }
             }
         }
@@ -318,10 +318,10 @@ private struct DailyCard: View {
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
-                    title: model.transactionOverrides[marker.transactionID]?.title ?? marker.title ?? "거래",
+                    title: marker.title ?? "거래",
                     detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
                     amount: marker.amount, isRefund: marker.flow == .refund,
-                    category: model.transactionOverrides[marker.transactionID]?.category ?? marker.categoryID
+                    category: marker.categoryID
                 ) { onOpenTransaction(marker.transactionID) }
             }
         }

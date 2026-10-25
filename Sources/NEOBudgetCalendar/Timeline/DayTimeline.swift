@@ -91,7 +91,7 @@ public struct ActivityBadge: Equatable, Sendable {
 public struct AllocationItem: Equatable, Sendable {
     public let allocationID: AllocationID
     public let transactionID: LedgerEntryID
-    public let title: String?
+    public var title: String?
     public let transactionAmount: Money
     public let flow: TransactionFlow
     public let occurredAtUnixMilliseconds: Int64
@@ -103,7 +103,7 @@ public struct AllocationItem: Equatable, Sendable {
     public let isPartOfTransaction: Bool
     public let source: AssignmentSource
     /// What this portion was spent on, only when it has been classified. `nil` for every other state of the category.
-    public let categoryID: CanonicalCategoryID?
+    public var categoryID: CanonicalCategoryID?
 }
 
 public struct EventBlock: Equatable, Sendable {
@@ -125,7 +125,7 @@ public struct EventBlock: Equatable, Sendable {
     public let continuesToNextDay: Bool
     public let layout: OverlapLayout
     public let activity: ActivityBadge?
-    public let allocations: [AllocationItem]
+    public var allocations: [AllocationItem]
     /// Spending allocated to this activity per currency, with uncertainty kept (never a falsely exact total).
     public let allocatedSpend: [AmountAggregate]
     public let allocatedRefunds: [AmountAggregate]
@@ -149,7 +149,7 @@ public struct AllDayItem: Equatable, Sendable {
     public let isFirstDayOfEvent: Bool
     public let isLastDayOfEvent: Bool
     public let activity: ActivityBadge?
-    public let allocations: [AllocationItem]
+    public var allocations: [AllocationItem]
     public let allocatedSpend: [AmountAggregate]
     public let allocatedRefunds: [AmountAggregate]
     public let isEditable: Bool
@@ -173,7 +173,7 @@ public struct MarkerAllocation: Equatable, Sendable {
 /// blocks drawn today.
 public struct TransactionMarkerItem: Equatable, Sendable {
     public let transactionID: LedgerEntryID
-    public let title: String?
+    public var title: String?
     public let amount: Money
     public let flow: TransactionFlow
     public let occurredAtUnixMilliseconds: Int64
@@ -186,7 +186,7 @@ public struct TransactionMarkerItem: Equatable, Sendable {
     public let remainder: AmountBounds
     public let isFullyAllocated: Bool
     /// The category all of its allocations were classified into, when they agree; `nil` when there are none or they differ.
-    public let categoryID: CanonicalCategoryID?
+    public var categoryID: CanonicalCategoryID?
 }
 
 public struct CurrencyTotals: Equatable, Sendable {
@@ -216,8 +216,31 @@ public struct DayTimeline: Equatable, Sendable {
     public let dayEndUnixMilliseconds: Int64
     /// 1440 normally; 1380 or 1500 on a daylight-saving transition day.
     public let totalMinutes: Int
-    public let allDay: [AllDayItem]
-    public let blocks: [EventBlock]
-    public let markers: [TransactionMarkerItem]
+    public var allDay: [AllDayItem]
+    public var blocks: [EventBlock]
+    public var markers: [TransactionMarkerItem]
     public let summary: DaySummary
+}
+
+extension DayTimeline {
+    /// The day with every transaction's name and category replaced by what `display` says for it (given the id, name and category the ledger gave).
+    /// For display-only layers over the ledger (the user's edits, rules): nothing else about the day changes.
+    public func displayingTransactions(
+        _ display: (LedgerEntryID, String?, CanonicalCategoryID?) -> (title: String?, category: CanonicalCategoryID?)
+    ) -> DayTimeline {
+        func items(_ list: [AllocationItem]) -> [AllocationItem] {
+            list.map { item in
+                var item = item
+                (item.title, item.categoryID) = display(item.transactionID, item.title, item.categoryID)
+                return item
+            }
+        }
+        var result = self
+        for i in result.blocks.indices { result.blocks[i].allocations = items(result.blocks[i].allocations) }
+        for i in result.allDay.indices { result.allDay[i].allocations = items(result.allDay[i].allocations) }
+        for i in result.markers.indices {
+            (result.markers[i].title, result.markers[i].categoryID) = display(result.markers[i].transactionID, result.markers[i].title, result.markers[i].categoryID)
+        }
+        return result
+    }
 }

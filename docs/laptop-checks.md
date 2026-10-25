@@ -46,6 +46,7 @@ tools/dev/check.sh full
 | `claude/project-thread-fz77s0` (표시 규칙) | 왼쪽 시간축: 가로 격자 줄에 걸린 시각은 진하고 굵게, 나머지는 회색 작은 글씨. 같은 색인데 일부만 흐린 라벨이 쉬고 있을 때 없다. 날짜를 넘길 때 라벨이 깜빡이지 않는다. | 데모에서 날짜 넘기기, 핀치 |
 | `claude/project-thread-95yi27` (Actual 가져오기) | 앱이 빌드되고 앱 테스트가 통과한다. 클라우드에서 컴파일하지 못한 파일: `Support/SettingsView.swift`(파일 선택·알림), `Intake/IntakeInboxView.swift`(새 구역), `Model/AppModel.swift`(`makeService`의 `importedLife`). 패키지 쪽과 `AppLedger`·`NotificationStore`·`IntakeText`는 클라우드에서 컴파일하고 경고가 없었다. 예상 10분 안팎(콜드 빌드 포함). | `tools/dev/check.sh full` |
 | `claude/project-thread-95yi27` (Actual 가져오기) | **실기기 또는 시뮬레이터, `-live`:** 설정 → 지난 가계부 → `imported-history.json` 선택. "N건을 가져왔어요" 확인 창에 잔액이 다른 계좌가 없다. 받은 알림 맨 위에 "가져온 기록 중 정리할 것"이 보이고, 가계부 탭에 지난 소비와 정리할 입금이 나온다. 정산된 지출은 "60,000 → 내 몫"처럼 순지출로 보인다. 앱을 껐다 켜도 남고 같은 파일을 다시 가져와도 금액이 늘지 않는다. **실제 데이터 파일이 필요하다(Hans가 프로젝트 파일에서 받아 옮김).** 시뮬레이터면 Files에 넣어 선택. 예상 15분. | Hans가 폰에서 직접, 끝나면 폰과 프로젝트 파일의 원본 삭제 |
+| `claude/project-thread-c8man1` (규칙 캘린더 반영) | 앱 빌드와 앱 테스트 통과(`AppModel`·`DayRows`는 클라우드에서 컴파일하지 못함, 패키지 테스트 460개는 통과). 설정 → 자동 분류 규칙에서 규칙을 하나 저장하면 곧바로 캘린더 격자의 거래 칩·겹침 목록·리스트 보기의 거래 이름과 분류 아이콘이 규칙대로 바뀐다. 거래 상세에서 직접 고친 이름/분류는 규칙보다 우선하고 캘린더에도 보인다. 규칙을 지우면 원래 이름으로 돌아온다. 규칙 저장 뒤 화면이 깜빡이거나 날짜가 튀지 않는다. | `tools/dev/check.sh ui -demo` → 데모에서 규칙 추가/삭제 후 캘린더·리스트 확인 |
 
 ## 확인 완료 (2026-10-16, 노트북)
 

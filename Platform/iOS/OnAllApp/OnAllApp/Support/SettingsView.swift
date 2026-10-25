@@ -40,6 +40,22 @@ struct SettingsView: View {
             }
             .onAllCardRow()
             Section {
+                NavigationLink {
+                    TransactionRulesView(model: model)
+                } label: {
+                    HStack(spacing: Theme.Space.m) {
+                        IconTile(systemName: "wand.and.stars", tint: Theme.accent)
+                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                            Text("자동 분류 규칙").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                            Text("\(model.transactionOverrides.rules.count)개 · 거래 이름으로 이름과 분류를 자동으로 바꿔요").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                        }
+                    }
+                }
+            } header: {
+                Text("거래 정리")
+            }
+            .onAllCardRow()
+            Section {
                 Button { choosingFile = true } label: {
                     HStack(spacing: Theme.Space.m) {
                         IconTile(systemName: "tray.and.arrow.down", tint: Theme.accent)
