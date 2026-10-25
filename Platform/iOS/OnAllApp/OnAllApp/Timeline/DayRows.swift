@@ -203,7 +203,7 @@ private struct ListBox<Lines: View>: View {
         }
         .frame(width: ListRail.gutter)
         .contentShape(Rectangle())
-        .onTapGesture { if gap && gapCount > 1 { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
+        .onTapGesture { if gap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
         .accessibilityHidden(true)
     }
 
@@ -215,27 +215,27 @@ private struct ListBox<Lines: View>: View {
     }
 
     private var gapContent: some View {
-        let folded = gapCount > 1 && !expanded
-        return VStack(alignment: .leading, spacing: Theme.Space.m) {
-            if folded {
-                // Low, like the space between two events: a dot on the line and, beside it, a small light line saying what is folded; a tap opens it.
+        VStack(alignment: .leading, spacing: Theme.Space.m) {
+            // The summary stays on top whether the stretch is folded or open, with a small arrow that says which way a tap goes.
+            HStack(spacing: Theme.Space.xs) {
                 Text(["거래 \(gapCount)건", totalText].compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                    .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
-                    .overlay(alignment: .leading) {
-                        Circle().fill(Theme.textTertiary.opacity(0.8)).frame(width: 7, height: 7)
-                            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s) - 3.5)
-                            .allowsHitTesting(false)
-                    }
-                    // Level with the names of the events, not set in with the transactions.
-                    .padding(.leading, -ListRail.indent)
-                    .contentShape(Rectangle())
-                    .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
-            } else {
-                lines()
+                Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
+            .overlay(alignment: .leading) {
+                Circle().fill(Theme.textTertiary.opacity(0.8)).frame(width: 7, height: 7)
+                    .offset(x: -(ListRail.gutter / 2 + Theme.Space.s) - 3.5)
+                    .allowsHitTesting(false)
+            }
+            // Level with the names of the events, not set in with the transactions.
+            .padding(.leading, -ListRail.indent)
+            .contentShape(Rectangle())
+            .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
+            if expanded { lines() }
         }
-        .padding(.leading, ListRail.indent).padding(.vertical, folded ? Theme.Space.xs : Theme.Space.m)
+        .padding(.leading, ListRail.indent).padding(.vertical, expanded ? Theme.Space.m : Theme.Space.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
         .environment(\.railColor, color)
     }
