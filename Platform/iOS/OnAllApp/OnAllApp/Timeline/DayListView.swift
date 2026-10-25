@@ -7,7 +7,7 @@ import SwiftUI
 /// same `DayTimeline` as the grid.
 ///
 /// The day at the top of the screen is the selected day: scrolling moves `AppModel.selectedDay` (the header and the week strip follow, and a tick is felt
-/// when a new day comes onto the screen; the scroll itself is never held back), and picking a day elsewhere scrolls the list to it. The days sit in one lazy column over a fixed range, so scrolling up
+/// when a day's line crosses the line under the header; the scroll itself is never held back), and picking a day elsewhere scrolls the list to it. The days sit in one lazy column over a fixed range, so scrolling up
 /// never moves what is on screen; each day is read when it comes near (`readAhead` days either side of the top) and kept only while it stays near.
 struct DayListView: View {
     let model: AppModel
@@ -38,8 +38,6 @@ struct DayListView: View {
     /// For scrolling the list to a day. What it reports while the reader scrolls wobbles between neighbouring days, so it is never read as where the reader is.
     /// The day at the top of the screen, from where the day sections actually are: the last one whose top has reached the top edge.
     @State private var readingEpoch: Int?
-    /// The last day whose line was on the screen at the bottom, to see a new one come in.
-    @State private var lastBottom: Int?
     @State private var lastTick = Date.distantPast
     @State private var scrollView = ScrollViewBox()
     /// The day a programmatic scroll is heading for: scroll positions reported on the way there are not the reader's.
@@ -107,26 +105,21 @@ struct DayListView: View {
 
     // MARK: Following the model, and leading it
 
-    /// The sections reported where they are. The day at the top follows them; a new day coming onto the screen is felt once.
+    /// The sections reported where they are. The day at the top follows them; a day crossing the line under the header is felt once.
     private func moved(to now: [Int: CGFloat]) {
         guard !now.isEmpty else { return }
-        // Where the bottom of the bar (the top of what can really be seen) and the bottom edge of the list are, in the space the days are reported in.
+        // Where the bottom of the bar (the top of what can really be seen) is, in the space the days are reported in.
         let scrollTop = scrollView.view.map { $0.convert($0.bounds.origin, to: nil).y } ?? 0
         let line = scrollTop + topInset
-        let height = scrollTop + (scrollView.view?.bounds.height ?? 0)
         scrollView.tops = now
         scrollView.line = line
-        // The header is drawn over the top of the list: the day at the top is the one at the top of what can really be seen below it.
+        // The header is drawn over the top of the list: the day at the top is the one at the top of what can really be seen below it. Only this line
+        // counts; the bottom edge of the screen is not looked at.
         let top = now.filter { $0.value <= line + 0.5 }.keys.max() ?? now.keys.min()!
-        let bottom = now.filter { $0.value <= height }.keys.max() ?? top
-        defer { lastBottom = bottom }
         if scrollView.view?.isTracking == true { untouched = false }
         guard headingFor == nil else { return }
-        // A new day comes onto the screen when the line between days enters from the bottom edge (the list moves up) or from the top edge (it
-        // moves down: the day at the top changes to the one before). A day leaving the screen is not felt.
-        let enteredBelow = lastBottom.map { bottom > $0 } ?? false
-        let enteredAbove = readingEpoch.map { top < $0 } ?? false
-        if (enteredBelow || enteredAbove), Date().timeIntervalSince(lastTick) >= Self.tickInterval {
+        // A tick is felt when a day's line crosses the line under the bar, going either way, and the header follows in the same moment.
+        if let old = readingEpoch, old != top, Date().timeIntervalSince(lastTick) >= Self.tickInterval {
             lastTick = Date()
             Haptics.snap()
         }
