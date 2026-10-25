@@ -218,14 +218,17 @@ private struct ListBox<Lines: View>: View {
         let folded = gapCount > 1 && !expanded
         return VStack(alignment: .leading, spacing: Theme.Space.m) {
             if folded {
-                // Low, like the space between two events: just the count on the line; a tap opens it.
-                Color.clear.frame(height: 20)
+                // Low, like the space between two events: a dot on the line and, beside it, a small light line saying what is folded; a tap opens it.
+                Text(["거래 \(gapCount)건", totalText].compactMap { $0 }.joined(separator: " · "))
+                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                    .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
                     .overlay(alignment: .leading) {
-                        Text("\(gapCount)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(Theme.textSecondary)
-                            .frame(width: 32, height: 28).background(Color(.systemBackground))
+                        Circle().fill(Theme.textTertiary.opacity(0.8)).frame(width: 7, height: 7)
+                            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s) - 3.5)
                             .allowsHitTesting(false)
-                            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 16)
                     }
+                    // Level with the names of the events, not set in with the transactions.
+                    .padding(.leading, -ListRail.indent)
                     .contentShape(Rectangle())
                     .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
             } else {
