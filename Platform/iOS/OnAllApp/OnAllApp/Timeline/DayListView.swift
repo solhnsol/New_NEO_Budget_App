@@ -321,7 +321,12 @@ private struct ListRail {
     let isFirst: Bool
     let isLast: Bool
     static let gutter: CGFloat = 24
-    static let lineWidth: CGFloat = 2
+    static let barWidth: CGFloat = 6
+}
+
+private extension EnvironmentValues {
+    /// The colour of the box a transaction sits in, for its dot on the box's bar.
+    @Entry var railColor: Color = Theme.textTertiary
 }
 
 private struct ListBox<Lines: View>: View {
@@ -345,17 +350,17 @@ private struct ListBox<Lines: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// The line runs the whole height of the box (so it grows when the box opens); the dot sits level with the header row.
+    /// The event is an area, so its stretch of the line is a bar in its colour as tall as the box; a thin grey line joins the bars across the gaps.
     private var rail_: some View {
-        let dotY = Theme.Space.m + 16
+        let inset = Theme.Space.m
         return GeometryReader { proxy in
-            let top = rail.isFirst ? dotY : 0
-            let bottom = rail.isLast ? dotY : proxy.size.height
+            let top = rail.isFirst ? inset : 0
+            let bottom = rail.isLast ? proxy.size.height - inset : proxy.size.height
             ZStack(alignment: .topLeading) {
-                Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: ListRail.lineWidth, height: max(0, bottom - top))
-                    .offset(x: (ListRail.gutter - ListRail.lineWidth) / 2, y: top)
-                Circle().fill(color).frame(width: 10, height: 10).overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
-                    .offset(x: (ListRail.gutter - 10) / 2, y: dotY - 5)
+                Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: 2, height: max(0, bottom - top))
+                    .offset(x: (ListRail.gutter - 2) / 2, y: top)
+                RoundedRectangle(cornerRadius: ListRail.barWidth / 2).fill(color).frame(width: ListRail.barWidth, height: max(0, proxy.size.height - 2 * inset))
+                    .offset(x: (ListRail.gutter - ListRail.barWidth) / 2, y: inset)
             }
         }
         .frame(width: ListRail.gutter)
@@ -381,7 +386,7 @@ private struct ListBox<Lines: View>: View {
             .contentShape(Rectangle())
             .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
             if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, 32 + Theme.Space.s)
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, 32 + Theme.Space.s).environment(\.railColor, color)
             }
         }
         .padding(.vertical, Theme.Space.m)
@@ -451,6 +456,7 @@ private struct DailyCard: View {
 
 /// One transaction: its category on a tile, what and when, the amount; money coming back is blue with a plus.
 private struct DayListTransactionLine: View {
+    @Environment(\.railColor) private var railColor
     let title: String
     let detail: String
     let amountText: String
@@ -487,8 +493,8 @@ private struct DayListTransactionLine: View {
         .listTap(onTap)
         // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
         .overlay(alignment: .leading) {
-            Circle().fill(Theme.textTertiary.opacity(0.6)).frame(width: 6, height: 6)
-                .offset(x: -(ListRail.gutter + Theme.Space.s + 32 + Theme.Space.s - ListRail.gutter / 2) - 3)
+            Circle().fill(Color(.systemBackground)).frame(width: 10, height: 10).overlay(Circle().stroke(railColor, lineWidth: 2.5))
+                .offset(x: -(ListRail.gutter + Theme.Space.s + 32 + Theme.Space.s - ListRail.gutter / 2) - 5)
                 .allowsHitTesting(false)
         }
     }
