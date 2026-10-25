@@ -336,6 +336,7 @@ private struct ListBox<Lines: View>: View {
     let totalText: String?
     let color: Color
     let symbol: String
+    var quiet = false
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
@@ -370,11 +371,11 @@ private struct ListBox<Lines: View>: View {
     private var content: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .center, spacing: Theme.Space.s) {
-                Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(color)
-                    .frame(width: 32, height: 32).background(color.opacity(0.16), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .accessibilityHidden(true)
-                Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1).minimumScaleFactor(0.75)
+                // The bar carries the colour, so there is no icon here: the name, and the time under it.
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    Text(title).font(quiet ? Theme.Typo.label : Theme.Typo.rowTitle).foregroundStyle(quiet ? Theme.textSecondary : Theme.textPrimary).lineLimit(1)
+                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1).minimumScaleFactor(0.75)
+                }
                 Spacer(minLength: Theme.Space.s)
                 if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
                 if hasLines {
@@ -386,7 +387,7 @@ private struct ListBox<Lines: View>: View {
             .contentShape(Rectangle())
             .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
             if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, 32 + Theme.Space.s).environment(\.railColor, color)
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, Theme.Space.xs).environment(\.railColor, color)
             }
         }
         .padding(.vertical, Theme.Space.m)
@@ -440,7 +441,7 @@ private struct DailyCard: View {
         return ListBox(
             rail: rail, title: "일상",
             timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
-            totalText: total, color: Theme.textSecondary, symbol: "sun.max", hasLines: true
+            totalText: total, color: Theme.textTertiary, symbol: "sun.max", quiet: true, hasLines: true
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
@@ -479,22 +480,21 @@ private struct DayListTransactionLine: View {
 
     var body: some View {
         HStack(spacing: Theme.Space.m) {
-            IconTile(
-                systemName: CategoryIcon.symbol(for: category) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"),
-                tint: isRefund ? Theme.accent : Theme.textSecondary, size: 36
-            )
+            Image(systemName: CategoryIcon.symbol(for: category) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"))
+                .font(.system(size: 14, weight: .medium)).foregroundStyle(isRefund ? Theme.accent : Theme.textTertiary).frame(width: 20)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(title).font(Theme.Typo.label).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
             Spacer(minLength: Theme.Space.s)
-            Text((isRefund ? "+" : "") + amountText).font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
+            Text((isRefund ? "+" : "") + amountText).font(.system(.subheadline, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
         }
         .listTap(onTap)
         // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
         .overlay(alignment: .leading) {
             Circle().fill(Color(.systemBackground)).frame(width: 10, height: 10).overlay(Circle().stroke(railColor, lineWidth: 2.5))
-                .offset(x: -(ListRail.gutter + Theme.Space.s + 32 + Theme.Space.s - ListRail.gutter / 2) - 5)
+                .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + Theme.Space.xs) - 5)
                 .allowsHitTesting(false)
         }
     }
