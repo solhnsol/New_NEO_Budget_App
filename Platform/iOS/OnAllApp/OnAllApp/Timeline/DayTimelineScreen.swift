@@ -299,6 +299,7 @@ private struct DayHeader: View {
         HStack(spacing: 12) {
             // Only the month: the days themselves are named once, over their columns.
             Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
             Spacer()
             Button { goTo(model.today) } label: {
                 Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)

@@ -7,7 +7,7 @@ import SwiftUI
 /// same `DayTimeline` as the grid.
 ///
 /// The day at the top of the screen is the selected day: scrolling moves `AppModel.selectedDay` (the header and the week strip follow, and a tick is felt
-/// when a new day comes onto the screen, with a slight catch if the list is coasting), and picking a day elsewhere scrolls the list to it. The days sit in one lazy column over a fixed range, so scrolling up
+/// when a new day comes onto the screen; the scroll itself is never held back), and picking a day elsewhere scrolls the list to it. The days sit in one lazy column over a fixed range, so scrolling up
 /// never moves what is on screen; each day is read when it comes near (`readAhead` days either side of the top) and kept only while it stays near.
 struct DayListView: View {
     let model: AppModel
@@ -27,14 +27,8 @@ struct DayListView: View {
     static let animatedJump = 10
 
     private static let space = "dayList"
-    /// How hard the list holds back when a new day's line comes onto the screen while it coasts: the deceleration rate it drops to for `snagSeconds`
-    /// (the normal rate is 0.998; each 0.001 lower is roughly a tenth more speed lost per second at that rate).
-    static let snagRate: CGFloat = 0.9975
-    static let snagSeconds = 0.05
-    /// While the finger drags, the list holds at a day's line: it follows the finger only this fraction of the way, and lets go (to the finger's
-    /// position) once the finger has pulled `releasePull` points past the line.
-    static let holdGive: CGFloat = 0.2
-    static let releasePull: CGFloat = 60
+    /// The least time between two ticks, so a fast scroll past many days does not buzz.
+    static let tickInterval: TimeInterval = 0.08
 
     /// The day the column was built around. It is kept for the life of the view: the parent builds this struct again on every change of the selected
     /// day, and a centre that followed it would slide the whole range of days under the scroll position by a day at a time.
@@ -46,6 +40,7 @@ struct DayListView: View {
     @State private var readingEpoch: Int?
     /// The last day whose line was on the screen at the bottom, to see a new one come in.
     @State private var lastBottom: Int?
+    @State private var lastTick = Date.distantPast
     @State private var scrollView = ScrollViewBox()
     /// The day a programmatic scroll is heading for: scroll positions reported on the way there are not the reader's.
     @State private var headingFor: Int?
@@ -131,12 +126,9 @@ struct DayListView: View {
         // moves down: the day at the top changes to the one before). A day leaving the screen is not felt.
         let enteredBelow = lastBottom.map { bottom > $0 } ?? false
         let enteredAbove = readingEpoch.map { top < $0 } ?? false
-        if enteredBelow || enteredAbove {
+        if (enteredBelow || enteredAbove), Date().timeIntervalSince(lastTick) >= Self.tickInterval {
+            lastTick = Date()
             Haptics.snap()
-            scrollView.snag(rate: Self.snagRate, seconds: Self.snagSeconds)
-        }
-        if let old = readingEpoch, old != top, let boundary = now[top > old ? top : old] {
-            scrollView.hold(dir: top > old ? 1 : -1, lineGap: boundary - line, give: Self.holdGive, release: Self.releasePull)
         }
         scrolled(to: top)
     }
@@ -498,13 +490,9 @@ private struct DayTopKey: PreferenceKey {
     static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) { value.merge(nextValue()) { $1 } }
 }
 
-/// The `UIScrollView` under the SwiftUI list, found so it can be held back for a moment as it coasts past a day's line.
+/// The `UIScrollView` under the SwiftUI list, found so a day can be brought exactly to the line.
 @MainActor private final class ScrollViewBox: NSObject {
-    weak var view: UIScrollView? { didSet { if view !== oldValue { observe() } } }
-    private var releasing: Task<Void, Never>?
-    private var normalRate: UIScrollView.DecelerationRate?
-    private var observation: NSKeyValueObservation?
-    private var writing = false
+    weak var view: UIScrollView?
     /// Where each day's top last was reported, in the list's own space, and where the visible part of the list starts (under the bar).
     var jump: ((Int, Bool) -> Void)?
     var tops: [Int: CGFloat] = [:]
@@ -519,60 +507,6 @@ private struct DayTopKey: PreferenceKey {
         guard !view.isTracking, !view.isDecelerating else { return false }
         view.contentOffset.y += y - line
         return false
-    }
-
-    /// A day's line held under the finger: where the offset is held, which way the list was moving, and where the finger and the offset were when it was caught.
-    private struct Hold {
-        let heldY: CGFloat, dir: CGFloat, fingerY: CGFloat, offsetY: CGFloat, give: CGFloat, release: CGFloat
-    }
-    private var holding: Hold?
-
-    /// The finger lifting ends a hold: a hold left over would be released against a finger that is no longer there.
-    @objc private func panChanged(_ pan: UIPanGestureRecognizer) {
-        if pan.state == .ended || pan.state == .cancelled || pan.state == .failed { holding = nil }
-    }
-
-    private func observe() {
-        view?.panGestureRecognizer.addTarget(self, action: #selector(panChanged(_:)))
-        observation = view?.observe(\.contentOffset) { [weak self] _, _ in
-            MainActor.assumeIsolated { self?.offsetChanged() }
-        }
-    }
-
-    /// While the finger drags past a day's line, the list stays on the line and gives only a little, until the finger has pulled hard enough: then it lets go
-    /// and lands where the finger is.
-    func hold(dir: CGFloat, lineGap: CGFloat, give: CGFloat, release: CGFloat) {
-        guard let view, view.isTracking, holding == nil, abs(lineGap) < 120 else { return }
-        let y = view.contentOffset.y
-        holding = Hold(heldY: y + lineGap, dir: dir, fingerY: view.panGestureRecognizer.location(in: nil).y, offsetY: y, give: give, release: release)
-    }
-
-    private func offsetChanged() {
-        guard !writing, let view, let hold = holding else { return }
-        guard view.isTracking else { holding = nil; return }
-        let natural = hold.offsetY - (view.panGestureRecognizer.location(in: nil).y - hold.fingerY)
-        let pull = hold.dir * (natural - hold.heldY)
-        writing = true
-        defer { writing = false }
-        if pull > 0 && pull < hold.release {
-            view.contentOffset.y = hold.heldY + hold.dir * pull * hold.give
-        } else {
-            holding = nil
-            view.contentOffset.y = natural
-        }
-    }
-
-    func snag(rate: CGFloat, seconds: Double) {
-        guard let view, view.isDecelerating, !view.isTracking else { return }
-        if normalRate == nil { normalRate = view.decelerationRate }
-        view.decelerationRate = UIScrollView.DecelerationRate(rawValue: rate)
-        releasing?.cancel()
-        releasing = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, let self else { return }
-            self.view?.decelerationRate = self.normalRate ?? .normal
-            self.normalRate = nil
-        }
     }
 }
 
