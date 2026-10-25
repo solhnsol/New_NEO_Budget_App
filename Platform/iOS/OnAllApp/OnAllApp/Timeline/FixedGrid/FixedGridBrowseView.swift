@@ -586,7 +586,15 @@ struct FixedGridBrowseView: View {
                     EventTitleLayer(
                         block: item.block, frame: item.frame, place: item.title, columnRight: axis.gutterWidth + axis.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
-                        maxTitleWidth: item.titleMaxWidth, startFits: item.startTimeFits,
+                        maxTitleWidth: {
+                            // A card in front that starts beside this title would pass its bar through the text: the title stops short of it.
+                            guard CardStyle.current.isApple else { return item.titleMaxWidth }
+                            let row = CGRect(x: item.frame.minX, y: item.frame.minY, width: item.frame.width, height: 17)
+                            let nearest = events[(index + 1)...].filter { $0.drawnFrame.minX > item.frame.minX + 4 && $0.drawnFrame.intersects(row) }.map { $0.drawnFrame.minX }.min()
+                            guard let nearest else { return item.titleMaxWidth }
+                            let room = max(24, nearest - item.frame.minX - CardStyle.textInset - 6)
+                            return min(item.titleMaxWidth ?? room, room)
+                        }(), startFits: item.startTimeFits,
                         startIsCovered: coveringFrames.contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) },
                         rangeIsCovered: {
                             // The time range under the title is written above every card, so it gives way to a card in front of this one (drawn later) and to a transaction's chip.
