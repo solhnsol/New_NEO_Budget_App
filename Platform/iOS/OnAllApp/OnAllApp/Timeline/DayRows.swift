@@ -226,11 +226,9 @@ private struct ListBox<Lines: View>: View {
             .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
             .overlay(alignment: .leading) {
                 Circle().fill(Theme.textTertiary.opacity(0.8)).frame(width: 7, height: 7)
-                    .offset(x: -(ListRail.gutter / 2 + Theme.Space.s) - 3.5)
+                    .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 3.5)
                     .allowsHitTesting(false)
             }
-            // Level with the names of the events, not set in with the transactions.
-            .padding(.leading, -ListRail.indent)
             .contentShape(Rectangle())
             .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
             if expanded { lines() }
