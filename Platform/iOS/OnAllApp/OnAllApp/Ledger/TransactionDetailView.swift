@@ -40,21 +40,14 @@ struct TransactionDetailView: View {
                 }
             }
             .onAllCardRow()
-            if let memo = entry.override?.memo, !memo.isEmpty || !(entry.override?.tags ?? []).isEmpty {
+            if !(entry.override?.memo ?? "").isEmpty || !entry.tags.isEmpty {
                 Section {
-                    if !memo.isEmpty { Text(memo).foregroundStyle(Theme.textPrimary) }
-                    if let tags = entry.override?.tags, !tags.isEmpty {
-                        Text(tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
+                    if let memo = entry.override?.memo, !memo.isEmpty { Text(memo).foregroundStyle(Theme.textPrimary) }
+                    if !entry.tags.isEmpty {
+                        Text(entry.tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
                     }
                 } header: {
-                    Text("메모·태그")
-                }
-                .onAllCardRow()
-            } else if let tags = entry.override?.tags, !tags.isEmpty {
-                Section {
-                    Text(tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
-                } header: {
-                    Text("태그")
+                    Text((entry.override?.memo ?? "").isEmpty ? "태그" : "메모·태그")
                 }
                 .onAllCardRow()
             }

@@ -38,6 +38,10 @@ struct LedgerListEntry: Identifiable, Equatable {
     var offsets: [Offset] = []
     /// What the user changed for display (`TransactionOverride`); the title is already in `transaction`.
     var override: TransactionOverride? = nil
+    /// What the user's rules made of the original name; the user's own edit wins over it field by field.
+    var rule: RuleOutcome? = nil
+    /// The name the ledger has, before any rule or edit.
+    var originalTitle: String? = nil
     var id: LedgerEntryID { transaction.id }
 
     /// What the purchase cost the user after what came back; `nil` when nothing did.
@@ -51,10 +55,23 @@ struct LedgerListEntry: Identifiable, Equatable {
 
     /// The category every portion agrees on; `nil` when there are none or they differ (as on the timeline).
     var categoryID: CanonicalCategoryID? {
-        if let chosen = override?.category { return chosen }
+        if let chosen = override?.category ?? rule?.category { return chosen }
         let categories = Set(portions.map(\.categoryID))
         guard categories.count == 1 else { return nil }
         return categories.first ?? nil
+    }
+
+    /// The category without the user's own edit: what the rules and the allocations say.
+    var categoryWithoutEdit: CanonicalCategoryID? {
+        var plain = self
+        plain.override = nil
+        return plain.categoryID
+    }
+
+    /// Tags from the rules, then the user's own, without repeats.
+    var tags: [String] {
+        var seen: Set<String> = []
+        return ((rule?.tags ?? []) + (override?.tags ?? [])).filter { seen.insert($0).inserted }
     }
 
     /// The titles of the activities it was split into, in allocation order, without repeats.
@@ -87,17 +104,21 @@ struct LedgerDaySection: Identifiable, Equatable {
 enum LedgerList {
     static func sections(
         _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:],
-        overrides: [LedgerEntryID: TransactionOverride] = [:]
+        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init()
     ) -> [LedgerDaySection] {
-        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id]) }, life: life, refundOf: refundOf)
+        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules) }, life: life, refundOf: refundOf)
         let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
         }
     }
 
-    static func entry(_ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil) -> LedgerListEntry {
-        let transaction = renamed(transaction, by: override)
+    static func entry(
+        _ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil, rules: TransactionRuleSet = .init()
+    ) -> LedgerListEntry {
+        let originalTitle = transaction.title
+        let rule = rules.outcome(forOriginalTitle: originalTitle)
+        let transaction = renamed(transaction, to: override?.title ?? rule?.title)
         let allocations = life.allocationSet(for: transaction.id)?.allocations ?? []
         let portions = allocations.map { allocation in
             let activity = allocation.activityID.flatMap { life.activities[$0] }
@@ -111,12 +132,12 @@ enum LedgerList {
                 activityTime: activity?.time
             )
         }
-        return LedgerListEntry(transaction: transaction, portions: portions, override: override)
+        return LedgerListEntry(transaction: transaction, portions: portions, override: override, rule: rule, originalTitle: originalTitle)
     }
 
-    /// The transaction with the name the user gave it; everything else about it is the ledger's.
-    private static func renamed(_ transaction: TransactionMarker, by override: TransactionOverride?) -> TransactionMarker {
-        guard let title = override?.title else { return transaction }
+    /// The transaction with the name the user or a rule gave it; everything else about it is the ledger's.
+    private static func renamed(_ transaction: TransactionMarker, to title: String?) -> TransactionMarker {
+        guard let title else { return transaction }
         return TransactionMarker(
             id: transaction.id, occurredAtUnixMilliseconds: transaction.occurredAtUnixMilliseconds, amount: transaction.amount,
             flow: transaction.flow, title: title, timePrecision: transaction.timePrecision

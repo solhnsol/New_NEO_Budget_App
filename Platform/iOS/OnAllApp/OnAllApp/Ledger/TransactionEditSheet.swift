@@ -11,6 +11,7 @@ struct TransactionEditSheet: View {
     @State private var category: CanonicalCategoryID?
     @State private var memo: String
     @State private var tags: String
+    @State private var applyToSameName = false
 
     init(entry: LedgerListEntry, model: AppModel) {
         self.entry = entry
@@ -42,6 +43,13 @@ struct TransactionEditSheet: View {
                 } footer: {
                     Text("금액과 카드·계좌 내역은 바뀌지 않아요. 이 화면에서 보이는 모습만 바뀌어요.")
                 }
+                if canMakeRule {
+                    Section {
+                        Toggle("같은 이름 거래에도 적용", isOn: $applyToSameName)
+                    } footer: {
+                        Text("켜면 '\(entry.originalTitle ?? "")'(이)라는 이름의 지난 거래와 앞으로 들어올 거래에 이 이름·분류를 자동으로 적용해요. 설정의 '자동 분류 규칙'에서 고치거나 지울 수 있어요.")
+                    }
+                }
                 if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) {
                     Section { Button("이 내역 지우기", role: .destructive) { model.removeManual(entry.id); dismiss() } }
                 } else if entry.override != nil {
@@ -57,16 +65,33 @@ struct TransactionEditSheet: View {
         }
     }
 
+    /// A rule keys on the name the ledger has, so typed-in transactions (which have no bank name) cannot make one.
+    private var canMakeRule: Bool {
+        !entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) && !(entry.originalTitle ?? "").isEmpty
+    }
+
     private func save() {
-        let original = entry.transaction.title
+        let shown = entry.transaction.title
         let name = TransactionOverride.clean(title)
         let override = TransactionOverride(
-            title: name == original ? entry.override?.title : name,
-            category: category,
+            title: name == shown ? entry.override?.title : name,
+            // A category that is just what the rules or allocations already say is not an edit of the user's.
+            category: category == entry.categoryWithoutEdit ? nil : category,
             memo: TransactionOverride.clean(memo),
             tags: TransactionOverride.parseTags(tags)
         )
-        model.edit(entry.id, to: override)
+        model.edit(entry.id, to: override, originalTitle: entry.originalTitle)
+        if applyToSameName, canMakeRule, let original = entry.originalTitle {
+            var actions: [TransactionRule.Action] = []
+            if let name, name != original { actions.append(.setTitle(name)) }
+            if let category { actions.append(.setCategory(category)) }
+            if !override.tags.isEmpty { actions.append(.addTags(override.tags)) }
+            if !actions.isEmpty {
+                model.saveRule(.init(
+                    id: UUID().uuidString, label: nil, mode: .exact, pattern: original, actions: actions, createdAtUnixMilliseconds: model.nowMilliseconds
+                ))
+            }
+        }
         dismiss()
     }
 }

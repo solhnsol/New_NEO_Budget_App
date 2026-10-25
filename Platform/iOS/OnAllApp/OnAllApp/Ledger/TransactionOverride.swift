@@ -32,17 +32,35 @@ struct TransactionOverrideStore: Codable, Equatable {
     var byTransaction: [String: TransactionOverride] = [:]
     /// Transactions the user typed in because no notification came for them. They sit beside the ledger, never in it.
     var manual: [ManualTransaction] = []
+    /// Name/category rules (`TransactionRule`), applied to every transaction whose original name they match.
+    var rules: [TransactionRule] = []
+    /// Every edit the user saved, newest last; data only, it changes nothing on screen.
+    var edits: [TransactionEditRecord] = []
 
-    init(byTransaction: [String: TransactionOverride] = [:], manual: [ManualTransaction] = []) {
+    init(byTransaction: [String: TransactionOverride] = [:], manual: [ManualTransaction] = [], rules: [TransactionRule] = [], edits: [TransactionEditRecord] = []) {
         self.byTransaction = byTransaction
         self.manual = manual
+        self.rules = rules
+        self.edits = edits
     }
 
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         byTransaction = try values.decodeIfPresent([String: TransactionOverride].self, forKey: .byTransaction) ?? [:]
         manual = try values.decodeIfPresent([ManualTransaction].self, forKey: .manual) ?? []
+        rules = try values.decodeIfPresent([TransactionRule].self, forKey: .rules) ?? []
+        edits = try values.decodeIfPresent([TransactionEditRecord].self, forKey: .edits) ?? []
     }
+
+    static let editLogLimit = 5_000
+
+    /// Adds an edit to the log, dropping the oldest beyond the limit.
+    mutating func record(_ edit: TransactionEditRecord) {
+        edits.append(edit)
+        if edits.count > Self.editLogLimit { edits.removeFirst(edits.count - Self.editLogLimit) }
+    }
+
+    var ruleSet: TransactionRuleSet { TransactionRuleSet(rules: rules) }
 
     /// The typed-in transactions as the list reads them.
     var manualMarkers: [TransactionMarker] {
