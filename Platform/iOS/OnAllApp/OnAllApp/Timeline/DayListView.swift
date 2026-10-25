@@ -228,13 +228,18 @@ struct DaySection: View {
                 if plan.items.isEmpty && timeline.allDay.isEmpty {
                     Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.xs)
                 }
-                ForEach(plan.items) { item in
-                    switch item {
-                    case .allDay: EmptyView()
-                    case let .event(block):
-                        EventCard(block: block, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
-                    case let .daily(group):
-                        DailyCard(group: group, timeline: timeline, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
+                // The boxes hang on one vertical line like points on a timeline; it is only how they are drawn, they are still a list.
+                let boxes = plan.items.filter { if case .allDay = $0 { false } else { true } }
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(Array(boxes.enumerated()), id: \.element.id) { index, item in
+                        let rail = ListRail(isFirst: index == 0, isLast: index == boxes.count - 1)
+                        switch item {
+                        case .allDay: EmptyView()
+                        case let .event(block):
+                            EventCard(block: block, rail: rail, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
+                        case let .daily(group):
+                            DailyCard(group: group, rail: rail, timeline: timeline, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
+                        }
                     }
                 }
             } else {
@@ -311,7 +316,16 @@ private struct AllDayCount: View {
 
 /// A box of the list: a bar in its colour, a small header that is only a name and a time, and under it the transactions, set in from the header so
 /// the two read as levels. A box with no transactions is one thin line.
+/// Where a box sits on the day's vertical line: the line starts at the first box's dot and ends at the last one's.
+private struct ListRail {
+    let isFirst: Bool
+    let isLast: Bool
+    static let gutter: CGFloat = 24
+    static let lineWidth: CGFloat = 2
+}
+
 private struct ListBox<Lines: View>: View {
+    let rail: ListRail
     let title: String
     let timeText: String
     let totalText: String?
@@ -324,6 +338,31 @@ private struct ListBox<Lines: View>: View {
     @State private var expanded = false
 
     var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s) {
+            rail_
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The line runs the whole height of the box (so it grows when the box opens); the dot sits level with the header row.
+    private var rail_: some View {
+        let dotY = Theme.Space.m + 16
+        return GeometryReader { proxy in
+            let top = rail.isFirst ? dotY : 0
+            let bottom = rail.isLast ? dotY : proxy.size.height
+            ZStack(alignment: .topLeading) {
+                Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: ListRail.lineWidth, height: max(0, bottom - top))
+                    .offset(x: (ListRail.gutter - ListRail.lineWidth) / 2, y: top)
+                Circle().fill(color).frame(width: 10, height: 10).overlay(Circle().stroke(Color(.systemBackground), lineWidth: 2))
+                    .offset(x: (ListRail.gutter - 10) / 2, y: dotY - 5)
+            }
+        }
+        .frame(width: ListRail.gutter)
+        .accessibilityHidden(true)
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .center, spacing: Theme.Space.s) {
                 Image(systemName: symbol).font(.system(size: 14, weight: .semibold)).foregroundStyle(color)
@@ -347,13 +386,13 @@ private struct ListBox<Lines: View>: View {
         }
         .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 
 /// An event: its name and time, and the transactions that went to it inside.
 private struct EventCard: View {
     let block: EventBlock
+    let rail: ListRail
     let model: AppModel
     let zone: DisplayTimeZone
     let onSelect: () -> Void
@@ -361,7 +400,7 @@ private struct EventCard: View {
 
     var body: some View {
         ListBox(
-            title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
+            rail: rail, title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
             totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
             color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: model.calendarSymbol(id: block.eventKey.calendarID, title: block.calendarTitle), hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
@@ -382,6 +421,7 @@ private struct EventCard: View {
 /// The stretch of ordinary life between events, as an event named 일상 that holds the transactions no event does.
 private struct DailyCard: View {
     let group: DayListPlan.DailyGroup
+    let rail: ListRail
     let timeline: DayTimeline
     let model: AppModel
     let zone: DisplayTimeZone
@@ -393,7 +433,7 @@ private struct DailyCard: View {
         let net = group.markers.filter { $0.amount.currency == currency }.reduce(Int64(0)) { $0 + ($1.flow == .refund ? -$1.amount.minorUnits : $1.amount.minorUnits) }
         let total: String? = Formatting.money(net, currency: currency)
         return ListBox(
-            title: "일상",
+            rail: rail, title: "일상",
             timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
             totalText: total, color: Theme.textSecondary, symbol: "sun.max", hasLines: true
         ) {
@@ -445,6 +485,12 @@ private struct DayListTransactionLine: View {
             Text((isRefund ? "+" : "") + amountText).font(Theme.Typo.amount).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
         }
         .listTap(onTap)
+        // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
+        .overlay(alignment: .leading) {
+            Circle().fill(Theme.textTertiary.opacity(0.6)).frame(width: 6, height: 6)
+                .offset(x: -(ListRail.gutter + Theme.Space.s + 32 + Theme.Space.s - ListRail.gutter / 2) - 3)
+                .allowsHitTesting(false)
+        }
     }
 }
 
