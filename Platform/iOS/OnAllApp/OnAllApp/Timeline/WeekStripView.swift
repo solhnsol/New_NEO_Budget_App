@@ -127,7 +127,11 @@ struct WeekStripView: View {
                                 try? await Task.sleep(for: .milliseconds(600))
                                 swipedWeek = false
                             }
-                            onPage(value.translation.width < 0 ? 1 : -1)
+                            // The strip does not wait for the day to move: it pages to the next week as the finger lets go (the screen may be busy
+                            // moving the days below), and `move` then finds it already there. Until then it would sit half-way with no circle.
+                            let direction = value.translation.width < 0 ? 1 : -1
+                            viewOffset = Double(pageStart + 7 * direction)
+                            onPage(direction)
                         } else {
                             viewOffset = Double(pageStart)
                         }
@@ -279,6 +283,9 @@ struct WeekStripView: View {
                     Text("\(day.day)")
                         .font(.callout.monospacedDigit().weight(role == .none ? .regular : .bold))
                         .foregroundStyle(numberColor(role, day))
+                        // The number changes colour in step with the circle growing in or fading out under it; switched at once, it would be
+                        // white on nothing (or dark on the circle still leaving) for the length of that fade.
+                        .animation(.easeOut(duration: 0.1), value: role)
                         .frame(maxWidth: .infinity, minHeight: Self.numberRow)
                         .contentShape(Rectangle())
                 }
