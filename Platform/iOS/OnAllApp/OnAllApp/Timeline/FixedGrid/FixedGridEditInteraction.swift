@@ -34,10 +34,21 @@ struct FixedGridEditInteraction: Equatable {
         /// A new event, not in the calendar yet (`FixedGridCreatePlacement`): created on confirm, nothing written on cancel. Its block and key stand for it
         /// (no calendar's event has them).
         let isNew: Bool
+        /// The day the event's block is on in the calendar. `day` is where the event is now: the same until it is lifted and put down on another day.
+        let blockDay: LocalDate
 
-        init(day: LocalDate, blockID: BlockID, eventKey: CalendarEventKey, startMinute: Int, endMinute: Int, isNew: Bool = false) {
+        init(day: LocalDate, blockID: BlockID, eventKey: CalendarEventKey, startMinute: Int, endMinute: Int, isNew: Bool = false, blockDay: LocalDate? = nil) {
             self.day = day; self.blockID = blockID; self.eventKey = eventKey; self.startMinute = startMinute; self.endMinute = endMinute; self.isNew = isNew
+            self.blockDay = blockDay ?? day
         }
+
+        /// The same event put down on `day` at these elapsed minutes.
+        func moved(to day: LocalDate, startMinute: Int, endMinute: Int) -> Target {
+            Target(day: day, blockID: blockID, eventKey: eventKey, startMinute: startMinute, endMinute: endMinute, isNew: isNew, blockDay: blockDay)
+        }
+
+        /// Its card is not in any day's plan where it is now (a new event, or one put down on another day), so it is drawn from the draft alone.
+        var isDrawnFromDraft: Bool { isNew || day != blockDay }
 
         /// A new event put down on `day` at these elapsed minutes.
         static func new(day: LocalDate, startMinute: Int, endMinute: Int) -> Target {
@@ -138,6 +149,8 @@ struct FixedGridEditInteraction: Equatable {
         case tapOutside
         /// Another event of the grid tapped while editing (the same event's body lets a chosen handle go).
         case tapEvent(Target)
+        /// The event was lifted and put down: it is `Target` now (another time, maybe another day). The draft moves with it.
+        case moved(Target)
         case selectedDayChanged(LocalDate)
         case cancel
         case confirm
@@ -160,6 +173,8 @@ struct FixedGridEditInteraction: Equatable {
         case rename(session: Int, Bool)
         case commit(session: Int)
         case discard(session: Int)
+        /// The event was put down at the target's day and time.
+        case moved(session: Int, Target)
         case askExit(session: Int, ExitReason)
         case ended(session: Int, EndReason)
 
@@ -194,6 +209,7 @@ struct FixedGridEditInteraction: Equatable {
             return endRename(&session)
         case .tapOutside: return tapOutside()
         case let .tapEvent(target): return tapEvent(target)
+        case let .moved(target): return moved(target)
         case .selectedDayChanged: return dayChanged()
         case .cancel: return cancel()
         case .confirm: return confirm()
@@ -293,6 +309,17 @@ struct FixedGridEditInteraction: Equatable {
         session.renaming = false
         self.session = session
         return [.retarget(session: session.id, target), .began(session: session.id, target)]
+    }
+
+    private mutating func moved(_ target: Target) -> [Command] {
+        guard var session = active, target.eventKey == session.target.eventKey else { return [] }
+        let renamed: [Command] = session.renaming ? [.rename(session: session.id, false)] : []
+        session.renaming = false
+        session.target = target
+        session.handle = .none
+        session.lastEdited = .start
+        self.session = session
+        return renamed + [.moved(session: session.id, target), .handle(session: session.id, .none)]
     }
 
     /// Leaves the session without a confirm or a cancel.

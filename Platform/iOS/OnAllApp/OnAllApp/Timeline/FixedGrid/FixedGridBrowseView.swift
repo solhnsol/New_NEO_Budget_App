@@ -51,6 +51,8 @@ struct FixedGridBrowseView: View {
     /// outline where it would be put down keeps to the 15-minute lines.
     @State private var carriedFinger: CGPoint?
     @State private var carriedGrabX: CGFloat = 0
+    /// What `placing` carries is the edited event itself (long pressed, in browse or while editing), not a new one: put down, the draft moves to it.
+    @State private var lifted = false
     /// The edit session (`FixedGridEditInteraction`; a long press on an editable event opens one). The screen sends it the grid's touches and the selected
     /// day, and carries out its grid commands (freeze, retarget, unfreeze); the rest go to the parts that edit (`editor`).
     @State private var edit = FixedGridEditRouter()
@@ -213,7 +215,7 @@ struct FixedGridBrowseView: View {
         }
         .onChange(of: model.selectedDay) { _, _ in selectionChangedOutside() }
         .onChange(of: model.dataRevision) { _, _ in
-            if let editor, let day = editor.target?.day { editor.dataChanged(generation: model.dataGeneration, timelines: [model.cachedTimeline(for: day)].compactMap { $0 }) }
+            if let editor, let day = editor.target?.blockDay { editor.dataChanged(generation: model.dataGeneration, timelines: [model.cachedTimeline(for: day)].compactMap { $0 }) }
         }
         .onChange(of: BubbleKey(editor: editor)) { _, _ in followBubble() }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { keyboardChanged($0) }
@@ -563,7 +565,7 @@ struct FixedGridBrowseView: View {
         // Only what reaches the built window (a viewport beyond the screen each side) is made into views; the plan above is for all of it.
         func reaches(_ rect: CGRect) -> Bool { rect.maxY >= window.lowerBound && rect.minY <= window.upperBound }
         // The event being edited, once its time differs: drawn faint where it is in the calendar; the draft card shows where it is going.
-        let ghostKey = editedOriginal.flatMap { $0.day == timeline.day ? $0.eventKey : nil }
+        let ghostKey = editedOriginal.flatMap { $0.blockDay == timeline.day ? $0.eventKey : nil }
         let ghosts = Set(plan.events.filter { $0.block.eventKey == ghostKey }.map(\.blendItem))
         let base = opacity
         let opacity: (FixedGridColumns.Item) -> Double = { ghosts.contains($0) ? base($0) * 0.3 : base($0) }
@@ -644,16 +646,15 @@ struct FixedGridBrowseView: View {
 
     /// The mode the grid is in now; while editing, the chosen card where it is drawn now (it follows the zoom; the days do not move in a session). A session
     /// whose card cannot be placed now (its block rebuilt by a reload and gone) is still editing, without handles: the days stay where the session froze them.
-    private var gestureMode: FixedGridGestures.Mode { edit.state.gestureMode(place: place) }
+    private var gestureMode: FixedGridGestures.Mode { lifted ? .lifting : edit.state.gestureMode(place: place) }
 
     private func place(_ target: FixedGridEditInteraction.Target) -> FixedGridGestures.EditTarget? {
         let width = room.width, viewport = pinch.viewportHeight
-        guard viewport > 1, width > Self.gutter, let timeline = model.cachedTimeline(for: target.day) else { return nil }
+        guard viewport > 1, width > Self.gutter else { return nil }
         let geometry = geometry(width: width)
         let frame = frame(zoom: pinch.zoom, viewport: viewport, width: width)
-        guard let column = frame.column(target.epoch) else { return nil }
-        if target.isNew {
-            // A new event is in no plan: its card takes the whole column, where the draft has it.
+        if target.isDrawnFromDraft {
+            // A new event, or one put down on another day, is in no plan there: its card takes the whole column, where the draft has it.
             let axis = planner.axis(for: target.day, partition: frame.shown, zone: zone)
             let segment = editor?.target == target ? editor?.draft?.segment(on: target.day) : nil
             return FixedGridGestures.EditTarget(
@@ -662,6 +663,7 @@ struct FixedGridBrowseView: View {
                 canResizeStart: true, canResizeEnd: true
             )
         }
+        guard let timeline = model.cachedTimeline(for: target.day), let column = frame.column(target.epoch) else { return nil }
         let plan = plan(timeline, column: column, source: column.dominant, frame: frame, layoutWidth: Self.gutter + geometry.dayWidth)
         // By the block, else by the calendar's key (a reload may rebuild the block ids).
         guard let item = plan.events.first(where: { $0.block.id == target.blockID }) ?? plan.events.first(where: { $0.block.eventKey == target.eventKey }) else { return nil }
@@ -680,7 +682,7 @@ struct FixedGridBrowseView: View {
 
     /// The event being edited once its time differs from the calendar's (its card is drawn faint; the draft card is drawn where it is going).
     private var editedOriginal: FixedGridEditInteraction.Target? {
-        guard let editor, editor.isChanged else { return nil }
+        guard let editor, editor.isChanged || lifted else { return nil }
         return editor.target
     }
 
@@ -710,6 +712,7 @@ struct FixedGridBrowseView: View {
             if case let .event(id) = hit, let found = touched(at: point), let target = editTarget(id, in: found) { edit.send(.tapEvent(target)) }
             else { edit.send(.tapOutside) }
         case .endEditing: edit.send(.tapOutside)
+        case .chosenBody: if let target = edit.session?.target { edit.send(.tapEvent(target)) }     // lets a chosen handle go
         }
     }
 
@@ -717,9 +720,10 @@ struct FixedGridBrowseView: View {
         guard phase == .began else { return carry(phase, at: point) }
         switch FixedGridGestures.longPress(start: start, mode: gestureMode) {
         case .none: break
-        case let .details(id):
-            // An event's details (until a long press zooms onto the event and shows them there).
-            if move.phase == .resting, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) { onSelect(.event(block)) }
+        case let .edit(id):
+            pickUpEvent(id, at: point)
+        case .liftChosen:
+            liftChosen(at: point)
         case .notice:
             break
         case .createDraft:
@@ -728,6 +732,34 @@ struct FixedGridBrowseView: View {
         case let .pickUpTransaction(id):
             pickUpTransaction(id, at: point)
         }
+    }
+
+    /// A long press on an event in browse: a session opens on it (its handles, its time wheel, its title) and the event is in the hand at once. One that cannot
+    /// be edited here opens its details instead.
+    private func pickUpEvent(_ id: BlockID, at point: CGPoint) {
+        guard move.phase == .resting, edit.session == nil, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) else { return }
+        guard block.isEditable, FixedGridEditor.refusal(for: block, zone: zone) == nil else { onSelect(.event(block)); return }
+        edit.send(.enter(FixedGridEditInteraction.Target(day: found.timeline.day, block: block)))
+        guard edit.session != nil else { return }
+        lift(day: found.timeline.day, startMinute: block.startMinute, endMinute: block.endMinute, totalMinutes: found.timeline.totalMinutes, at: point)
+    }
+
+    /// A long press on the chosen event while editing: it comes off its place and follows the finger.
+    private func liftChosen(at point: CGPoint) {
+        guard move.phase == .resting, let target = edit.state.editing?.target, edit.session?.committing != true,
+              let segment = editor?.draft?.segment(on: target.day), let timeline = model.cachedTimeline(for: target.day) else { return }
+        lift(day: target.day, startMinute: segment.startMinute, endMinute: segment.endMinute, totalMinutes: timeline.totalMinutes, at: point)
+    }
+
+    /// The edited event in the hand: `placing` follows the finger like a new event's card; put down, the draft moves to where it would land.
+    private func lift(day: LocalDate, startMinute: Int, endMinute: Int, totalMinutes: Int, at point: CGPoint) {
+        let axis = planner.axis(for: day, partition: frame(zoom: pinch.zoom, viewport: pinch.viewportHeight, width: room.width).shown, zone: zone)
+        let placement = FixedGridCreatePlacement(day: day, fingerMinute: startMinute, dayMinutes: totalMinutes, durationMinutes: endMinute - startMinute) { axis.y(minute: $0) - point.y }
+        placing = placement
+        carriedFinger = point
+        carriedGrabX = newCardFrame(day: day, startMinute: placement.startMinute, endMinute: placement.endMinute, axis: axis).minX - point.x
+        lifted = true
+        Haptics.pickUp()
     }
 
     /// A long press on a transaction's line: the transaction comes off the grid and follows the finger; the event card under it is outlined.
@@ -822,11 +854,17 @@ struct FixedGridBrowseView: View {
             guard phase == .ended else { placing = placement; return }
             placing = nil
             carriedFinger = nil
+            if lifted {
+                lifted = false
+                if let target = edit.session?.target { edit.send(.moved(target.moved(to: placement.day, startMinute: placement.startMinute, endMinute: placement.endMinute))) }
+                return
+            }
             edit.send(.enter(placement.target))
             if edit.session?.target.isNew == true { edit.send(.tapTitle) }
         case .cancelled:
             placing = nil
             carriedFinger = nil
+            lifted = false
         }
     }
 
@@ -855,7 +893,7 @@ struct FixedGridBrowseView: View {
             zone: zone,
             generation: { model.dataGeneration },
             block: { target in
-                model.cachedTimeline(for: target.day).flatMap { timeline in
+                model.cachedTimeline(for: target.blockDay).flatMap { timeline in
                     timeline.blocks.first { $0.id == target.blockID } ?? timeline.blocks.first { $0.eventKey == target.eventKey }
                 }
             },
@@ -898,7 +936,7 @@ struct FixedGridBrowseView: View {
         case let .freeze(session, target): freezeGrid(session, target: target)
         case let .retarget(session, target):
             guard let frozen = room.frozen, frozen.session == session else { return }
-            planner.retarget(frozen.freeze, target: model.cachedTimeline(for: target.day)?.blocks.first { $0.id == target.blockID }.map { (target.day, $0) })
+            planner.retarget(frozen.freeze, target: model.cachedTimeline(for: target.blockDay)?.blocks.first { $0.id == target.blockID }.map { (target.blockDay, $0) })
             axisTick &+= 1
         case let .unfreeze(session, request): unfreezeGrid(session, anchor: request)
         default: break
@@ -967,7 +1005,7 @@ struct FixedGridBrowseView: View {
     private func draftColor(_ editor: FixedGridEditor) -> String?? {
         guard let target = editor.target else { return nil }
         if editor.isNew { return .some(model.calendars.first { $0.id == editor.calendarID }?.colorHex) }
-        return model.cachedTimeline(for: target.day)?.blocks.first { $0.eventKey == target.eventKey }.map { $0.calendarColorHex }
+        return model.cachedTimeline(for: target.blockDay)?.blocks.first { $0.eventKey == target.eventKey }.map { $0.calendarColorHex }
     }
 
     /// A new event's card in the grid's coordinates: across its day's column, from its start on the axis drawn now, as tall as its time there but never too
@@ -987,7 +1025,7 @@ struct FixedGridBrowseView: View {
     /// Where an edge of the edited event really is on the axis drawn now (a new event's card may be drawn taller than its time; its handle drags from the
     /// real edge, so the first step does not jump).
     private func edgeY(_ handle: FixedGridEditInteraction.Handle, of target: FixedGridEditInteraction.Target, card: CGRect) -> CGFloat {
-        guard target.isNew, let segment = editor?.draft?.segment(on: target.day) else { return handle == .start ? card.minY : card.maxY }
+        guard target.isDrawnFromDraft, let segment = editor?.draft?.segment(on: target.day) else { return handle == .start ? card.minY : card.maxY }
         let axis = planner.axis(for: target.day, partition: frame(zoom: pinch.zoom, viewport: pinch.viewportHeight, width: room.width).shown, zone: zone)
         return handle == .start ? axis.y(minute: segment.startMinute) : axis.y(endMinute: segment.endMinute)
     }
@@ -1002,12 +1040,13 @@ struct FixedGridBrowseView: View {
             let start = zone.dayBounds(placing.day).start + Int64(placing.startMinute) * 60_000
             let end = start + Int64(placing.durationMinutes) * 60_000
             let calendar = model.calendars.first(where: \.isWritable)
+            let colorHex = lifted ? (editor.flatMap(draftColor) ?? nil) : calendar?.colorHex
             let finger = carriedFinger ?? CGPoint(x: card.minX - carriedGrabX, y: card.minY - placing.grabOffset)
             let carried = CGRect(x: finger.x + carriedGrabX, y: finger.y + placing.grabOffset, width: card.width, height: card.height)
             ZStack(alignment: .topLeading) {
-                DropOutline(colorHex: calendar?.colorHex, frame: card)
+                DropOutline(colorHex: colorHex, frame: card)
                 GutterTimeMark(text: DraftCard.clock(EventSaveTime.date(start), zone: zone), y: card.minY, gutter: Self.gutter, lineTo: card.minX)
-                CarriedCard(colorHex: calendar?.colorHex, frame: carried, time: DraftCard.clock(EventSaveTime.date(start), zone: zone) + " – " + DraftCard.clock(EventSaveTime.date(end), zone: zone))
+                CarriedCard(colorHex: colorHex, title: lifted ? (editor?.shownTitle ?? "") : FixedGridEditor.newTitle, frame: carried, time: DraftCard.clock(EventSaveTime.date(start), zone: zone) + " – " + DraftCard.clock(EventSaveTime.date(end), zone: zone))
             }
             .allowsHitTesting(false)
         }
@@ -1087,6 +1126,7 @@ struct FixedGridBrowseView: View {
         case let .rename(_, on): on ? "rename" : "rename(끝)"
         case .commit: "commit"
         case .discard: "discard"
+        case .moved: "moved"
         case .askExit: "ask"
         case let .ended(_, reason): "ended(\(reason))"
         }
@@ -1109,14 +1149,9 @@ struct FixedGridBrowseView: View {
         }
     }
 
-    /// A choice from "무엇을 선택할까요?". The button runs while the dialog is still going away, and a details sheet asked for in that moment
-    /// is dropped (a transaction chosen there opened nothing). So a sheet is asked for once the dialog is gone; a session opens at once.
+    /// A choice from "무엇을 선택할까요?". The button runs while the dialog is still going away, and a details sheet asked for in that moment is dropped (a
+    /// transaction chosen there opened nothing), so the sheet is asked for once the dialog is gone.
     private func chose(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
-        if case let .event(id) = candidate, let block = timeline.blocks.first(where: { $0.id == id }), block.isEditable,
-           FixedGridEditor.refusal(for: block, zone: zone) == nil {
-            perform(candidate, in: timeline, plan: plan)
-            return
-        }
         guard let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(400))
@@ -1124,14 +1159,8 @@ struct FixedGridBrowseView: View {
         }
     }
 
-    /// An event tapped opens a session on it (its handles, its time wheel, its title to rename) when it can be edited here; one that cannot opens its details.
-    /// Anything else opens its details.
+    /// A tap opens the details of what it touched (an event is edited by a long press, as a transaction is).
     private func perform(_ candidate: DayRenderPlan.Candidate, in timeline: DayTimeline, plan: DayRenderPlan) {
-        if case let .event(id) = candidate, let block = timeline.blocks.first(where: { $0.id == id }), block.isEditable,
-           FixedGridEditor.refusal(for: block, zone: zone) == nil {
-            edit.send(.enter(FixedGridEditInteraction.Target(day: timeline.day, block: block)))
-            return
-        }
         if let selection = FixedGridTouch.selection(for: candidate, in: timeline, plan: plan) { onSelect(selection) }
     }
 
@@ -1332,7 +1361,7 @@ struct FixedGridBrowseView: View {
             if own == selectedEpoch { return }
         }
         guard move.phase != .resting || Double(selectedEpoch) != move.position else { return }
-        if edit.state.editing != nil { edit.send(.selectedDayChanged(model.selectedDay)) }   // a session is on the days it began on: the grid lets go first
+        if edit.state.editing != nil, !lifted { edit.send(.selectedDayChanged(model.selectedDay)) }   // a session is on the days it began on: the grid lets go first
         caughtTarget = nil
         dragStart = nil
         let here = move.position
@@ -1884,6 +1913,7 @@ private struct DropOutline: View {
 /// The new event a long press carries, in the hand: a lifted card of the calendar's colour with its name and the time it would be put down at.
 private struct CarriedCard: View {
     let colorHex: String?
+    let title: String
     let frame: CGRect
     let time: String
 
@@ -1896,7 +1926,7 @@ private struct CarriedCard: View {
             Rectangle().fill(color).frame(width: 3)
             if frame.height >= 18 {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(FixedGridEditor.newTitle).font(.caption.weight(.semibold)).lineLimit(1)
+                    Text(title).font(.caption.weight(.semibold)).lineLimit(1)
                     if frame.height >= 34 { Text(time).font(.caption2.monospacedDigit()).lineLimit(1) }
                 }
                 .foregroundStyle(.primary)
