@@ -224,8 +224,7 @@ private struct ListBox<Lines: View>: View {
                 .frame(minHeight: 28)
                 .overlay(alignment: .leading) {
                     Text("\(gapCount)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 24, height: 24).background(Color(.systemBackground), in: Circle())
-                        .overlay(Circle().stroke(Theme.textTertiary, lineWidth: 2))
+                        .frame(width: 24, height: 30).background(Color(.systemBackground))
                         .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 12)
                 }
                 .contentShape(Rectangle())
