@@ -306,16 +306,20 @@ final class AppModel {
         }
     }
 
-    /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank.
+    /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank. What was read is kept in one go (and only
+    /// what differs), so a screen that shows it is re-drawn once and not once per week.
     func loadMonth(startingAt first: LocalDate) async {
         guard let service else { return }
         let last = first.adding(days: LocalDate.daysInMonth(year: first.year, month: first.month) - 1)
+        var read: [LocalDate: WeekStripDay] = [:]
         var day = first
         while day <= last {
-            if let days = try? await service.weekStrip(containing: day, firstWeekday: 0) { for cell in days { monthCells[cell.day] = cell } }
+            if let days = try? await service.weekStrip(containing: day, firstWeekday: 0) { for cell in days { read[cell.day] = cell } }
             day = day.adding(days: 7)
         }
-        if let days = try? await service.weekStrip(containing: last, firstWeekday: 0) { for cell in days { monthCells[cell.day] = cell } }
+        if let days = try? await service.weekStrip(containing: last, firstWeekday: 0) { for cell in days { read[cell.day] = cell } }
+        let changed = read.filter { monthCells[$0.key] != $0.value }
+        if !changed.isEmpty { monthCells.merge(changed) { _, new in new } }
     }
 
     /// After a move to another day: reads only the required days that are not kept yet (and, for a continuous move, `extra` more each side), the weeks

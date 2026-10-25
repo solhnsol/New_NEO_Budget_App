@@ -24,6 +24,9 @@ struct WeekStripView: View {
     let onSelect: (LocalDate) -> Void
     /// A swipe on the strip itself: -1 for the previous week, +1 for the next.
     var onPage: (Int) -> Void = { _ in }
+    /// How far the month is open under the strip (0 closed, 1 open): its weekday names fold away (the month has its own over all the weeks), a line for
+    /// what was spent opens under each day, and it no longer pages sideways.
+    var unfold: CGFloat = 0
 
     private static let numberRow: CGFloat = 36
     private static let ball: CGFloat = 32
@@ -66,12 +69,17 @@ struct WeekStripView: View {
     var body: some View {
         let probe = BrowseProbe.begin(.weekStripBody)
         defer { BrowseProbe.end(probe) }
-        return VStack(spacing: 2) {
+        return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
                     Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.system(.caption2)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
                 }
             }
+            .frame(height: MonthUnfold.labelRow - 2, alignment: .top)
+            .padding(.bottom, 2)
+            .frame(height: MonthUnfold.labelRow * (1 - unfold), alignment: .top)
+            .clipped()
+            .opacity(1 - unfold)
             GeometryReader { geometry in
                 let cell = geometry.size.width / 7
                 let _ = updateWidth(geometry.size.width)
@@ -99,14 +107,14 @@ struct WeekStripView: View {
                     }
                     .animation(dragging ? nil : .snappy(duration: 0.34), value: viewOffset)
                 }
-                .frame(width: geometry.size.width, height: Self.numberRow + 9, alignment: .topLeading)
+                .frame(width: geometry.size.width, height: Self.numberRow + 9 + MonthUnfold.spendRow * unfold, alignment: .topLeading)
             }
-            .frame(height: Self.numberRow + 9)
+            .frame(height: Self.numberRow + 9 + MonthUnfold.spendRow * unfold)
             .clipped()
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
                     .onChanged { value in
-                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                        guard unfold == 0, abs(value.translation.width) > abs(value.translation.height) else { return }
                         dragging = true
                         tapsBlockedUntil = Date().addingTimeInterval(0.4)
                         // The strip is held and dragged: the neighbouring weeks come into view with the finger.
@@ -139,7 +147,7 @@ struct WeekStripView: View {
             )
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .padding(.bottom, MonthUnfold.stripBottomPadding * (1 - unfold))
         .onAppear { seed() }
         // The day can change inside a transaction that turns animations off (the screen moves the selected day that way, so the grid below does not
         // animate): the strip's own motion is started in a fresh one, so the page, the circle leaving with its week and the capsule always move.
@@ -299,6 +307,14 @@ struct WeekStripView: View {
                 Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
             }
             .frame(height: 9)
+            if unfold > 0 {
+                Text(MonthUnfold.spendText(of: info) ?? " ")
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1).minimumScaleFactor(0.6)
+                    .frame(height: MonthUnfold.spendRow)
+                    .opacity(unfold)
+            }
         }
         .frame(width: cell)
     }
