@@ -202,6 +202,8 @@ private struct ListBox<Lines: View>: View {
             }
         }
         .frame(width: ListRail.gutter)
+        .contentShape(Rectangle())
+        .onTapGesture { if gap && gapCount > 1 { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
         .accessibilityHidden(true)
     }
 
@@ -216,30 +218,21 @@ private struct ListBox<Lines: View>: View {
         let folded = gapCount > 1 && !expanded
         return VStack(alignment: .leading, spacing: Theme.Space.m) {
             if folded {
-                HStack(spacing: Theme.Space.s) {
-                    Spacer(minLength: Theme.Space.s)
-                    if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
-                    Image(systemName: "chevron.down").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary).frame(width: 28)
-                }
-                .frame(minHeight: 28)
-                .overlay(alignment: .leading) {
-                    Text("\(gapCount)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(Theme.textSecondary)
-                        .frame(width: 24, height: 30).background(Color(.systemBackground))
-                        .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 12)
-                }
-                .contentShape(Rectangle())
-                .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
+                // Low, like the space between two events: just the count on the line; a tap opens it.
+                Color.clear.frame(height: 20)
+                    .overlay(alignment: .leading) {
+                        Text("\(gapCount)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+                            .frame(width: 32, height: 28).background(Color(.systemBackground))
+                            .allowsHitTesting(false)
+                            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 16)
+                    }
+                    .contentShape(Rectangle())
+                    .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
             } else {
-                if gapCount > 1 {
-                    // Opened: a way to fold it back.
-                    HStack { Spacer(); Image(systemName: "chevron.up").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary).frame(width: 28, height: 20) }
-                        .contentShape(Rectangle())
-                        .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = false } }
-                }
                 lines()
             }
         }
-        .padding(.leading, ListRail.indent).padding(.vertical, folded ? Theme.Space.s : Theme.Space.m)
+        .padding(.leading, ListRail.indent).padding(.vertical, folded ? Theme.Space.xs : Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
         .environment(\.railColor, color)
     }
