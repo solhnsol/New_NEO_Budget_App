@@ -71,12 +71,14 @@ struct StatusBadge: View {
 /// The one main action of a sheet: a full-width blue button. Pinned to the bottom with `primaryActionBar`.
 struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var isEnabled
+    /// Shorter, for a button inside a card instead of pinned to the bottom.
+    var height = Theme.primaryButtonHeight
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(.body, weight: .semibold))
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+            .frame(maxWidth: .infinity, minHeight: height)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous)
                     .fill(isEnabled ? Theme.accent : Theme.textTertiary.opacity(0.45))
@@ -104,6 +106,10 @@ struct SecondaryButtonStyle: ButtonStyle {
 
 extension ButtonStyle where Self == PrimaryButtonStyle {
     static var onAllPrimary: PrimaryButtonStyle { PrimaryButtonStyle() }
+}
+
+extension ButtonStyle where Self == PrimaryButtonStyle {
+    static var onAllPrimaryCompact: PrimaryButtonStyle { PrimaryButtonStyle(height: 44) }
 }
 
 extension ButtonStyle where Self == SecondaryButtonStyle {

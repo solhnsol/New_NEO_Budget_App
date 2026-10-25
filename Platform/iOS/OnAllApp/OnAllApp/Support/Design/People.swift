@@ -88,6 +88,9 @@ struct PeoplePicker: View {
     let people: [ActivityCatalog.Person]
     let chosen: Set<PersonID>
     var isLocked = false
+    /// The user's own face first. Off where the user cannot be among the choices (whom to send money to).
+    var showsSelf = true
+    var addPrompt = "누구와 함께했나요?"
     let toggle: (PersonID) -> Void
     let add: (String) -> Void
 
@@ -97,8 +100,10 @@ struct PeoplePicker: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(alignment: .top, spacing: Theme.Space.m) {
-                tile(name: "나", avatar: PersonAvatar(name: "나", size: 48, isSelf: true, isSelected: true), dimmed: false)
-                    .accessibilityLabel("나, 항상 포함")
+                if showsSelf {
+                    tile(name: "나", avatar: PersonAvatar(name: "나", size: 48, isSelf: true, isSelected: true), dimmed: false)
+                        .accessibilityLabel("나, 항상 포함")
+                }
                 ForEach(people.filter { !$0.isSelf }) { person in
                     let on = chosen.contains(person.id)
                     Button { toggle(person.id) } label: {
@@ -119,7 +124,7 @@ struct PeoplePicker: View {
             }
             .padding(.vertical, Theme.Space.xs)
         }
-        .alert("누구와 함께했나요?", isPresented: $isAdding) {
+        .alert(addPrompt, isPresented: $isAdding) {
             TextField("이름", text: $newName)
             Button("취소", role: .cancel) { newName = "" }
             Button("추가") {

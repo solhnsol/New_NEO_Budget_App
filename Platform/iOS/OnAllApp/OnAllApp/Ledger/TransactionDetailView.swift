@@ -146,6 +146,7 @@ struct TransactionDetailView: View {
         switch offset.kind {
         case .refund: "환불"
         case let .settlement(from): from + " 정산"
+        case let .pending(from): from + " 정산 대기 중"
         }
     }
 
