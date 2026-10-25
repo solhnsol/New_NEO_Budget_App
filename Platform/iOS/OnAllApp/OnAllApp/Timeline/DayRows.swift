@@ -151,6 +151,8 @@ private struct ListBox<Lines: View>: View {
     let symbol: String
     /// The empty stretch between events: no name, no time, no bar; only its transactions, always shown, on the grey line.
     var gap = false
+    /// For a gap: how many transactions it holds. One is simply shown; several fold into a circle with their count that opens on a tap.
+    var gapCount = 0
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
@@ -193,14 +195,42 @@ private struct ListBox<Lines: View>: View {
 
     private var content: some View {
         if gap {
-            return AnyView(
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }
-                    .padding(.leading, Theme.Space.xs).padding(.vertical, Theme.Space.m)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .environment(\.railColor, color)
-            )
+            return AnyView(gapContent)
         }
         return AnyView(boxContent)
+    }
+
+    private var gapContent: some View {
+        let folded = gapCount > 1 && !expanded
+        return VStack(alignment: .leading, spacing: Theme.Space.m) {
+            if gapCount > 1 && !expanded {
+                HStack(spacing: Theme.Space.s) {
+                    Spacer(minLength: Theme.Space.s)
+                    if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
+                    Image(systemName: "chevron.down").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary).frame(width: 28)
+                }
+                .frame(minHeight: 28)
+                .overlay(alignment: .leading) {
+                    Text("\(gapCount)").font(.system(size: 12, weight: .bold).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+                        .frame(width: 24, height: 24).background(Color(.systemBackground), in: Circle())
+                        .overlay(Circle().stroke(Theme.textTertiary, lineWidth: 2))
+                        .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + Theme.Space.xs) - 12)
+                }
+                .contentShape(Rectangle())
+                .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = true } }
+            } else {
+                if gapCount > 1 {
+                    // Opened: a way to fold it back.
+                    HStack { Spacer(); Image(systemName: "chevron.up").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary).frame(width: 28, height: 20) }
+                        .contentShape(Rectangle())
+                        .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded = false } }
+                }
+                lines()
+            }
+        }
+        .padding(.leading, Theme.Space.xs).padding(.vertical, folded ? Theme.Space.s : Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.railColor, color)
     }
 
     private var boxContent: some View {
@@ -268,8 +298,11 @@ private struct DailyCard: View {
     let onOpenTransaction: (LedgerEntryID) -> Void
 
     var body: some View {
-        ListBox(
-            rail: rail, title: "", timeText: "", totalText: nil, color: Theme.textTertiary, symbol: "", gap: true, hasLines: true
+        let currency = group.markers[0].amount.currency
+        let net = group.markers.filter { $0.amount.currency == currency }.reduce(Int64(0)) { $0 + ($1.flow == .refund ? -$1.amount.minorUnits : $1.amount.minorUnits) }
+        let total: String? = Formatting.money(net, currency: currency)
+        return ListBox(
+            rail: rail, title: "", timeText: "", totalText: total, color: Theme.textTertiary, symbol: "", gap: true, gapCount: group.markers.count, hasLines: true
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
