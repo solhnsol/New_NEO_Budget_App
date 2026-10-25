@@ -50,12 +50,22 @@ public struct IntakeLedger {
     private var outcomes: [String: NotificationIntakeOutcome]
     /// Where each received notification sits in `notifications`, which is also the set of IDs already received.
     private var positions: [String: Int]
+    /// IDs of the notifications a partial replay left out (older than its cutoff); empty for a full one. They are not in
+    /// `notifications`, `receive` does not take them again, and the ledger is complete only without them.
+    public private(set) var deferredIDs: Set<String> = []
     public let intake: NotificationIntake
     public let history: ImportedHistory?
     /// What the history became (nil without one). The setup already holds its accounts.
     public let importPlan: ImportPlan?
 
-    public init(notifications: [RawNotification], setup: IntakeSetup, intake: NotificationIntake, history: ImportedHistory? = nil) throws {
+    /// `replayingSince`: replay only the notifications at or after that time and leave the older ones out (`deferredIDs`), so
+    /// the part of the history on screen is ready first and a full `IntakeLedger` over all of them can be built later.
+    /// What is replayed gets the same answers as in the full replay, except what depends on an older notification: balances
+    /// (they start from zero) and a refund whose purchase is left out (it waits, as if the purchase had never been seen).
+    public init(
+        notifications: [RawNotification], setup: IntakeSetup, intake: NotificationIntake,
+        history: ImportedHistory? = nil, replayingSince cutoff: Int64? = nil
+    ) throws {
         self.notifications = []
         self.history = history
         let plan = try history.map(ActualImportPlanner.plan)
@@ -68,14 +78,24 @@ public struct IntakeLedger {
         self.positions = [:]
         self.intake = intake
         try seedHistory()
-        try replay(notifications)
+        guard let cutoff else {
+            try replay(notifications)
+            return
+        }
+        let (recent, older) = notifications.reduce(into: ([RawNotification](), [RawNotification]())) { split, notification in
+            if Self.time(of: notification) < cutoff { split.1.append(notification) } else { split.0.append(notification) }
+        }
+        deferredIDs = Set(older.map(\.id))
+        try replay(recent)
     }
+
+    public var isComplete: Bool { deferredIDs.isEmpty }
 
     /// Adds the notifications not already received (by ID) and processes them. Returns the ones that were new.
     @discardableResult
     public mutating func receive(_ incoming: [RawNotification]) throws -> [RawNotification] {
         var fresh: [RawNotification] = []
-        for notification in incoming where positions[notification.id] == nil {
+        for notification in incoming where positions[notification.id] == nil && !deferredIDs.contains(notification.id) {
             positions[notification.id] = notifications.count + fresh.count
             fresh.append(notification)
         }
@@ -236,7 +256,11 @@ public struct IntakeLedger {
 
     private func isCoveredByImport(_ notification: RawNotification) -> Bool {
         guard let cutover = importPlan?.cutoverUnixMilliseconds else { return false }
-        return (notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds) < cutover
+        return Self.time(of: notification) < cutover
+    }
+
+    private static func time(of notification: RawNotification) -> Int64 {
+        notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds
     }
 
     private mutating func replay(_ all: [RawNotification]) throws {

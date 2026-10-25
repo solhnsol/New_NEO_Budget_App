@@ -172,6 +172,13 @@ final class AppModel {
         await bindSpendingByTime()
         await reload()
         observeChanges()
+        // The ledger opened on the recent notifications; the older ones are replayed now and swapped in, then the days on
+        // screen are read again.
+        Task { [weak self] in
+            guard let self, await ledger.isHistoryPartial else { return }
+            await ledger.completeHistory()
+            await ledgerDidChange()
+        }
     }
 
     private func makeService() async throws {

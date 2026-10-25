@@ -180,3 +180,28 @@ private func freshRepository() throws -> InMemoryCandidateProcessingRepository {
     }
     #expect(ledger.status(of: "never-received") == .failed)
 }
+
+@Test func aPartialReplayLeavesOutTheOlderNotificationsAndAnswersTheRestAsTheFullOneDoes() throws {
+    let decoder = ShortcutNotificationDecoder(timeZone: TimeZone(identifier: "Asia/Seoul")!)
+    func note(_ index: Int) throws -> RawNotification {
+        let fields = ["app": "우리WON뱅킹", "title": "", "subtitle": "",
+                      "body": "[Web발신]\n우리 출금 \(1_000 + index * 100)원 1002-123-456*** 잔액 1,234,000원 10/02 19:\(String(format: "%02d", index)):20",
+                      "timestamp": "Oct 2, 2026 at 7:\(String(format: "%02d", index)):30 PM"]
+        let text = String(data: try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), encoding: .utf8)!
+        return try decoder.decode(text, receivedAtUnixMilliseconds: 1_790_936_040_000 + Int64(index) * 60_000)[0]
+    }
+    let notifications = try (0..<30).map(note)
+    let intake = NotificationIntake(timeZoneIdentifier: "Asia/Seoul")
+    let full = try IntakeLedger(notifications: notifications, setup: IntakeSetup(), intake: intake)
+    #expect(full.isComplete)
+    let cutoff = notifications[20].notificationAtUnixMilliseconds ?? notifications[20].capturedAtUnixMilliseconds
+
+    var partial = try IntakeLedger(notifications: notifications, setup: IntakeSetup(), intake: intake, replayingSince: cutoff)
+    #expect(!partial.isComplete)
+    #expect(partial.notifications.map(\.id) == notifications[20...].map(\.id))
+    #expect(partial.deferredIDs == Set(notifications[..<20].map(\.id)))
+    for notification in notifications[20...] { #expect(partial.status(of: notification.id) == full.status(of: notification.id)) }
+    // An older notification is not taken again, a new one is.
+    #expect(try partial.receive(Array(notifications[..<20])).isEmpty)
+    #expect(try partial.receive([try note(40)]).count == 1)
+}
