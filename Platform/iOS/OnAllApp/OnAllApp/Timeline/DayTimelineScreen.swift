@@ -77,6 +77,46 @@ struct DayTimelineScreen: View {
     /// run through the days in between.
     private var noAnimationFixed: Transaction { var transaction = Transaction(); transaction.disablesAnimations = true; return transaction }
 
+    /// The month panel under the header: how far it is open (0 is closed), the month it shows, and the drag that is opening or closing it.
+    @State private var monthProgress: CGFloat = 0
+    @State private var monthShown = MonthDropdown.firstOfMonth(LocalDate(daysSinceUnixEpoch: 0))
+    @State private var monthDragStart: CGFloat?
+    @State private var stripHeight: CGFloat = 70
+
+    private var monthTravel: CGFloat { max(1, MonthDropdown.fullHeight(for: monthShown) - stripHeight) }
+
+    private func openMonth(_ progress: CGFloat = 1) {
+        if monthProgress == 0 {
+            monthShown = MonthDropdown.firstOfMonth(model.selectedDay)
+            Task { await model.loadMonth(startingAt: monthShown) }
+        }
+        withAnimation(.snappy(duration: 0.32)) { monthProgress = progress }
+    }
+
+    private func closeMonth() { withAnimation(.snappy(duration: 0.28)) { monthProgress = 0 } }
+
+    /// A pull down on the header opens the month; a push up on it closes it. It only starts on a vertical move, so the strip's own sideways swipe is untouched.
+    private var monthPull: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                if monthDragStart == nil {
+                    guard abs(value.translation.height) > abs(value.translation.width), value.translation.height > 0 || monthProgress > 0 else { return }
+                    monthDragStart = monthProgress
+                    if monthProgress == 0 {
+                        monthShown = MonthDropdown.firstOfMonth(model.selectedDay)
+                        Task { await model.loadMonth(startingAt: monthShown) }
+                    }
+                }
+                monthProgress = max(0, min(1, (monthDragStart ?? 0) + value.translation.height / monthTravel))
+            }
+            .onEnded { value in
+                guard monthDragStart != nil else { return }
+                monthDragStart = nil
+                let opens = value.velocity.height > 400 || (value.velocity.height > -400 && monthProgress > 0.4)
+                withAnimation(.snappy(duration: 0.3)) { monthProgress = opens ? 1 : 0 }
+            }
+    }
+
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0 else { return }
@@ -203,8 +243,11 @@ struct DayTimelineScreen: View {
                 SummaryBar(timelines: timelines)
             }
           }
+          if monthProgress > 0 {
+              Color.black.opacity(0.22 * monthProgress).ignoresSafeArea().onTapGesture { closeMonth() }.zIndex(0.5)
+          }
           VStack(spacing: 0) {
-            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
+            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { monthProgress == 0 ? openMonth() : closeMonth() }) { day in
                 Task { await goTo(day) }
             }
             WeekStripView(
@@ -212,11 +255,27 @@ struct DayTimelineScreen: View {
                 onSelect: { day in Task { await goTo(day) } },
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
             )
+            .opacity(monthProgress > 0 ? max(0, 1 - monthProgress * 4) : 1)
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { stripHeight = $0 }
+            .overlay(alignment: .top) {
+                if monthProgress > 0 {
+                    MonthDropdown(
+                        cells: model.monthCells.merging(model.weekCells) { month, _ in month }, selected: model.selectedDay, today: model.today,
+                        month: $monthShown, progress: monthProgress, stripHeight: stripHeight,
+                        onSelect: { day in
+                            closeMonth()
+                            Task { await goTo(day) }
+                        }
+                    )
+                    .task(id: monthShown) { await model.loadMonth(startingAt: monthShown) }
+                }
+            }
             // The grid's own column titles carry the rule under them; the list has nothing under the strip but this one.
             if isList { Divider() }
           }
           .background { TopBarBackground().ignoresSafeArea(edges: .top) }
           .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chromeFrame = $0 }
+          .simultaneousGesture(monthPull)
           .zIndex(1)
         }
         .background {
@@ -291,6 +350,7 @@ private struct DayHeader: View {
     /// The list shows one day at a time at the top, so the title names that day; the grid names its two columns.
     let singleDay: Bool
     let menu: CalendarMenu
+    var onTitle: () -> Void = {}
     let goTo: (LocalDate) -> Void
 
     var body: some View {
@@ -298,6 +358,7 @@ private struct DayHeader: View {
             // Only the month: the days themselves are named once, over their columns.
             Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
+                .onTapGesture(perform: onTitle)
             Spacer()
             Button { goTo(model.today) } label: {
                 Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)

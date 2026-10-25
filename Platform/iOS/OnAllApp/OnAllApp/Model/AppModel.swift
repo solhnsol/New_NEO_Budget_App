@@ -65,6 +65,8 @@ final class AppModel {
     private(set) var week: [WeekStripDay] = []
     /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.
     private(set) var weekCells: [LocalDate: WeekStripDay] = [:]
+    /// The days of the months the month panel has been opened on (events and what was spent), read when it opens or moves to a month.
+    private(set) var monthCells: [LocalDate: WeekStripDay] = [:]
     private(set) var calendars: [CalendarDescriptor] = []
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
@@ -302,6 +304,18 @@ final class AppModel {
             guard mine == dataGeneration else { return }
             phase = .failed("일정과 거래를 불러오지 못했어요")
         }
+    }
+
+    /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank.
+    func loadMonth(startingAt first: LocalDate) async {
+        guard let service else { return }
+        let last = first.adding(days: LocalDate.daysInMonth(year: first.year, month: first.month) - 1)
+        var day = first
+        while day <= last {
+            if let days = try? await service.weekStrip(containing: day, firstWeekday: 0) { for cell in days { monthCells[cell.day] = cell } }
+            day = day.adding(days: 7)
+        }
+        if let days = try? await service.weekStrip(containing: last, firstWeekday: 0) { for cell in days { monthCells[cell.day] = cell } }
     }
 
     /// After a move to another day: reads only the required days that are not kept yet (and, for a continuous move, `extra` more each side), the weeks
