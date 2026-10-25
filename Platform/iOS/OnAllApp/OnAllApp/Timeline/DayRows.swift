@@ -48,7 +48,7 @@ struct DaySection: View {
                         case let .event(block):
                             EventCard(block: block, rail: rail, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
                         case let .daily(group):
-                            DailyCard(group: group, rail: rail, timeline: timeline, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
+                            DailyCard(group: group, rail: rail, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
                         }
                     }
                 }
@@ -149,7 +149,8 @@ private struct ListBox<Lines: View>: View {
     let totalText: String?
     let color: Color
     let symbol: String
-    var quiet = false
+    /// The empty stretch between events: no name, no time, no bar; only its transactions, always shown, on the grey line.
+    var gap = false
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
@@ -168,11 +169,12 @@ private struct ListBox<Lines: View>: View {
     private var rail_: some View {
         let inset = Theme.Space.m
         return GeometryReader { proxy in
-            let top = rail.isFirst ? inset : 0
-            let bottom = rail.isLast ? proxy.size.height - inset : proxy.size.height
+            let top = rail.isFirst && !gap ? inset : 0
+            let bottom = rail.isLast && !gap ? proxy.size.height - inset : proxy.size.height
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: 2, height: max(0, bottom - top))
                     .offset(x: (ListRail.gutter - 2) / 2, y: top)
+                if !gap {
                 let barTop = rail.joinsPrevious ? 0 : inset
                 let barBottom = rail.joinsNext ? proxy.size.height : proxy.size.height - inset
                 let round = ListRail.barWidth / 2
@@ -182,6 +184,7 @@ private struct ListBox<Lines: View>: View {
                 )
                 .fill(color).frame(width: ListRail.barWidth, height: max(0, barBottom - barTop))
                 .offset(x: (ListRail.gutter - ListRail.barWidth) / 2, y: barTop)
+                }
             }
         }
         .frame(width: ListRail.gutter)
@@ -189,11 +192,23 @@ private struct ListBox<Lines: View>: View {
     }
 
     private var content: some View {
+        if gap {
+            return AnyView(
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }
+                    .padding(.leading, Theme.Space.xs).padding(.vertical, Theme.Space.m)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .environment(\.railColor, color)
+            )
+        }
+        return AnyView(boxContent)
+    }
+
+    private var boxContent: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
             HStack(alignment: .center, spacing: Theme.Space.s) {
                 // The bar carries the colour, so there is no icon here: the name, and the time under it.
                 VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(title).font(quiet ? Theme.Typo.label : Theme.Typo.rowTitle).foregroundStyle(quiet ? Theme.textSecondary : Theme.textPrimary).lineLimit(1)
+                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1).minimumScaleFactor(0.75)
                 }
                 Spacer(minLength: Theme.Space.s)
@@ -244,24 +259,17 @@ private struct EventCard: View {
     }
 }
 
-/// The stretch of ordinary life between events, as an event named 일상 that holds the transactions no event does.
+/// The stretch between events, drawn as the empty space between them, with the transactions no event holds.
 private struct DailyCard: View {
     let group: DayListPlan.DailyGroup
     let rail: ListRail
-    let timeline: DayTimeline
     let model: AppModel
     let zone: DisplayTimeZone
     let onOpenTransaction: (LedgerEntryID) -> Void
 
     var body: some View {
-        let start = timeline.dayStartUnixMilliseconds
-        let currency = group.markers[0].amount.currency
-        let net = group.markers.filter { $0.amount.currency == currency }.reduce(Int64(0)) { $0 + ($1.flow == .refund ? -$1.amount.minorUnits : $1.amount.minorUnits) }
-        let total: String? = Formatting.money(net, currency: currency)
-        return ListBox(
-            rail: rail, title: "일상",
-            timeText: Formatting.timeRange(start + Int64(group.fromMinute) * 60_000, start + Int64(group.toMinute) * 60_000, zoneIdentifier: zone.identifier),
-            totalText: total, color: Theme.textTertiary, symbol: "sun.max", quiet: true, hasLines: true
+        ListBox(
+            rail: rail, title: "", timeText: "", totalText: nil, color: Theme.textTertiary, symbol: "", gap: true, hasLines: true
         ) {
             ForEach(group.markers, id: \.transactionID) { marker in
                 DayListTransactionLine(
