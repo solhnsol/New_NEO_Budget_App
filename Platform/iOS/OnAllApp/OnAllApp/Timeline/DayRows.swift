@@ -133,6 +133,8 @@ private struct ListRail {
     var joinsNext = false
     static let gutter: CGFloat = 24
     static let barWidth: CGFloat = 6
+    /// How far a transaction is set in from the line it hangs on (its dot sits on the line).
+    static let indent: CGFloat = 14
 }
 
 private extension EnvironmentValues {
@@ -200,7 +202,7 @@ private struct ListBox<Lines: View>: View {
 
     private var gapContent: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }
-            .padding(.leading, Theme.Space.xs).padding(.vertical, Theme.Space.m)
+            .padding(.leading, ListRail.indent).padding(.vertical, Theme.Space.m)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.railColor, color)
     }
@@ -224,7 +226,7 @@ private struct ListBox<Lines: View>: View {
             .contentShape(Rectangle())
             .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
             if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, Theme.Space.xs).environment(\.railColor, color)
+                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, ListRail.indent).environment(\.railColor, color)
             }
         }
         .padding(.vertical, Theme.Space.m)
@@ -323,8 +325,8 @@ private struct DayListTransactionLine: View {
         .listTap(onTap)
         // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
         .overlay(alignment: .leading) {
-            Circle().fill(Color(.systemBackground)).frame(width: 10, height: 10).overlay(Circle().stroke(railColor, lineWidth: 2.5))
-                .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + Theme.Space.xs) - 5)
+            Circle().fill(Color(.systemBackground)).frame(width: 7, height: 7).overlay(Circle().stroke(railColor, lineWidth: 2))
+                .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 3.5)
                 .allowsHitTesting(false)
         }
     }
@@ -360,12 +362,12 @@ struct LedgerEntryLoader: View {
 }
 
 private extension DayListPlan.Item {
-    /// The stretch of the day the box covers, in minutes from its start; none for an all-day item.
+    /// The stretch of the day an event covers, in minutes from its start; none for an all-day item or the gap between events (a gap never joins a bar).
     var minutes: (start: Int, end: Int)? {
         switch self {
         case .allDay: nil
         case let .event(block): (block.startMinute, block.endMinute)
-        case let .daily(group): (group.fromMinute, group.toMinute)
+        case .daily: nil
         }
     }
 }
