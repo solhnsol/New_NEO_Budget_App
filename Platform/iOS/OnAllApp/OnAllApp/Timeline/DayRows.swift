@@ -38,7 +38,11 @@ struct DaySection: View {
                 let boxes = plan.items.filter { if case .allDay = $0 { false } else { true } }
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(boxes.enumerated()), id: \.element.id) { index, item in
-                        let rail = ListRail(isFirst: index == 0, isLast: index == boxes.count - 1)
+                        let rail = ListRail(
+                            isFirst: index == 0, isLast: index == boxes.count - 1,
+                            joinsPrevious: index > 0 && boxes[index - 1].minutes?.end == item.minutes?.start && item.minutes != nil,
+                            joinsNext: index < boxes.count - 1 && boxes[index + 1].minutes?.start == item.minutes?.end && item.minutes != nil
+                        )
                         switch item {
                         case .allDay: EmptyView()
                         case let .event(block):
@@ -124,6 +128,9 @@ private struct AllDayCount: View {
 private struct ListRail {
     let isFirst: Bool
     let isLast: Bool
+    /// The box starts where the one above ends (or ends where the one below starts): their bars meet with no gap.
+    var joinsPrevious = false
+    var joinsNext = false
     static let gutter: CGFloat = 24
     static let barWidth: CGFloat = 6
 }
@@ -166,8 +173,15 @@ private struct ListBox<Lines: View>: View {
             ZStack(alignment: .topLeading) {
                 Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: 2, height: max(0, bottom - top))
                     .offset(x: (ListRail.gutter - 2) / 2, y: top)
-                RoundedRectangle(cornerRadius: ListRail.barWidth / 2).fill(color).frame(width: ListRail.barWidth, height: max(0, proxy.size.height - 2 * inset))
-                    .offset(x: (ListRail.gutter - ListRail.barWidth) / 2, y: inset)
+                let barTop = rail.joinsPrevious ? 0 : inset
+                let barBottom = rail.joinsNext ? proxy.size.height : proxy.size.height - inset
+                let round = ListRail.barWidth / 2
+                UnevenRoundedRectangle(
+                    topLeadingRadius: rail.joinsPrevious ? 0 : round, bottomLeadingRadius: rail.joinsNext ? 0 : round,
+                    bottomTrailingRadius: rail.joinsNext ? 0 : round, topTrailingRadius: rail.joinsPrevious ? 0 : round
+                )
+                .fill(color).frame(width: ListRail.barWidth, height: max(0, barBottom - barTop))
+                .offset(x: (ListRail.gutter - ListRail.barWidth) / 2, y: barTop)
             }
         }
         .frame(width: ListRail.gutter)
@@ -331,6 +345,17 @@ struct LedgerEntryLoader: View {
             let sections = await model.ledgerSections() ?? []
             entry = sections.lazy.flatMap(\.entries).first { $0.id == id }
             missing = entry == nil
+        }
+    }
+}
+
+private extension DayListPlan.Item {
+    /// The stretch of the day the box covers, in minutes from its start; none for an all-day item.
+    var minutes: (start: Int, end: Int)? {
+        switch self {
+        case .allDay: nil
+        case let .event(block): (block.startMinute, block.endMinute)
+        case let .daily(group): (group.fromMinute, group.toMinute)
         }
     }
 }
