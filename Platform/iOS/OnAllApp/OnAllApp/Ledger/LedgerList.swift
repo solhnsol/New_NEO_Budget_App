@@ -161,7 +161,7 @@ enum LedgerList {
     }
 
     /// The purchase a receivable paid back: its own, or the largest purchase of its activity (ties: the smaller id).
-    private static func purchase(for obligation: Obligation, life: LifeState, isPurchase: (LedgerEntryID) -> Bool) -> LedgerEntryID? {
+    static func purchase(for obligation: Obligation, life: LifeState, isPurchase: (LedgerEntryID) -> Bool) -> LedgerEntryID? {
         if let origin = obligation.originTransactionID, isPurchase(origin) { return origin }
         guard let activityID = obligation.activityID else { return nil }
         let candidates = life.allocations(forActivity: activityID).map(\.transactionID).filter(isPurchase)
