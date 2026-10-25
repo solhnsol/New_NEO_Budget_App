@@ -134,7 +134,7 @@ private struct ListRail {
     static let gutter: CGFloat = 24
     static let barWidth: CGFloat = 6
     /// How far a transaction is set in from the line it hangs on (its dot sits on the line).
-    static let indent: CGFloat = 72
+    static let indent: CGFloat = 36
 }
 
 private extension EnvironmentValues {
@@ -336,25 +336,7 @@ private struct DayListTransactionLine: View {
                 }
             }
             .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - (railRing ? 6 : 3.5))
-            .background(alignment: .leading) {
-                // A dotted line from the dot on the bar to the row it belongs to.
-                let reach = ListRail.gutter / 2 + Theme.Space.s + ListRail.indent
-                let radius: CGFloat = railRing ? 6 : 3.5
-                DottedLeader().stroke(railColor.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [0.1, 4]))
-                    .frame(width: max(0, reach - radius - 6), height: 2)
-                    .offset(x: -(reach - radius - 1))
-            }
                 .allowsHitTesting(false)
-        }
-    }
-}
-
-/// A horizontal line through the middle of its frame.
-private struct DottedLeader: Shape {
-    func path(in rect: CGRect) -> Path {
-        Path { path in
-            path.move(to: CGPoint(x: rect.minX, y: rect.midY))
-            path.addLine(to: CGPoint(x: rect.maxX, y: rect.midY))
         }
     }
 }
