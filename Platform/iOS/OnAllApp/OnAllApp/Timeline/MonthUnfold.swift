@@ -75,6 +75,11 @@ final class MonthUnfoldState {
 
     var isOpen: Bool { progress > 0.001 }
 
+    /// A finger that has dragged the header (past the drag's small threshold) is not tapping: a day under it when it lets go is not a pick. The
+    /// day buttons fire on release, before or after the drag's own end, so the lock holds while dragging and a moment past the end.
+    @ObservationIgnored private var tapsLockedUntil = Date.distantPast
+    var allowsTap: Bool { Date() >= tapsLockedUntil }
+
     private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.86)
 
     func toggle(selected: LocalDate) { isOpen ? close() : open(selected: selected) }
@@ -116,6 +121,7 @@ final class MonthUnfoldState {
     /// A drag on the header: down opens the month, up closes it, and the edge follows the finger. It only starts on a vertical move, so the strip's own
     /// sideways swipe is untouched.
     func drag(_ translation: CGSize, selected: LocalDate) {
+        tapsLockedUntil = .distantFuture
         switch pull {
         case .idle:
             guard abs(translation.height) > abs(translation.width), translation.height > 0 || isOpen else {
@@ -134,6 +140,7 @@ final class MonthUnfoldState {
 
     /// Let go: it settles open or closed by where it was heading, as a spring that starts at the finger's own speed.
     func endDrag(_ translation: CGSize, velocity: CGSize) {
+        tapsLockedUntil = Date().addingTimeInterval(0.25)
         defer { pull = .idle }
         switch pull {
         case .pulling:
@@ -273,7 +280,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     private func dayCell(_ day: LocalDate, month: LocalDate) -> some View {
         let info = cells(day)
         let spent = MonthUnfold.spendText(of: info)
-        return Button { onSelect(day) } label: {
+        return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
                     .font(.callout.monospacedDigit())
