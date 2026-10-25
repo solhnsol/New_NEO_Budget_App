@@ -1,21 +1,11 @@
 import NEOBudgetCalendar
 import SwiftUI
 
-/// How a day in the month is written. Two drafts of the same panel, picked with a launch argument until one is chosen.
-enum MonthCellStyle {
-    /// The day's events as dots, and what was spent that day written under them.
-    case amount
-    /// The same dots; the day's spending as a compact figure on a tint that deepens with the amount.
-    case heat
-
-    static let current: MonthCellStyle = ProcessInfo.processInfo.arguments.contains("-month-heat") ? .heat : .amount
-}
-
 /// The month that unrolls from the week strip when the header is pulled down (or its title is tapped), in the list and the grid alike.
 ///
 /// It is drawn over the screen like a curtain whose top edge is the strip: at progress 0 it is the strip's height with the selected week's row
 /// at the top, so the strip and the row are the same place, and at 1 the whole month is shown. A day picked in it is the day the screen goes to;
-/// the footer (and a sideways swipe) moves between months.
+/// the arrows beside the month title at the top (and a sideways swipe) move between months.
 struct MonthDropdown: View {
     let cells: [LocalDate: WeekStripDay]
     let selected: LocalDate
@@ -29,7 +19,7 @@ struct MonthDropdown: View {
 
     static let rowHeight: CGFloat = 60
     static let weekdayRow: CGFloat = 20
-    static let footer: CGFloat = 46
+    static let titleRow: CGFloat = 40
 
     static func firstOfMonth(_ day: LocalDate) -> LocalDate { day.adding(days: 1 - day.day) }
 
@@ -43,7 +33,7 @@ struct MonthDropdown: View {
     }
 
     static func fullHeight(for month: LocalDate) -> CGFloat {
-        weekdayRow + CGFloat(rows(for: month)) * rowHeight + footer
+        titleRow + weekdayRow + CGFloat(rows(for: month)) * rowHeight
     }
 
     private var gridStart: LocalDate { month.adding(days: -month.weekday) }
@@ -54,15 +44,14 @@ struct MonthDropdown: View {
         return (0..<Self.rows(for: month)).contains(offset / 7) && offset >= 0 ? offset / 7 : 0
     }
 
-    private var maxSpend: Int64 {
-        (0..<(Self.rows(for: month) * 7)).compactMap { spend(of: gridStart.adding(days: $0)) }.max() ?? 0
-    }
-
     var body: some View {
         let full = Self.fullHeight(for: month)
         let height = stripHeight + (full - stripHeight) * progress
+        let rowsHeight = CGFloat(Self.rows(for: month)) * Self.rowHeight
         return VStack(spacing: 0) {
+            titleBar
             weekdayLabels
+            // The rows are cut at the weekday labels, so while the panel is the strip's height only the selected week shows, right under them.
             VStack(spacing: 0) {
                 ForEach(0..<Self.rows(for: month), id: \.self) { row in
                     HStack(spacing: 0) {
@@ -73,11 +62,13 @@ struct MonthDropdown: View {
             }
             .id(month)
             .transition(.opacity)
-            footerBar
+            .offset(y: -CGFloat(selectedRow) * Self.rowHeight * (1 - progress))
+            .frame(height: rowsHeight, alignment: .top)
+            .clipped()
         }
         .frame(height: full, alignment: .top)
         .opacity(min(1, progress * 2.5))
-        .offset(y: -CGFloat(selectedRow) * Self.rowHeight * (1 - progress))
+        .offset(y: -Self.titleRow * (1 - progress))
         .frame(height: height, alignment: .top)
         .clipped()
         .background(Theme.surface.opacity(min(1, progress * 4)))
@@ -103,7 +94,7 @@ struct MonthDropdown: View {
         .frame(height: Self.weekdayRow)
     }
 
-    private var footerBar: some View {
+    private var titleBar: some View {
         HStack {
             Button { month = Self.shifted(month, by: -1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 40) }
             Spacer()
@@ -113,7 +104,7 @@ struct MonthDropdown: View {
             Button { month = Self.shifted(month, by: 1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 40) }
         }
         .foregroundStyle(Theme.textSecondary)
-        .frame(height: Self.footer)
+        .frame(height: Self.titleRow)
     }
 
     /// What was spent that day net of refunds (the strip's net is positive for spending), or nil when nothing was.
@@ -127,7 +118,6 @@ struct MonthDropdown: View {
         let info = cells[day]
         let isSelected = day == selected
         let spent = spend(of: day)
-        let heat = spent.map { maxSpend > 0 ? Double($0) / Double(maxSpend) : 0 } ?? 0
         return Button { onSelect(day) } label: {
             VStack(spacing: 2) {
                 Text("\(day.day)")
@@ -145,11 +135,6 @@ struct MonthDropdown: View {
                     .lineLimit(1).minimumScaleFactor(0.6)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background {
-                if MonthCellStyle.current == .heat, spent != nil {
-                    RoundedRectangle(cornerRadius: 10).fill(Theme.danger.opacity(0.06 + 0.22 * heat)).padding(2)
-                }
-            }
             .opacity(inMonth ? 1 : 0.3)
             .contentShape(Rectangle())
         }
@@ -157,13 +142,10 @@ struct MonthDropdown: View {
         .accessibilityLabel("\(day.month)월 \(day.day)일, 일정 \(info?.eventCount ?? 0)건" + (spent.map { ", 지출 \(Formatting.grouped($0))원" } ?? ""))
     }
 
+    /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550).
     private func amountText(_ won: Int64) -> String {
-        switch MonthCellStyle.current {
-        case .amount: return Formatting.grouped(won)
-        case .heat:
-            guard won >= 10_000 else { return Formatting.grouped(won) }
-            let tenThousands = Double(won) / 10_000
-            return (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
-        }
+        guard won >= 10_000 else { return Formatting.grouped(won) }
+        let tenThousands = Double(won) / 10_000
+        return (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
     }
 }
