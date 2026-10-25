@@ -49,6 +49,13 @@ struct LedgerScreen: View {
                 ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink {
+                        SettlementHubView(model: model)
+                    } label: {
+                        Label("정산", systemImage: "arrow.left.arrow.right.circle")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
                         PeopleListView(model: model)
                     } label: {
                         Label("사람", systemImage: "person.2")
@@ -209,7 +216,10 @@ struct LedgerRow: View {
                 tint: isRefund ? Theme.accent : Theme.textSecondary
             )
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                Text(transaction.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                HStack(spacing: Theme.Space.xs) {
+                    Text(transaction.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    if entry.isWaitingForSettlement { StatusBadge(text: "정산 대기 중", tone: .caution) }
+                }
                 Text(subtitle).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 ForEach(entry.offsets) { offset in
                     Text(LedgerRow.offsetLine(offset, currency: transaction.amount.currency, zoneIdentifier: zoneIdentifier))
@@ -235,6 +245,8 @@ struct LedgerRow: View {
         switch offset.kind {
         case .refund: what = "환불"
         case let .settlement(from): what = from + " 정산"
+        case let .pending(from): return from + " 정산 대기 중 " + Formatting.money(offset.minorUnits, currency: currency)
+        case let .surplus(from): what = from + " 더 보낸 돈"
         }
         return what + " " + Formatting.money(offset.minorUnits, currency: currency) + " · " + Formatting.shortDate(offset.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
     }

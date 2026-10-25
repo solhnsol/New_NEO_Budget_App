@@ -469,6 +469,9 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// Only a screenshot demo sets this (`DemoSettlement`): the settlement hub reads the time this much later, to show what an old request looks like.
+    var displayClockOffsetMilliseconds: Int64 = 0
+
     // MARK: Calendars
 
     private var calendarIconKey: String { isDemo ? "calendarIcons.demo" : "calendarIcons" }
@@ -583,7 +586,7 @@ final class AppModel {
         let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, surplus: SurplusSetting.current())
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
@@ -600,6 +603,27 @@ final class AppModel {
         ) { await service.perform($0) }
         await reload()
         return applied
+    }
+
+    /// Records a deposit against the request the user picked (`DepositConfirmation`), then shows the result.
+    func record(_ deposit: LedgerDeposit, to obligation: Obligation, life: LifeState, shortChoice: DepositConfirmation.ShortChoice, rememberAlias: Bool) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.apply(
+            deposit, to: obligation, life: life, shortChoice: shortChoice, rememberAlias: rememberAlias,
+            provenance: ActivityEditing.provenance(now: nowMilliseconds)
+        ) { await service.perform($0) }
+        await reload()
+        return done
+    }
+
+    /// Records a deposit for a gathering that has no request yet.
+    func record(_ deposit: LedgerDeposit, forGathering activity: ActivityID, senderName: String, life: LifeState, provenance: AssignmentProvenance) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.applyToGathering(
+            deposit, activity: activity, senderName: senderName, life: life, provenance: provenance, newID: { ActivityEditing.newID(prefix: $0) }
+        ) { await service.perform($0) }
+        await reload()
+        return done
     }
 
     /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
