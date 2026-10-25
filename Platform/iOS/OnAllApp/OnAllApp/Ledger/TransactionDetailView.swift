@@ -147,6 +147,7 @@ struct TransactionDetailView: View {
         case .refund: "환불"
         case let .settlement(from): from + " 정산"
         case let .pending(from): from + " 정산 대기 중"
+        case let .surplus(from): from + " 더 보낸 돈"
         }
     }
 

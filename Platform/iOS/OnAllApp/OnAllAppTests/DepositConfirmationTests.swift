@@ -120,3 +120,13 @@ private struct Scene {
     let remembered = try await yes.confirm(30_000, alias: true)
     #expect(remembered.persons[yes.friend]?.matches(name: "테스트 별명") == true)
 }
+
+@Test func theSettingTakesTheExcessOffThePurchaseInsteadOfMakingIncome() async throws {
+    let scene = try await Scene()
+    let life = try await scene.confirm(35_000)
+    let entry = try #require(LedgerList.sections([scene.dinner], life: life, zone: zone, surplus: .reduceSpending).first?.entries.first)
+    #expect(entry.offsets.map(\.kind) == [.settlement(from: "테스트 친구"), .surplus(from: "테스트 친구")])
+    #expect(entry.netMinorUnits == 25_000)                                    // 60,000 − 30,000 owed − 5,000 extra
+    #expect(life.surplusIncomeMinorUnits(currency: "KRW", treatment: .reduceSpending) == 0)
+    #expect(life.surplusIncomeMinorUnits(currency: "KRW") == 5_000)
+}

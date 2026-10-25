@@ -3,9 +3,13 @@ import NEOBudgetCore
 import SwiftUI
 
 /// The app setting for money that came in beyond what was owed: by default it is extra income; the user can have it taken off the expense it
-/// paid back instead, so no income category appears (`docs/ledger-behavior.md`, 정산 이후 결정 4).
+/// paid back instead, so no income category appears (`docs/ledger-behavior.md`, 정산 이후 결정 4). Set in 설정.
 enum SurplusSetting {
-    static let key = "settlement.surplusReducesExpense"
+    static let key = "settlement.surplusTreatment"
+
+    static func current(_ defaults: UserDefaults = .standard) -> SurplusTreatment {
+        defaults.string(forKey: key).flatMap(SurplusTreatment.init(rawValue:)) ?? .income
+    }
 }
 
 /// Picks which request a deposit pays and records it (`DepositConfirmation`). The sheet says up front what the amount will do: close the request,
@@ -17,7 +21,7 @@ struct DepositConfirmSheet: View {
     let senderName: String
     var purchaseTitles: [LedgerEntryID: String] = [:]
     @Environment(\.dismiss) private var dismiss
-    @AppStorage(SurplusSetting.key) private var surplusReducesExpense = false
+    @AppStorage(SurplusSetting.key) private var surplusRaw = SurplusTreatment.income.rawValue
     @State private var picked: ObligationID?
     @State private var pickedGathering: ActivityID?
     @State private var shortChoice = DepositConfirmation.ShortChoice.keepOpen
@@ -117,8 +121,8 @@ struct DepositConfirmSheet: View {
             .onAllCardRow()
         case let .over(extra):
             Section {
-                Label(surplusReducesExpense
-                      ? "\(money(extra)) 더 왔어요. 설정에 따라 이 지출에서 그만큼 덜어 내요."
+                Label(surplusRaw == SurplusTreatment.reduceSpending.rawValue
+                      ? "\(money(extra)) 더 왔어요. 설정에 따라 별도 수입 없이 이 지출에서 그만큼 차감해요."
                       : "\(money(extra)) 더 왔어요. 지출을 줄이지 않고 따로 수입으로 기록해요.",
                       systemImage: "info.circle").font(Theme.Typo.label).foregroundStyle(Theme.textSecondary)
             } footer: {

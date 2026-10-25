@@ -246,6 +246,7 @@ struct LedgerRow: View {
         case .refund: what = "환불"
         case let .settlement(from): what = from + " 정산"
         case let .pending(from): return from + " 정산 대기 중 " + Formatting.money(offset.minorUnits, currency: currency)
+        case let .surplus(from): what = from + " 더 보낸 돈"
         }
         return what + " " + Formatting.money(offset.minorUnits, currency: currency) + " · " + Formatting.shortDate(offset.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
     }
