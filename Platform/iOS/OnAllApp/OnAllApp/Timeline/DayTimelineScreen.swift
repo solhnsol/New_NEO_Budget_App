@@ -77,6 +77,9 @@ struct DayTimelineScreen: View {
     /// run through the days in between.
     private var noAnimationFixed: Transaction { var transaction = Transaction(); transaction.disablesAnimations = true; return transaction }
 
+    /// The month that unfolds out of the header, and how far it is open.
+    @State private var unfold = MonthUnfoldState()
+
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0 else { return }
@@ -203,20 +206,34 @@ struct DayTimelineScreen: View {
                 SummaryBar(timelines: timelines)
             }
           }
-          VStack(spacing: 0) {
-            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 })) { day in
+          MonthScrim(state: unfold).zIndex(0.5)
+          MonthUnfoldHeader(
+            state: unfold, today: model.today,
+            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, showsRule: isList,
+            onSelect: { day in
+                unfold.close()
+                Task { await goTo(day) }
+            },
+            loadMonth: { await model.loadMonth(startingAt: $0) },
+            selected: model.selectedDay
+          ) {
+            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) }) { day in
                 Task { await goTo(day) }
             }
+          } strip: { opened in
             WeekStripView(
                 cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
-                onSelect: { day in Task { await goTo(day) } },
-                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } }
+                onSelect: { day in
+                    guard unfold.allowsTap else { return }
+                    unfold.close()
+                    Task { await goTo(day) }
+                },
+                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } },
+                unfold: opened
             )
-            // The grid's own column titles carry the rule under them; the list has nothing under the strip but this one.
-            if isList { Divider() }
           }
-          .background { TopBarBackground().ignoresSafeArea(edges: .top) }
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chromeFrame = $0 }
+          // While the month is open the header is taller than the chrome the screen runs under: the screen keeps the inset it had.
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if !unfold.isOpen { chromeFrame = $0 } }
           .zIndex(1)
         }
         .background {
@@ -291,6 +308,7 @@ private struct DayHeader: View {
     /// The list shows one day at a time at the top, so the title names that day; the grid names its two columns.
     let singleDay: Bool
     let menu: CalendarMenu
+    var onTitle: () -> Void = {}
     let goTo: (LocalDate) -> Void
 
     var body: some View {
@@ -298,6 +316,7 @@ private struct DayHeader: View {
             // Only the month: the days themselves are named once, over their columns.
             Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
+                .onTapGesture(perform: onTitle)
             Spacer()
             Button { goTo(model.today) } label: {
                 Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)
