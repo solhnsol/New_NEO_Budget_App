@@ -264,3 +264,22 @@ private func allocationID(_ transaction: String, _ activity: String?) -> Allocat
     let data = try JSONEncoder().encode(LifeSnapshot(revision: 3, state: life))
     #expect(try JSONDecoder().decode(LifeSnapshot.self, from: data).state == life)
 }
+
+// MARK: Forgetting a person
+
+@Test func aPersonWithoutMoneyHistoryCanBeRemovedAndLeavesTheirEvents() throws {
+    let life = lifeWithPeople(["a", "b"], extra: activities(["A"]) + [
+        .addParticipant(ActivityID(rawValue: "A"), ParticipantAssignment(personID: pid("a"), provenance: userProvenance())),
+        .addParticipant(ActivityID(rawValue: "A"), ParticipantAssignment(personID: pid("b"), provenance: userProvenance())),
+    ])
+    let after = try life.applying([.removePerson(pid("a"), by: userProvenance())])
+    #expect(after.persons[pid("a")] == nil && after.persons[pid("b")] != nil)
+    #expect(after.activities[ActivityID(rawValue: "A")]?.participants.map(\.personID) == [pid("b")])
+}
+
+@Test func aPersonWithObligationsOrTheUserThemselvesCannotBeRemoved() throws {
+    let life = lifeWithPeople(["friend"], extra: [.createObligation(obligation("o1", .receivable, .exact(5_000)))])
+    #expect(failure { _ = try life.applying([.removePerson(pid("friend"), by: userProvenance())]) } == .personInUse(pid("friend")))
+    #expect(failure { _ = try life.applying([.removePerson(myself, by: userProvenance())]) } == .cannotRemoveSelf)
+    #expect(failure { _ = try life.applying([.removePerson(pid("nobody"), by: userProvenance())]) } == .unknownPerson(pid("nobody")))
+}
