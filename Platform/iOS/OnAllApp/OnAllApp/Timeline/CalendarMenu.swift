@@ -3,11 +3,13 @@ import SwiftUI
 
 /// How the calendar shows a day: the time grid, or the list of cards (events with the transactions that went to them).
 enum CalendarStyle: String, CaseIterable {
-    case grid, list
+    case grid, list, pager
 
     static let storageKey = "calendarStyle"
-    var title: String { self == .grid ? "시간표" : "리스트" }
-    var symbol: String { self == .grid ? "calendar.day.timeline.left" : "list.bullet" }
+    var title: String { switch self { case .grid: "시간표"; case .list: "리스트"; case .pager: "하루씩" } }
+    var symbol: String { switch self { case .grid: "calendar.day.timeline.left"; case .list: "list.bullet"; case .pager: "rectangle.portrait.on.rectangle.portrait" } }
+    /// The style the one-tap button switches to: grid, list, then the day-at-a-time pager, and round again.
+    var next: CalendarStyle { switch self { case .grid: .list; case .list: .pager; case .pager: .grid } }
 }
 
 /// Where the ledger's own screens are opened from now that the ledger is not a tab.
@@ -26,7 +28,7 @@ struct CalendarMenu: View {
     let onAdd: () -> Void
     let onOpen: (LedgerDestination) -> Void
 
-    private var other: CalendarStyle { style == .grid ? .list : .grid }
+    private var other: CalendarStyle { style.next }
 
     var body: some View {
         HStack(spacing: 0) {

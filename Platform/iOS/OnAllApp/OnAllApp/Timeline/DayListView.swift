@@ -200,7 +200,7 @@ struct DayListView: View {
 }
 
 /// One day of the column: its date, then its cards, with a line above it that divides it from the day before.
-private struct DaySection: View {
+struct DaySection: View {
     let day: LocalDate
     let timeline: DayTimeline?
     let isToday: Bool

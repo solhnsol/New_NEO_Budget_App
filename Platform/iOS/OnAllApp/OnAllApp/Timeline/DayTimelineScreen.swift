@@ -80,8 +80,8 @@ struct DayTimelineScreen: View {
     private func goTo(_ day: LocalDate) async {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0 else { return }
-        if style.wrappedValue == .list {
-            // The list scrolls itself to the selected day (it answers the selection changing); the week strip answers at once.
+        if style.wrappedValue != .grid {
+            // The list (or pager) scrolls itself to the selected day (it answers the selection changing); the week strip answers at once.
             Haptics.snap()
             _ = model.moveTo(day)
             await model.loadMissing()
@@ -149,26 +149,32 @@ struct DayTimelineScreen: View {
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
-        let isList = style.wrappedValue == .list
+        let isList = style.wrappedValue != .grid
+        let isPager = style.wrappedValue == .pager
         return ZStack(alignment: .top) {
           VStack(spacing: 0) {
             if isList {
-                DayListView(
-                    model: model,
-                    topInset: chromeFrame.maxY,
-                    onSelect: { selection = $0 },
-                    onOpenTransaction: { openTransaction = TransactionRef(id: $0) },
-                    onScrollToDay: { day in
-                        // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
-                        guard model.moveTo(day) else { return }
-                        listSettle?.cancel()
-                        listSettle = Task { @MainActor in
-                            try? await Task.sleep(for: .milliseconds(250))
-                            guard !Task.isCancelled else { return }
-                            await model.loadMissing()
-                        }
+                let onScrollToDay: (LocalDate) -> Void = { day in
+                    // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
+                    guard model.moveTo(day) else { return }
+                    listSettle?.cancel()
+                    listSettle = Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(250))
+                        guard !Task.isCancelled else { return }
+                        await model.loadMissing()
                     }
-                )
+                }
+                if isPager {
+                    DayPagerView(
+                        model: model, topInset: chromeFrame.maxY,
+                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+                    )
+                } else {
+                    DayListView(
+                        model: model, topInset: chromeFrame.maxY,
+                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+                    )
+                }
             } else {
                 Color.clear.frame(height: chromeHeight)
                 if BrowseAxisMode.current == .fixedGrid {
