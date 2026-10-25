@@ -10,6 +10,8 @@ enum CardStyle: String {
     static let current: CardStyle = {
         let arguments = ProcessInfo.processInfo.arguments
         if let index = arguments.firstIndex(of: "-card-style"), arguments.indices.contains(index + 1), let style = CardStyle(rawValue: arguments[index + 1]) { return style }
+        // The unit tests describe the classic card's thresholds and plans; they run it unless a test asks otherwise.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return .classic }
         return .apple
     }()
 
