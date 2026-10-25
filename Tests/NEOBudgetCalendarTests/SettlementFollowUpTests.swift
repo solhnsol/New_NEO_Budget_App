@@ -107,7 +107,7 @@ private func owed(_ id: String, _ person: String, _ amount: Int64, activity: Str
     #expect(closed.settlementSummaries(nowUnixMilliseconds: 2).isEmpty)                               // closed: nothing left to get
 }
 
-@Test func aSurplusIsIncomeByDefaultAndNotCountedWhenTheSettingExcludesIt() throws {
+@Test func aSurplusIsIncomeByDefaultAndReducesTheEventWhenTheSettingSaysSo() throws {
     let base = lifeWithPeople(["b"], extra: [.createObligation(obligation("o", with: "b", .receivable, .exact(30_000)))])
     guard case let .matchWithResidual(proposal) = SettlementMatcher.match(transfer("t", "b", .incoming, 35_000), in: base) else {
         Issue.record("expected a surplus")
@@ -115,10 +115,22 @@ private func owed(_ id: String, _ person: String, _ amount: Int64, activity: Str
     }
     let life = try settle(base, proposal)
     #expect(life.surplusIncomeMinorUnits(currency: "KRW") == 5_000)
-    #expect(life.surplusIncomeMinorUnits(currency: "KRW", treatment: .excluded) == 0)
+    #expect(life.surplusIncomeMinorUnits(currency: "KRW", treatment: .reduceSpending) == 0)
     #expect(life.surplusIncomeMinorUnits(currency: "USD") == 0)
     let offset = try life.applying([.classifyResidual(try #require(life.unresolvedResiduals.first).id, .otherObligation, by: userProvenance())])
     #expect(offset.surplusIncomeMinorUnits(currency: "KRW") == 0)
+}
+
+@Test func withTheSettingASurplusComesOffTheCostOfItsEvent() throws {
+    var life = dinnerLife(extra: [owed("b1", "b", 20_000), owed("c1", "c", 20_000)])
+    guard case let .matchWithResidual(proposal) = SettlementMatcher.match(transfer("t", "b", .incoming, 25_000), in: life) else {
+        Issue.record("expected a surplus")
+        return
+    }
+    life = try settle(life, proposal)
+    let normal = try #require(life.activityShares().first), reduced = try #require(life.activityShares(surplus: .reduceSpending).first)
+    #expect(normal.myShareMinorUnits == 20_000 && reduced.surplusMinorUnits == 5_000 && reduced.myShareMinorUnits == 15_000)
+    #expect(life.surplusIncomeMinorUnits(currency: "KRW", treatment: .reduceSpending) == 0)
 }
 
 // MARK: A changed total asks for the difference only
