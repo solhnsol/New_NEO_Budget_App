@@ -59,3 +59,14 @@ About 1.2 to 1.4 ms per notification at every size (1.2 s, 3.5 s, 13 s, 40.6 s f
 persisting the derived ledger instead of replaying it (not done here; the notification file and its format are unchanged).
 
 Run it yourself: `cd tools/replay-bench && swift run -c release ReplayBench 1000 3000 10000`.
+
+## Opening on the recent weeks first
+
+A launch does not wait for the full replay. `IntakeLedger(replayingSince:)` replays only the notifications of the last eight weeks
+(`AppLedger.recentWindow`) in their arrival order, and remembers the older ones' IDs (`deferredIDs`) so they are not taken
+twice. `AppModel.start()` then calls `AppLedger.completeHistory()`, which builds the full ledger off the actor, replays what
+arrived meanwhile onto it, swaps it in and reloads the days on screen. Entry IDs come from the notification, so the recent
+entries are the same ones in both. Until the swap, balances and account statements are not shown (they start from zero), a
+refund of a purchase older than the window waits, and changes to the setup wait for the full replay. While partial,
+`notifications.json` is written as the launch's full list plus the new ones, so nothing older is lost. Design and alternatives
+(a persisted snapshot): `records/20261025-단계적-불러오기-설계.md`.
