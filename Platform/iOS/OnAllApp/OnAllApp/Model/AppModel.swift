@@ -150,6 +150,7 @@ final class AppModel {
     func start() async {
         if let prepare { await prepare() }
         loadOverrides()
+        loadRecurring()
         observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
@@ -571,6 +572,50 @@ final class AppModel {
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
     func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
         transactionOverrides[id] = override
+        saveOverrides()
+    }
+
+    // MARK: Analysis
+
+    /// What the user decided about repeating expenses (`RecurringDecisions`), kept as one small file. Detection results are never saved.
+    private(set) var recurringDecisions = RecurringDecisions()
+    /// Moves with every decision, so the analysis screens reload.
+    private(set) var recurringRevision = 0
+    private var recurringURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "recurring-decisions.json") }
+
+    func loadRecurring() {
+        if let url = recurringURL, let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(RecurringDecisions.self, from: data) {
+            recurringDecisions = saved
+        }
+        recurringRevision += 1
+    }
+
+    /// Applies the user's yes/no on a repeating expense and saves it.
+    func decideRecurring(_ change: (inout RecurringDecisions) -> Void) {
+        change(&recurringDecisions)
+        if let url = recurringURL, let data = try? JSONEncoder().encode(recurringDecisions) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+        recurringRevision += 1
+    }
+
+    /// The tags the user has put on transactions, most used first (what the tag field offers).
+    var knownTags: [String] { Self.tagCounts(transactionOverrides).map(\.name) }
+
+    nonisolated static func tagCounts(_ store: TransactionOverrideStore) -> [(name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for override in store.byTransaction.values { for tag in override.tags { counts[tag, default: 0] += 1 } }
+        return counts.map { ($0.key, $0.value) }.sorted { ($0.1, $1.0) > ($1.1, $0.0) }
+    }
+
+    /// Renames the user's tag on every transaction (a name that already exists merges the two); an empty `new` takes the tag off.
+    func renameTag(_ old: String, to new: String?) {
+        for (id, var override) in transactionOverrides.byTransaction where override.tags.contains(old) {
+            var seen = Set<String>()
+            override.tags = override.tags.compactMap { $0 == old ? new : $0 }.filter { seen.insert($0).inserted }
+            transactionOverrides.byTransaction[id] = override.isEmpty ? nil : override
+        }
         saveOverrides()
     }
 

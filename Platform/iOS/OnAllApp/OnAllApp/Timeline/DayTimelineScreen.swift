@@ -241,6 +241,7 @@ struct DayTimelineScreen: View {
             })
                 .presentationDetents([.medium, .large])
         }
+        .task { if ProcessInfo.processInfo.arguments.contains("-open-analysis") { ledgerDestination = .analysis } }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
         .fullScreenCover(item: $ledgerDestination) { destination in
@@ -250,6 +251,8 @@ struct DayTimelineScreen: View {
                     SettingsView(model: model)
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { ledgerDestination = nil } } }
                 }
+            case .analysis:
+                AnalysisScreen(model: model) { ledgerDestination = nil }
             case .list, .accounts:
                 LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
             }

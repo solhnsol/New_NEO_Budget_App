@@ -13,7 +13,7 @@ struct ManualTransactionSheet: View {
     @State private var when = Date()
     @State private var category: CanonicalCategoryID?
     @State private var memo = ""
-    @State private var tags = ""
+    @State private var tags: [String] = []
 
     private var won: Int64? { Int64(amountText.filter(\.isNumber)).flatMap { $0 > 0 ? $0 : nil } }
 
@@ -44,7 +44,7 @@ struct ManualTransactionSheet: View {
                 }
                 Section("메모·태그") {
                     TextField("메모", text: $memo, axis: .vertical)
-                    TextField("#태그 (띄어쓰기로 구분)", text: $tags).textInputAutocapitalization(.never)
+                    TagField(tags: $tags, suggestions: model.knownTags)
                 }
             }
             .navigationTitle("내역 추가")
@@ -58,7 +58,7 @@ struct ManualTransactionSheet: View {
 
     private func save() {
         guard let won else { return }
-        let override = TransactionOverride(category: category, memo: TransactionOverride.clean(memo), tags: TransactionOverride.parseTags(tags))
+        let override = TransactionOverride(category: category, memo: TransactionOverride.clean(memo), tags: tags)
         model.addManual(
             title: TransactionOverride.clean(title) ?? "직접 입력", won: won, isRefund: isRefund,
             at: Int64(when.timeIntervalSince1970 * 1_000), override: override

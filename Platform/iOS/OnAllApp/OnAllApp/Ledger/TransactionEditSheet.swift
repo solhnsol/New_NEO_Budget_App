@@ -10,7 +10,7 @@ struct TransactionEditSheet: View {
     @State private var title: String
     @State private var category: CanonicalCategoryID?
     @State private var memo: String
-    @State private var tags: String
+    @State private var tags: [String]
 
     init(entry: LedgerListEntry, model: AppModel) {
         self.entry = entry
@@ -18,7 +18,7 @@ struct TransactionEditSheet: View {
         _title = State(initialValue: entry.transaction.title ?? "")
         _category = State(initialValue: entry.categoryID)
         _memo = State(initialValue: entry.override?.memo ?? "")
-        _tags = State(initialValue: (entry.override?.tags ?? []).map { "#" + $0 }.joined(separator: " "))
+        _tags = State(initialValue: entry.override?.tags ?? [])
     }
 
     var body: some View {
@@ -36,7 +36,7 @@ struct TransactionEditSheet: View {
                 }
                 Section {
                     TextField("메모", text: $memo, axis: .vertical)
-                    TextField("#태그 (띄어쓰기로 구분)", text: $tags).textInputAutocapitalization(.never)
+                    TagField(tags: $tags, suggestions: model.knownTags)
                 } header: {
                     Text("메모·태그")
                 } footer: {
@@ -64,7 +64,7 @@ struct TransactionEditSheet: View {
             title: name == original ? entry.override?.title : name,
             category: category,
             memo: TransactionOverride.clean(memo),
-            tags: TransactionOverride.parseTags(tags)
+            tags: tags
         )
         model.edit(entry.id, to: override)
         dismiss()
