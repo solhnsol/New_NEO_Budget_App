@@ -61,7 +61,7 @@ enum DepositMerge {
 
         let activities = Set((life.allocationSet(for: purchase.id)?.allocations ?? []).map(\.activityID))
         let activityID = activities.count == 1 ? activities.first ?? nil : nil
-        let person = life.persons.values.filter { !$0.isSelf && $0.displayName == senderName }.min { $0.id < $1.id }
+        let person = life.persons.values.filter { !$0.isSelf && $0.matches(name: senderName) }.min { $0.id < $1.id }
         let obligation = person.flatMap { person in
             activityID.flatMap { activityID in
                 life.obligations(forActivity: activityID).first { obligation in
