@@ -92,7 +92,9 @@ struct TransactionLineView: View {
         let display = item.display
         let refund = display?.flow == .refund
         let linkColor = item.linkColorHex.flatMap { Color(hex: $0) }
-        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+        let apple = CardStyle.current.isApple
+        let chip = RoundedRectangle(cornerRadius: (apple ? CardStyle.cornerRadius : 7) * scale, style: .continuous)
+        let barColor = linkColor ?? Color.secondary
         HStack(spacing: 0) {
             Color.clear.frame(width: LeaderLayout.lineEnd * scale)
             HStack(spacing: 0) {
@@ -107,10 +109,15 @@ struct TransactionLineView: View {
                 Color.clear.frame(width: 4 * scale)
                 amountText(display, refund: refund)
             }
-            .padding(.leading, 3 * scale).padding(.trailing, 7 * scale)
+            .padding(.leading, (apple ? 9 : 3) * scale).padding(.trailing, 7 * scale)
             .frame(height: max(0, item.frame.height - 4 * scale))
             .background(Theme.surface, in: chip)
-            .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: linkColor == nil ? 0.75 : 1.2))
+            // The same language as an event's card: a bar down the left edge and a faint fill in the linked event's colour (grey for a transaction linked to nothing).
+            .background(apple ? barColor.opacity(0.14) : Color.clear, in: chip)
+            .overlay(alignment: .leading) {
+                if apple { Capsule().fill(barColor.opacity(linkColor == nil ? 0.5 : 1)).frame(width: CardStyle.barWidth).padding(.vertical, 3).padding(.leading, 3) }
+            }
+            .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: apple ? 0 : (linkColor == nil ? 0.75 : 1.2)))
             .shadow(color: Color.black.opacity(overEvent ? 0.12 : 0.06), radius: 1.5, y: 0.5)
             // The chip is only as long as its text, so a transaction over an event leaves the event's title and times readable.
             Spacer(minLength: 0)

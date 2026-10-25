@@ -52,14 +52,15 @@ struct EventPresentation: Equatable {
         /// The small title's type, against the title's (see `EventTitleLayer`).
         static let compactShare: CGFloat = 0.7
         /// Room for the title in small type: a card thinner than the title's line but at least this tall writes it small.
-        var compactNeed: CGFloat { (titleLine * Self.compactShare).rounded(.up) + padding }
+        var compactNeed: CGFloat { CardStyle.current.isApple ? 9 : (titleLine * Self.compactShare).rounded(.up) + padding }
         /// Each thing begins to appear only once the one before it is fully there, so going down the title is the last to go.
         /// The start time sits on the title's line, so it needs that line and a little more.
         var startNeed: CGFloat { titleNeed + ramp }
         /// The end time has a line of its own at the bottom, clear of the title's.
         var endNeed: CGFloat { max(titleNeed + timeLine + 2 * padding, startNeed + ramp) }
         /// A count of linked transactions shares the end time's line.
-        var summaryNeed: CGFloat { endNeed + ramp }
+        /// Apple's card writes the time range under the title, so the count's pill waits for a second line below it.
+        var summaryNeed: CGFloat { endNeed + ramp + (CardStyle.current.isApple ? 12 : 0) }
         /// What the card keeps free below the title for the end time's line.
         var reserved: CGFloat { endNeed }
         /// Room for the first transaction row.
