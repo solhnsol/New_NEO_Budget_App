@@ -233,7 +233,7 @@ struct LedgerRow: View {
         if entry.transaction.flow == .refund { parts.append("환불") }
         if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) { parts.append("직접 입력") }
         parts.append(contentsOf: entry.activityTitles)
-        parts.append(contentsOf: (entry.override?.tags ?? []).map { "#" + $0 })
+        parts.append(contentsOf: entry.tags.map { "#" + $0 })
         return parts.joined(separator: " · ")
     }
 }

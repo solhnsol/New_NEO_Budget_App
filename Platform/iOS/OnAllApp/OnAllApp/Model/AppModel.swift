@@ -494,9 +494,36 @@ final class AppModel {
     }
 
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
-    func edit(_ id: LedgerEntryID, to override: TransactionOverride?) {
+    /// `originalTitle` is the name the ledger has; with it, the edit is also kept in the edit log.
+    func edit(_ id: LedgerEntryID, to override: TransactionOverride?, originalTitle: String? = nil) {
         transactionOverrides[id] = override
+        if let override, !override.isEmpty {
+            transactionOverrides.record(.init(
+                id: UUID().uuidString, transactionID: id.rawValue, originalTitle: originalTitle, title: override.title, category: override.category,
+                memo: override.memo, tags: override.tags, atUnixMilliseconds: nowMilliseconds
+            ))
+        }
         saveOverrides()
+    }
+
+    /// Adds a rule, or replaces the one with the same id.
+    func saveRule(_ rule: TransactionRule) {
+        if let index = transactionOverrides.rules.firstIndex(where: { $0.id == rule.id }) {
+            transactionOverrides.rules[index] = rule
+        } else {
+            transactionOverrides.rules.append(rule)
+        }
+        saveOverrides()
+    }
+
+    func deleteRule(id: String) {
+        transactionOverrides.rules.removeAll { $0.id == id }
+        saveOverrides()
+    }
+
+    /// The original names of the ledger's transactions, for previewing how many a rule would catch.
+    func ledgerTitles() async -> [String] {
+        ((try? await ledger.transactions()) ?? []).compactMap(\.title)
     }
 
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
@@ -508,7 +535,7 @@ final class AppModel {
         let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides)
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, rules: transactionOverrides.ruleSet)
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
