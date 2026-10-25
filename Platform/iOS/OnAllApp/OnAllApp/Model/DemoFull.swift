@@ -152,6 +152,11 @@ enum DemoFull {
             default: break
             }
         }
+        if DemoSettlement.isOn {
+            for (index, deposit) in DemoSettlement.deposits(today: today).enumerated() {
+                result.append(Spend(raw: "full-settle-\(index)", kind: .deposit, direction: .inflow, won: deposit.won, day: deposit.day, minute: deposit.minute, merchant: deposit.name))
+            }
+        }
         return result.filter { zone.instant(of: $0.day, minuteOfDay: $0.minute) <= now }
     }
 }

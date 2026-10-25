@@ -24,6 +24,10 @@ struct LedgerListEntry: Identifiable, Equatable {
             case refund
             /// A settlement deposit, with who sent it.
             case settlement(from: String)
+            /// Asked of someone and not received yet (`docs/ledger-behavior.md`, 정산 이후 결정 2): already out of the net, shown as "정산 대기 중".
+            case pending(from: String)
+            /// Money beyond what was owed, taken off this purchase by the app setting (`SurplusTreatment.reduceSpending`).
+            case surplus(from: String)
         }
 
         let id: String
@@ -49,6 +53,9 @@ struct LedgerListEntry: Identifiable, Equatable {
         guard transaction.flow == .spend, !offsets.isEmpty else { return nil }
         return transaction.amount.minorUnits - offsets.reduce(0) { $0 + $1.minorUnits }
     }
+
+    /// Something asked of someone for this purchase has not come in yet.
+    var isWaitingForSettlement: Bool { offsets.contains { if case .pending = $0.kind { true } else { false } } }
 
     /// Spend positive and refund negative, after offsets, so sums are net spending.
     var signedNetMinorUnits: Int64 { netMinorUnits ?? transaction.signedMinorUnits }
@@ -104,9 +111,9 @@ struct LedgerDaySection: Identifiable, Equatable {
 enum LedgerList {
     static func sections(
         _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:],
-        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init()
+        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init(), surplus: SurplusTreatment = .income
     ) -> [LedgerDaySection] {
-        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules) }, life: life, refundOf: refundOf)
+        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules) }, life: life, refundOf: refundOf, surplus: surplus)
         let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
@@ -151,7 +158,9 @@ enum LedgerList {
     }
 
     /// Moves linked refunds onto their purchases and adds settlement deposits to the purchases they paid back.
-    static func netted(_ entries: [LedgerListEntry], life: LifeState, refundOf: [LedgerEntryID: LedgerEntryID]) -> [LedgerListEntry] {
+    static func netted(
+        _ entries: [LedgerListEntry], life: LifeState, refundOf: [LedgerEntryID: LedgerEntryID], surplus: SurplusTreatment = .income
+    ) -> [LedgerListEntry] {
         var byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         func isPurchase(_ id: LedgerEntryID) -> Bool { byID[id]?.transaction.flow == .spend }
         func add(_ offset: LedgerListEntry.Offset, to id: LedgerEntryID) { byID[id]?.offsets.append(offset) }
@@ -173,6 +182,27 @@ enum LedgerList {
                 add(.init(id: "\(settlement.id.rawValue)/\(obligation.id.rawValue)", kind: .settlement(from: name), minorUnits: applied.appliedMinorUnits,
                           occurredAtUnixMilliseconds: settlement.transfer.occurredAtUnixMilliseconds), to: purchase)
             }
+        }
+
+        if surplus == .reduceSpending {
+            for residual in life.residuals.values where residual.direction == .surplus && residual.classification.value != .otherObligation {
+                guard let settlement = life.settlements[residual.settlementID], settlement.transfer.direction == .incoming,
+                      let obligation = settlement.allocations.compactMap({ life.obligations[$0.obligationID] }).first,
+                      let purchase = purchase(for: obligation, life: life, isPurchase: isPurchase),
+                      byID[purchase]?.transaction.amount.currency == residual.amount.currency else { continue }
+                let name = life.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
+                add(.init(id: "surplus/\(residual.id.rawValue)", kind: .surplus(from: name), minorUnits: residual.amount.minorUnits,
+                          occurredAtUnixMilliseconds: settlement.transfer.occurredAtUnixMilliseconds), to: purchase)
+            }
+        }
+
+        for obligation in life.obligations.values where obligation.direction == .receivable && obligation.isSettleable {
+            guard let owed = obligation.amount.knowledge.knownValue, owed > life.closedMinorUnits(for: obligation.id),
+                  let purchase = purchase(for: obligation, life: life, isPurchase: isPurchase),
+                  byID[purchase]?.transaction.amount.currency == obligation.currency else { continue }
+            let name = life.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
+            add(.init(id: "pending/\(obligation.id.rawValue)", kind: .pending(from: name), minorUnits: owed - life.closedMinorUnits(for: obligation.id),
+                      occurredAtUnixMilliseconds: obligation.createdAtUnixMilliseconds), to: purchase)
         }
         return entries.compactMap { byID[$0.id] }.map { entry in
             var sorted = entry
