@@ -104,7 +104,7 @@ struct TransactionLineView: View {
                 if nameRoom >= 30 * scale {
                     Text(display?.title ?? "거래").font(.system(size: 11 * scale)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
-                Spacer(minLength: 2)
+                Color.clear.frame(width: 4 * scale)
                 amountText(display, refund: refund)
             }
             .padding(.leading, 3 * scale).padding(.trailing, 7 * scale)
@@ -112,6 +112,8 @@ struct TransactionLineView: View {
             .background(Theme.surface, in: chip)
             .overlay(chip.strokeBorder(linkColor?.opacity(0.7) ?? Theme.divider, lineWidth: linkColor == nil ? 0.75 : 1.2))
             .shadow(color: Color.black.opacity(overEvent ? 0.12 : 0.06), radius: 1.5, y: 0.5)
+            // The chip is only as long as its text, so a transaction over an event leaves the event's title and times readable.
+            Spacer(minLength: 0)
         }
         .padding(.trailing, 2)
         .revealed(item.reveal)
@@ -131,7 +133,7 @@ struct TransactionLineView: View {
     private func amountText(_ display: DayRenderPlan.TransactionDisplay?, refund: Bool) -> some View {
         if let display {
             Text((refund ? "−" : "") + Formatting.money(display.amount.minorUnits, currency: display.amount.currency))
-                .font(.system(size: 11 * scale, weight: .medium).monospacedDigit())
+                .font(.system(size: 11 * scale, weight: .bold).monospacedDigit())
                 .foregroundStyle(refund ? Theme.accent : Theme.textPrimary)
                 .lineLimit(1).fixedSize()
         }
@@ -179,17 +181,21 @@ struct OverflowCardView: View {
     var body: some View {
         // A summary is not at a moment of the day, so it has no line to the timeline: it is written as information, at the same x as an
         // event's own text.
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
         HStack(spacing: 0) {
             // One line of text: "거래 N건 · 합계". When the whole line does not fit, the count alone is shown, never a cut-off number.
+            // It is a chip like a single transaction's (white, hairline edge), only as long as its text.
             ViewThatFits(in: .horizontal) {
                 Text(Self.summary(item)).fixedSize()
                 Text(Self.countOnly(item)).minimumScaleFactor(0.5)
             }
-            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(.primary).lineLimit(1)
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 8 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(Theme.divider, lineWidth: 0.75))
             Spacer(minLength: 2)
         }
         .padding(.leading, 6).padding(.trailing, 6)
-        .halo(overEvent)
         .frame(width: item.frame.maxX - edge, height: item.frame.height, alignment: .leading)
         .offset(x: edge, y: item.frame.minY)
         .accessibilityElement(children: .ignore)
@@ -220,40 +226,6 @@ struct OverflowCardView: View {
 
     static func accessibilityText(_ item: DayRenderPlan.OverflowItem) -> String {
         "거래 \(item.members.count)건, " + item.countsByKind.map { "\(AmountKindNames.name($0.kind)) \($0.count)건" }.joined(separator: ", ")
-    }
-}
-
-/// A title that moved out of its card, attached above the event's start. Paler than the card and set off by a rule, so it reads as
-/// outside the event's time; the event's real start is the card's own top edge below it.
-struct EventHeaderView: View {
-    let block: EventBlock
-    let rect: CGRect
-    var zoneIdentifier = ""
-
-    var body: some View {
-        let color = Color(hex: block.calendarColorHex) ?? .accentColor
-        // A small tab sitting on the card's top-left corner, only as wide as its text, and quieter than the card: smaller type, no
-        // time (the card has it), square at the bottom where it joins the card's top edge.
-        let tab = UnevenRoundedRectangle(topLeadingRadius: 5, topTrailingRadius: 5)
-        HStack(spacing: 3) {
-            if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 7)) }
-            Text(block.title).font(.system(size: 10, weight: .medium)).lineLimit(1)
-            if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 7)) }
-        }
-        .foregroundStyle(Color.primary.opacity(0.75))
-        .padding(.leading, 9).padding(.trailing, 7)
-        .frame(maxWidth: max(0, rect.width), alignment: .leading)
-        .frame(height: rect.height)
-        .fixedSize(horizontal: true, vertical: false)
-        .background(Color(.systemBackground), in: tab)
-        .background(color.opacity(0.22), in: tab)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: 3) }
-        .overlay(tab.stroke(color.opacity(0.5), lineWidth: 1))
-        .clipShape(tab)
-        .frame(width: rect.width, height: rect.height, alignment: .leading)
-        .offset(x: rect.minX, y: rect.minY)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)             // the card it is attached to carries the same event for VoiceOver
     }
 }
 

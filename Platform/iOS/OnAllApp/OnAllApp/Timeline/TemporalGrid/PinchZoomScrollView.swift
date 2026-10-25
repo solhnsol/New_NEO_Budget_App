@@ -25,8 +25,10 @@ final class PinchZoomModel: ObservableObject {
     /// end of the day can be brought above it. Not published: it changes the scroll, not what is drawn.
     var bottomInset: CGFloat = 0 { didSet { if abs(oldValue - bottomInset) > 0.5 { applyBottomInset?() } } }
     var applyBottomInset: (() -> Void)?
-    /// Set by the scroll view: eases the scroll to an offset (the zoom stays). Ignored while the person has the scroll in hand.
-    var scrollTo: ((CGFloat) -> Void)?
+    /// How far the content shows above the top edge of the scroll view (the header drawn over the grid is translucent). Does not move anything.
+    var topOverhang: CGFloat = 0
+    /// Set by the scroll view: eases the scroll to an offset over a duration (the zoom stays). Ignored while the person has the scroll in hand.
+    var scrollTo: ((CGFloat, CFTimeInterval) -> Void)?
     /// The offsets the scroll can rest at now (with `bottomInset`).
     func offsetRange(zoom: CGFloat) -> ClosedRange<CGFloat> {
         let base = PinchZoomMath.offsetRange(zoom: zoom, viewport: viewportHeight)
@@ -161,7 +163,17 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
     final class Container: UIView {
         var onLayout: ((CGSize) -> Void)?
-        override func layoutSubviews() { super.layoutSubviews(); onLayout?(bounds.size) }
+        /// How far the content may show above the top edge (under a translucent header drawn over the grid). Only the top is open: the bottom is cut at the
+        /// edge as before. The geometry stays the container's own, so the scroll's offsets and the touch points are unchanged.
+        var overhang: () -> CGFloat = { 0 }
+        private let reach = CAShapeLayer()
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let top = overhang()
+            reach.path = UIBezierPath(rect: CGRect(x: 0, y: -top, width: bounds.width, height: bounds.height + top)).cgPath
+            if top > 0 { layer.mask = reach } else { layer.mask = nil }
+            onLayout?(bounds.size)
+        }
     }
 
     // MARK: Coordinator
@@ -230,13 +242,15 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         func attach(to container: Container, root: AnyView) {
             self.container = container
-            container.clipsToBounds = true
+            container.clipsToBounds = false
+            container.overhang = { [weak self] in self?.model.topOverhang ?? 0 }
             container.backgroundColor = .clear
             scroll.frame = container.bounds
             scroll.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             scroll.alwaysBounceVertical = true
             scroll.showsVerticalScrollIndicator = true
             scroll.isDirectionalLockEnabled = true
+            scroll.clipsToBounds = false
             scroll.contentInsetAdjustmentBehavior = .never
             scroll.delegate = self
             container.addSubview(scroll)
@@ -287,9 +301,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
                 return true
             }
             model.applyBottomInset = { [weak self] in self?.applyBottomInset() }
-            model.scrollTo = { [weak self] offset in
+            model.scrollTo = { [weak self] offset, duration in
                 guard let self, self.pinchStart == nil, !self.scroll.isDragging, !self.scroll.isDecelerating else { return }
-                self.animate(to: (self.model.zoom, offset))
+                self.animate(to: (self.model.zoom, offset), duration: duration)
             }
             model.startPace = { [weak self] in self?.startMeter() }
             model.drivePinch = { [weak self] state, scale, focal in self?.pinch(state, scale: scale, focal: focal) }
@@ -501,7 +515,13 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Holds
 
-        private func hold(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = FixedGridGestures.suppressed(while: recognizer); applyHolds() }
+        private func hold(by recognizer: FixedGridGestures.Recognizer, lifting: Bool = false) {
+            holds[recognizer] = FixedGridGestures.suppressed(while: recognizer, lifting: lifting)
+            applyHolds()
+            // An event in the hand: the finger holding it leaves the scroll and the day swipe (switched off and on again, they take only the touches
+            // that come down after), so the other hand can scroll and move the days (the pinch is held off meanwhile).
+            if lifting { for recognizer in [scroll.panGestureRecognizer, datePan] as [UIGestureRecognizer] { recognizer.isEnabled = false; recognizer.isEnabled = true } }
+        }
         private func release(by recognizer: FixedGridGestures.Recognizer) { holds[recognizer] = nil; applyHolds() }
         private var held: Set<FixedGridGestures.Recognizer> { holds.values.reduce(into: []) { $0.formUnion($1) } }
 
@@ -548,7 +568,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
             guard let hooks else { return }
             let point = gesture.location(in: hosting?.view)
             switch gesture.state {
-            case .began: hold(by: .longPress); hooks.longPress(.began, point, longPressStart)
+            case .began:
+                hooks.longPress(.began, point, longPressStart)
+                hold(by: .longPress, lifting: hooks.mode() == .lifting)
             case .changed: hooks.longPress(.moved, point, longPressStart)
             case .ended: release(by: .longPress); hooks.longPress(.ended, point, longPressStart)
             case .cancelled, .failed: release(by: .longPress); hooks.longPress(.cancelled, point, longPressStart)
@@ -615,9 +637,9 @@ struct PinchZoomScrollView<Content: View>: UIViewRepresentable {
 
         // MARK: Easing back inside the range
 
-        private func animate(to target: (zoom: CGFloat, offset: CGFloat)) {
+        private func animate(to target: (zoom: CGFloat, offset: CGFloat), duration: CFTimeInterval = 0.32) {
             stopAnimation()
-            animation = (start: (model.zoom, scroll.contentOffset.y), end: (target.zoom, target.offset), began: CACurrentMediaTime(), duration: 0.32)
+            animation = (start: (model.zoom, scroll.contentOffset.y), end: (target.zoom, target.offset), began: CACurrentMediaTime(), duration: max(0.05, duration))
             let link = CADisplayLink(target: self, selector: #selector(tick))
             link.add(to: .main, forMode: .common)
             self.link = link

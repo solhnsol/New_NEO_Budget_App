@@ -38,12 +38,12 @@ private let editing = G.Mode.editing(target)
     #expect(G.start(at: start, gutter: 60, mode: editing) { .nothing } == .handle(.resizeStart))
     #expect(G.start(at: CGPoint(x: end.x + 5, y: end.y - 8), gutter: 60, mode: editing) { .nothing } == .handle(.resizeEnd))
     #expect(G.start(at: start, gutter: 60, mode: .browse) { .event(target.blockID) } == .content(.event(target.blockID)))
-    #expect(G.start(at: CGPoint(x: 175, y: 260), gutter: 60, mode: editing) { .event(target.blockID) } == .content(.event(target.blockID)))   // the body
+    #expect(G.start(at: CGPoint(x: 175, y: 260), gutter: 60, mode: editing) { .event(target.blockID) } == .chosen)   // the body of the chosen card, wherever the plan has it
     #expect(G.start(at: CGPoint(x: 30, y: 260), gutter: 60, mode: .browse) { .event(target.blockID) } == .gutter)
     #expect(G.start(at: CGPoint(x: 300, y: 600), gutter: 60, mode: editing) { .nothing } == .empty)
     // An end that continues from the day before (or into the next) has no handle on that side.
     let clipped = G.Mode.editing(G.EditTarget(epoch: 10, blockID: target.blockID, frame: target.frame, canResizeStart: false, canResizeEnd: true))
-    #expect(G.start(at: start, gutter: 60, mode: clipped) { .event(target.blockID) } == .content(.event(target.blockID)))
+    #expect(G.start(at: start, gutter: 60, mode: clipped) { .event(target.blockID) } == .chosen)
 }
 
 @Test func whatARunningGestureKeepsOffUntilTheFingersLift() {
@@ -68,7 +68,12 @@ private let editing = G.Mode.editing(target)
     #expect(G.tap(start: .content(event), mode: editing, daysAtRest: true) == .chooseOther(event))
     #expect(G.tap(start: .empty, mode: editing, daysAtRest: true) == .endEditing)
     #expect(G.longPress(start: .empty, mode: .browse) == .createDraft)
-    #expect(G.longPress(start: .content(event), mode: .browse) == .details(BlockID(rawValue: "x")))
+    #expect(G.longPress(start: .content(event), mode: .browse) == .edit(BlockID(rawValue: "x")))                // an event is edited by a long press, as a transaction is
+    #expect(G.tap(start: .chosen, mode: editing, daysAtRest: true) == .chosenBody)
+    #expect(G.longPress(start: .chosen, mode: editing) == .liftChosen)
+    #expect(G.receives(.scroll, start: .empty, mode: .lifting) && G.receives(.dateSwipe, start: .content(event), mode: .lifting))   // the other hand
+    #expect(!G.receives(.pinch, start: .empty, mode: .lifting) && !G.receives(.tap, start: .empty, mode: .lifting) && !G.receives(.longPress, start: .empty, mode: .lifting))
+    #expect(G.suppressed(while: .longPress, lifting: true) == [.tap, .pinch])
     #expect(G.longPress(start: .content(.line("t")), mode: .browse) == .pickUpTransaction("t"))
     #expect(G.longPress(start: .content(.overflow("o")), mode: .browse) == .notice)
     #expect(G.longPress(start: .content(.choose([.line("t"), .event(BlockID(rawValue: "x"))])), mode: .browse) == .pickUpTransaction("t"))

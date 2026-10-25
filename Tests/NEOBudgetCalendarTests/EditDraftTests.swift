@@ -62,6 +62,19 @@ private func timeline(_ events: [CalendarEvent], on day: LocalDate = date) -> Da
 
 // MARK: Steps
 
+@Test func movingTheWholeEventKeepsItsLengthSnapsAndCanChangeTheDay() throws {
+    var d = try draft(at(date, 10, 0), at(date, 11, 30))
+    let moved1 = d.move(toDay: date, startMinute: 14 * 60 + 7); #expect(moved1)
+    #expect(d.range == timed(at(date, 14, 0), at(date, 15, 30)))
+    let next = date.adding(days: 1)
+    let moved2 = d.move(toDay: next, startMinute: 23 * 60 + 45); #expect(moved2)
+    #expect(d.range == timed(at(next, 22, 30), at(next.adding(days: 1), 0, 0)))
+    #expect(d.extent == .singleDay(next) && d.days == [next] && d.isValid)
+    let moved3 = d.move(toDay: next, startMinute: 23 * 60 + 45); #expect(!moved3)
+    let moved4 = d.move(toDay: date, startMinute: -30); #expect(moved4)
+    #expect(d.range == timed(at(date, 0, 0), at(date, 1, 30)))
+}
+
 @Test func stepsMoveOneEdgeByFifteenMinutes() throws {
     var d = try draft(at(date, 10, 0), at(date, 11, 0))
     try d.stepStart(by: -1)

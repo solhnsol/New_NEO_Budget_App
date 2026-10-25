@@ -170,8 +170,6 @@ struct AllocationParameters: Equatable, Sendable {
     var lineGap: CGFloat = 2
     /// The row an overflow is written on (it is text, not a card).
     var overflowCard: CGFloat = 20
-    /// The height of the header an event may have above its start.
-    var headerRow: CGFloat = 16
     var detailRow: CGFloat = 20
     var secondaryHeader: CGFloat = 28
     /// The part of the screen the timeline keeps while something is in focus.
@@ -256,19 +254,9 @@ struct EventOverlap: Equatable, Sendable {
     let summarisesTitles: Bool
 }
 
-/// A header attached above an event's start boundary, outside its time range. It shares the event's id and changes no time.
-struct EventHeader: Equatable, Sendable {
-    let eventID: String
-    let height: CGFloat
-    /// The event's own start, which the header is attached to. The header is *above* it and is not part of the event's time.
-    let attachedToMinute: Int
-}
-
 /// What was done about an event's title and a transaction line wanting the same place.
 enum TitleResolution: Equatable, Sendable {
     case none
-    /// The title moves to a header above the event.
-    case externalHeader
     /// The title is shortened to this width so both fit.
     case abbreviated(maxWidth: CGFloat)
     /// The stretch above the first line is enlarged until the title has its own height (the axis changes; no time does).
@@ -298,7 +286,6 @@ struct EventPlacement: Equatable, Sendable {
     let outsideLinkedCount: Int
     let overlap: EventOverlap
     let titleResolution: TitleResolution
-    let header: EventHeader?
 }
 
 /// How a transaction line relates to an event, for drawing the link (colour, label, dashes) without changing the line itself.

@@ -130,28 +130,19 @@ private func item(_ r: Rendered, _ title: String) throws -> DayRenderPlan.EventI
     #expect(ids.count == Set(ids).count)
 }
 
-// MARK: External headers
-
 private let longTitle = "아주 긴 일정 제목입니다"
 
-@Test func anExternalHeaderIsAttachedAboveTheCardOfTheSameEvent() throws {
+@Test func aTitleThatMeetsALineStaysInTheCardNeverInATabAbove() throws {
     let r = render(try timeline([event(0, longTitle, 12 * 60, 13 * 60)], [spend("t", minute: 12 * 60 + 20)]))
     let card = try item(r, longTitle)
-    let header = try #require(card.header)
-    #expect(header.maxY == card.frame.minY && header.minX == card.frame.minX && header.width == card.frame.width)         // attached, same column
-    #expect(!card.showsTitleInCard)
-    #expect(card.placement?.header?.eventID == card.block.id.rawValue)
-    // Touching the header means the same event as touching the card.
-    #expect(r.plan.hit(at: CGPoint(x: header.midX, y: header.midY)) == .event(card.block.id))
-    #expect(r.plan.hit(at: CGPoint(x: card.frame.minX + 4, y: card.frame.maxY - 4)) == .event(card.block.id))
-    // Its start boundary is the card's own top, below the header; the event's time is unchanged.
-    #expect(card.frame.minY == r.geometry.y(minute: 12 * 60) && card.block.startMinute == 12 * 60)
+    #expect(card.showsTitleInCard)
+    #expect(r.plan.events.allSatisfy { $0.drawnFrame.minY >= $0.frame.minY - 0.001 })                            // nothing is drawn above a card's start
 }
 
-@Test func withoutAConflictThereIsNoHeaderAndTheTitleStaysInTheCard() throws {
+@Test func withoutAConflictTheTitleStaysInTheCard() throws {
     let r = render(try timeline([event(0, longTitle, 12 * 60, 13 * 60)], [spend("t", minute: 14 * 60)]))
     let card = try item(r, longTitle)
-    #expect(card.header == nil && card.showsTitleInCard)
+    #expect(card.showsTitleInCard)
 }
 
 // MARK: Overflow, overlap, touch
@@ -264,9 +255,9 @@ private let longTitle = "아주 긴 일정 제목입니다"
 @Test func theEngineUsesTheMeasuredWidthNotTheEstimateWhenTheyDisagree() throws {
     let tl = try timeline([event(0, longTitle, 12 * 60, 13 * 60)], [spend("t", minute: 12 * 60 + 20)])
     let estimated = render(tl)                                                             // the estimate says the title is wide: a conflict
-    #expect(try item(estimated, longTitle).header != nil)
-    let narrow = render(tl, titleWidth: { _ in 30 })                                       // measured narrow: no conflict, no header
-    #expect(try item(narrow, longTitle).header == nil && (try item(narrow, longTitle)).showsTitleInCard)
+    #expect(try item(estimated, longTitle).placement?.titleResolution != TitleResolution.none)
+    let narrow = render(tl, titleWidth: { _ in 30 })                                       // measured narrow: no conflict, the title keeps the card
+    #expect(try item(narrow, longTitle).placement?.titleResolution == TitleResolution.none && (try item(narrow, longTitle)).showsTitleInCard)
 }
 
 // MARK: Transactions are text
@@ -309,7 +300,7 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let incoming = try timeline([event(1, "가", 540, 555), event(2, "나", 555, 570), event(3, "다", 570, 585)])
     let plan = incomingPlan(incoming, on: current)
     #expect(plan.events.count == 3 && Set(plan.events.map(\.block.id)).count == 3)
-    #expect(plan.events.allSatisfy { !$0.showsTitleInCard || $0.header != nil || $0.presentation.showsTitle })
+    #expect(plan.events.allSatisfy { !$0.showsTitleInCard || $0.presentation.showsTitle })
     #expect(plan.events.allSatisfy { !$0.presentation.showsTitle })                                           // no title is printed over another
     let frames = plan.events.map(\.frame).sorted { $0.minY < $1.minY }
     for (above, below) in zip(frames, frames.dropFirst()) { #expect(above.maxY <= below.minY + 0.001) }       // and they do not overlap: their times do not
@@ -403,11 +394,11 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
     let small = try plan([event(1, "앞", 17 * 60, 17 * 60 + minutes), event(2, "뒤", 18 * 60, 18 * 60 + 30)])
     let thin = try #require(small.events.first { $0.block.title == "앞" })
     #expect(thin.frame.height < metrics.titleNeed)
-    #expect(!thin.presentation.showsTitle && thin.presentation.compactTitle > 0 && thin.showsTitleInCard && thin.header == nil)
+    #expect(!thin.presentation.showsTitle && thin.presentation.compactTitle > 0 && thin.showsTitleInCard)
     // Thinner than the small line: no title at all, and still no tab.
     let line = try plan([event(1, "선", 12 * 60, 12 * 60 + 2)])
     let only = try #require(line.events.first)
-    #expect(only.presentation.compactTitle == 0 && !only.presentation.showsTitle && only.header == nil && !only.showsTitleInCard)
+    #expect(only.presentation.compactTitle == 0 && !only.presentation.showsTitle && !only.showsTitleInCard)
 }
 
 // MARK: On an axis planned for stability, what is drawn is what the axis has room for
@@ -429,7 +420,6 @@ private func incomingPlan(_ incoming: DayTimeline, on current: Rendered) -> DayR
         for item in plan.events {
             guard let placed = item.placement else { continue }
             if placed.level != .title { #expect(item.frame.height + 1 >= placed.requiredHeight, "\(viewport): \(item.block.title) shows rows without their height") }
-            if placed.titleResolution == .externalHeader { #expect(item.header != nil) }
         }
         // Lines: each one drawn at the minute it happened (never pushed down to make room), and none over another.
         let lines = plan.lines.sorted { $0.frame.minY < $1.frame.minY }

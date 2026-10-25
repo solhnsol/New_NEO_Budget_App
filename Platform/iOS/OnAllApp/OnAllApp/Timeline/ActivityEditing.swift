@@ -62,16 +62,44 @@ enum ActivityEditing {
         .unlinkTransaction(UnlinkTransactionInput(transactionID: transaction, by: provenance(now: now), keepOut: true))
     }
 
-    /// Transactions of the day that no event has taken, nearest to the event's time first, as candidates to link. Spending inside an
-    /// event's time is already bound to it (`TimeBinding`); this list is for the rest. Ones wholly linked elsewhere are not offered.
+    /// Transactions that no event has taken, nearest to the event's time first, as candidates to link. Spending inside an event's time is
+    /// already bound to it (`TimeBinding`); this list is for the rest. Ones wholly linked elsewhere are not offered (move those from their details).
     static func linkCandidates(for block: EventBlock, in timeline: DayTimeline) -> [TransactionMarkerItem] {
+        linkCandidates(for: block, among: timeline.markers)
+    }
+
+    /// The same over markers read from several days, so last night's payment can go into this morning's meeting.
+    static func linkCandidates(for block: EventBlock, among markers: [TransactionMarkerItem]) -> [TransactionMarkerItem] {
         let middle = (block.startUnixMilliseconds + block.endUnixMilliseconds) / 2
-        return timeline.markers
-            .filter { $0.allocations.allSatisfy { $0.activityID == nil } }
+        var seen = Set<LedgerEntryID>()
+        return markers
+            .filter { $0.allocations.allSatisfy { $0.activityID == nil } && seen.insert($0.transactionID).inserted }
             .sorted {
                 let (left, right) = (abs($0.occurredAtUnixMilliseconds - middle), abs($1.occurredAtUnixMilliseconds - middle))
                 return left != right ? left < right : $0.transactionID.rawValue < $1.transactionID.rawValue
             }
+    }
+
+    /// An event a transaction can be put in.
+    struct EventChoice: Equatable, Identifiable {
+        let key: CalendarEventKey
+        let title: String
+        let startUnixMilliseconds: Int64
+        let endUnixMilliseconds: Int64
+        /// The activity the event already has, so the one a transaction is in now can be marked.
+        let activityID: ActivityID?
+        var id: String { key.id }
+    }
+
+    /// The timed events of the days read, nearest to `time` first (one that contains it counts as nearest). An event across midnight is listed once.
+    /// All-day events are not offered yet (shortcut: they carry days, not instants; add them when a trip needs it).
+    static func eventChoices(near time: Int64, in timelines: [DayTimeline]) -> [EventChoice] {
+        var seen = Set<CalendarEventKey>()
+        let choices = timelines.flatMap(\.blocks)
+            .filter { $0.revisionToken != nil && seen.insert($0.eventKey).inserted }
+            .map { EventChoice(key: $0.eventKey, title: $0.title, startUnixMilliseconds: $0.startUnixMilliseconds, endUnixMilliseconds: $0.endUnixMilliseconds, activityID: $0.activity?.activityID) }
+        func gap(_ choice: EventChoice) -> Int64 { max(0, choice.startUnixMilliseconds - time, time - choice.endUnixMilliseconds) }
+        return choices.sorted { (gap($0), $0.startUnixMilliseconds, $0.id) < (gap($1), $1.startUnixMilliseconds, $1.id) }
     }
 
     /// The id for a place or person the user types in.

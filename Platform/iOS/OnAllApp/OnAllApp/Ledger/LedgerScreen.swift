@@ -47,6 +47,13 @@ struct LedgerScreen: View {
                     .frame(maxWidth: 220)
                 }
                 ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        PeopleListView(model: model)
+                    } label: {
+                        Label("사람", systemImage: "person.2")
+                    }
+                }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
@@ -92,12 +99,15 @@ struct LedgerScreen: View {
                             DepositRow(deposit: deposit, zoneIdentifier: model.dayZone.identifier)
                                 .draggable(deposit.id.rawValue)
                                 .listRowSeparator(.hidden)
+                                .listRowBackground(Theme.surface)
                                 .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
+                        // A row, not a footer: a list footer is drawn on the system background and leaves black bands around it in dark mode.
+                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                            .listRowSeparator(.hidden).listRowBackground(Theme.surface)
+                            .listRowInsets(EdgeInsets(top: 0, leading: Theme.Space.xl, bottom: Theme.Space.m, trailing: Theme.Space.l))
                     } header: {
                         Text("정리할 입금").font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary).textCase(nil)
-                    } footer: {
-                        Text("정산받은 돈이면 길게 눌러 그 지출 위에 놓아 주세요.").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
                 ForEach(sections) { section in
@@ -115,6 +125,7 @@ struct LedgerScreen: View {
                                 return true
                             }
                             .listRowSeparator(.hidden)
+                            .listRowBackground(Theme.surface)
                             .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {

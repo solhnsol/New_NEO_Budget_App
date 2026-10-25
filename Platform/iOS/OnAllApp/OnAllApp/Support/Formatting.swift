@@ -122,11 +122,20 @@ enum Formatting {
     /// "13:05" for a minute of the day, as a short label for lists.
     static func clock(minute: Int) -> String { String(format: "%d:%02d", minute / 60, minute % 60) }
     static func hourLabel(_ hour: Int) -> String {
+        // No 오전/오후: the axis reads top to bottom through the day, and midnight and noon have names of their own.
         switch hour {
-        case 0: return "오전 12시"
-        case 1..<12: return "오전 \(hour)시"
-        case 12: return "오후 12시"
-        default: return "오후 \(hour - 12)시"
+        case 0, 24: return "자정"
+        case 12: return "정오"
+        default: return "\(hour % 12)시"
+        }
+    }
+
+    /// "오후 2시" for the hour axis; midnight and noon keep their own names.
+    static func axisHourLabel(_ hour: Int) -> String {
+        switch hour {
+        case 0, 24: return "자정"
+        case 12: return "정오"
+        default: return "\(hour < 12 ? "오전" : "오후") \(hour % 12)시"
         }
     }
 

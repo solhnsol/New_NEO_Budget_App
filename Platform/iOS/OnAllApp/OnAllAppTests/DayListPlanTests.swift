@@ -25,7 +25,18 @@ private func marker(_ id: String, minute: Int) throws -> TransactionMarker {
     ))
     let plan = DayListPlan.make(timeline)
     #expect(plan.items.count == 3)
-    #expect(plan.items.first?.id.hasPrefix("marker/") == true)
+    #expect(plan.items.first?.id.hasPrefix("daily/") == true)
     let titles = plan.items.compactMap { item -> String? in if case let .event(block) = item { block.title } else { nil } }
     #expect(titles == ["점심", "저녁"])
+}
+
+@Test func transactionsBetweenTheSameTwoEventsShareOneDailyGroupWithThatStretch() throws {
+    let timeline = DayTimelineBuilder.build(DayTimelineInput(
+        day: day, timeZone: zone, events: [try event("a", "회의", 540, 600), try event("b", "저녁", 1_080, 1_140)],
+        life: .empty, transactions: [try marker("m1", minute: 700), try marker("m2", minute: 800), try marker("m3", minute: 1_200)]
+    ))
+    let groups = DayListPlan.make(timeline).items.compactMap { item -> DayListPlan.DailyGroup? in if case let .daily(group) = item { group } else { nil } }
+    #expect(groups.count == 2)
+    #expect(groups[0].markers.count == 2 && groups[0].fromMinute == 600 && groups[0].toMinute == 1_080)
+    #expect(groups[1].markers.count == 1 && groups[1].fromMinute == 1_140 && groups[1].toMinute == timeline.totalMinutes)
 }
