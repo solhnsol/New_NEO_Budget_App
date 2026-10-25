@@ -251,7 +251,7 @@ final class AppModel {
         var result: [StripDay] = []
         for day in days {
             let timeline: DayTimeline?
-            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = try? await service.dayTimeline(for: day) }
+            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = (try? await service.dayTimeline(for: day)).map(displayed) }
             result.append(StripDay(day: day, timeline: timeline))
         }
         return result
@@ -437,7 +437,7 @@ final class AppModel {
 
     private func readTimeline(_ day: LocalDate, service: CalendarCommandService) async throws -> DayTimeline {
         dayReads += 1
-        let direct: @MainActor () async throws -> DayTimeline = { try await service.dayTimeline(for: day) }
+        let direct: @MainActor () async throws -> DayTimeline = { [self] in displayed(try await service.dayTimeline(for: day)) }
         if let dayReadInterceptor { return try await dayReadInterceptor(day, direct) }
         return try await direct()
     }
@@ -566,6 +566,13 @@ final class AppModel {
     private func saveOverrides() {
         if let url = overridesURL { transactionOverrides.save(to: url) }
         overrideRevision += 1
+        Task { await reload() }                                 // the cached days were built with the old edits and rules
+    }
+
+    /// A day as the calendar shows it: transaction names and categories after the user's edits and rules (the ledger tab goes through the same resolver).
+    private func displayed(_ timeline: DayTimeline) -> DayTimeline {
+        let overrides = transactionOverrides
+        return timeline.displayingTransactions { overrides.display($0, title: $1, category: $2) }
     }
 
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.

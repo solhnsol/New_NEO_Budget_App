@@ -152,3 +152,17 @@ private func timeline(_ life: LifeState, _ transactions: [TransactionMarker]) ->
     #expect(cell.unlinkedTransactionCount == 2)                       // the explicit "no activity" one and the never-allocated one
     #expect(cell.netSpend == [won(9_000)])
 }
+
+@Test func displayingTransactionsRenamesBlockLinesAndMarkersAndChangesNothingElse() throws {
+    let state = life([
+        allocation("in", to: "A", amount: .exact(4_000), of: 4_000),
+        allocation("stray", to: nil, amount: .exact(5_000), of: 5_000)
+    ])
+    let original = timeline(state, [marker("in", at: at(today, 10, 30), amount: 4_000, title: "BC카드 승인"), marker("stray", at: at(today, 15), amount: 5_000, title: "BC카드 승인")])
+    let shown = original.displayingTransactions { id, title, category in
+        id.rawValue == "in" ? ("커피", category) : (title, category)
+    }
+    #expect(shown.blocks.first { $0.title == "농구" }?.allocations.first?.title == "커피")
+    #expect(shown.markers.first { $0.transactionID.rawValue == "stray" }?.title == "BC카드 승인")
+    #expect(shown.summary == original.summary && shown.blocks.map(\.id) == original.blocks.map(\.id))
+}
