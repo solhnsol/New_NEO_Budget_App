@@ -134,4 +134,31 @@ public protocol CandidateProcessingRepository {
         expectedCandidateRevision: UInt64,
         expectedLedgerRevision: UInt64
     ) throws -> CandidateProcessingResult
+
+    /// The two revisions a caller passes back to `process`. Cheaper than a snapshot when nothing else of it is needed.
+    func revisions() throws -> (candidate: UInt64, ledger: UInt64)
+
+    /// The correlator's records for stored candidates whose time is within `radius` of `unixMilliseconds`, together with
+    /// the records that corroborate any of them. A repository without a time index may return more (all of them).
+    func correlationRecords(near unixMilliseconds: Int64, within radius: Int64) throws -> [CorrelationRecord]
+
+    /// The stored candidate that came from this notification event, if any.
+    func storedCandidate(ofNotification rawNotificationID: String, eventIndex: Int) throws -> StoredTransactionCandidate?
+}
+
+extension CandidateProcessingRepository {
+    public func revisions() throws -> (candidate: UInt64, ledger: UInt64) {
+        let snapshot = try processingSnapshot()
+        return (snapshot.candidateRevision, snapshot.ledger.revision)
+    }
+
+    public func correlationRecords(near unixMilliseconds: Int64, within radius: Int64) throws -> [CorrelationRecord] {
+        try processingSnapshot().candidates.values.compactMap(\.correlationRecord)
+    }
+
+    public func storedCandidate(ofNotification rawNotificationID: String, eventIndex: Int) throws -> StoredTransactionCandidate? {
+        try processingSnapshot().candidates.values.first {
+            $0.candidate.sourceDraft.map { $0.rawNotificationID == rawNotificationID && $0.eventIndex == eventIndex } == true
+        }
+    }
 }
