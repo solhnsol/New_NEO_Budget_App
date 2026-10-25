@@ -577,7 +577,7 @@ struct FixedGridBrowseView: View {
                 FixedBlockCell(item: item, zoneIdentifier: timeline.timeZoneIdentifier, scale: scale, overlays: overlayFrames)
                     .opacity(opacity(item.blendItem))
             }
-            ForEach(events, id: \.block.id) { item in
+            ForEach(Array(events.enumerated()), id: \.element.block.id) { index, item in
                 if let label = item.dotLabel {
                     EventDotLabel(block: item.block, label: label, presentation: item.presentation, scale: scale)
                         .opacity(opacity(item.blendItem))
@@ -587,7 +587,12 @@ struct FixedGridBrowseView: View {
                         block: item.block, frame: item.frame, place: item.title, columnRight: axis.gutterWidth + axis.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
                         maxTitleWidth: item.titleMaxWidth, startFits: item.startTimeFits,
-                        startIsCovered: coveringFrames.contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
+                        startIsCovered: coveringFrames.contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) },
+                        rangeIsCovered: {
+                            // The time range under the title is written above every card, so it gives way to a card in front of this one (drawn later) and to a transaction's chip.
+                            let rect = CGRect(x: item.frame.minX, y: item.frame.minY + 17, width: min(item.frame.width, 110), height: 14)
+                            return events[(index + 1)...].contains { $0.drawnFrame.intersects(rect) } || coveringFrames.contains { $0.intersects(rect) }
+                        }()
                     )
                     .opacity(opacity(item.blendItem))
                 }
@@ -1981,6 +1986,7 @@ private struct FixedBlockCell: View {
             presentation: item.presentation, scale: scale, zoneIdentifier: zoneIdentifier,
             endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
             startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
+            summaryIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.minX + 6, y: frame.maxY - 26, width: min(frame.width - 12, 150), height: 22)) },
             anchors: item.insideAnchors.map { $0 - frame.minY }
         )
         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
@@ -2010,8 +2016,8 @@ private struct FixedHourAxis: View {
                 if state.labelOpacity > 0.003 {
                     // Every hour is written the same, as Apple's Calendar writes it: period and hour on one line, centred on the line it belongs to
                     // (Hans picked this over four other axes, 2026-10-24). Which hours have room is still decided by `HourAxis.layout`.
-                    Text(Formatting.axisHourLabel(state.hour))
-                        .font(.system(size: metrics.labelFontSize * 0.95).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+                    AxisHourText(hour: state.hour, size: metrics.labelFontSize * 0.95)
+                        .foregroundStyle(Theme.textSecondary)
                     .lineLimit(1).minimumScaleFactor(0.5)
                     .frame(width: rail - 4, height: metrics.labelHeight, alignment: .trailing)
                     .opacity(state.labelOpacity)
@@ -2044,6 +2050,22 @@ private struct FixedNowLine: View {
                 .accessibilityHidden(true)
                 .allowsHitTesting(false)
             }
+        }
+    }
+}
+
+/// An hour on the axis as Apple's Calendar writes it: the hour's number a size larger than the small "오전" and "시" around it. Midnight and noon keep their names.
+private struct AxisHourText: View {
+    let hour: Int
+    let size: CGFloat
+
+    var body: some View {
+        if !CardStyle.current.isApple || hour % 12 == 0 {
+            Text(Formatting.axisHourLabel(hour)).font(.system(size: size).monospacedDigit())
+        } else {
+            (Text(hour < 12 ? "오전 " : "오후 ").font(.system(size: size * 0.74))
+                + Text("\(hour % 12)").font(.system(size: size * 1.0, weight: .medium).monospacedDigit())
+                + Text("시").font(.system(size: size * 0.74)))
         }
     }
 }
