@@ -325,7 +325,7 @@ private struct DayListTransactionLine: View {
         .listTap(onTap)
         // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
         .overlay(alignment: .leading) {
-            Circle().fill(Color(.systemBackground)).frame(width: 7, height: 7).overlay(Circle().stroke(railColor, lineWidth: 2))
+            Circle().fill(railColor).frame(width: 7, height: 7)
                 .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 3.5)
                 .allowsHitTesting(false)
         }
