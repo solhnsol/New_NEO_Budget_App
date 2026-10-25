@@ -175,7 +175,7 @@ public struct EditDraft: Hashable, Sendable {
     /// The event as the draft began. Never changes.
     public let original: Snapshot
     public let timeZone: DisplayTimeZone
-    public let extent: Extent
+    public private(set) var extent: Extent
     /// The edited range. Always the original or a range `issue(start:end:)` accepts.
     public private(set) var range: TimedRange
     /// The latest conflict judgement (see `observe` and `noteReload`).
@@ -290,6 +290,7 @@ public struct EditDraft: Hashable, Sendable {
     /// Back to the original range. Conflict state is about the original and stays.
     public mutating func revert() {
         range = originalRange
+        extent = .singleDay(timeZone.localDate(of: originalRange.startUnixMilliseconds))
     }
 
     /// One end of the range.
@@ -323,6 +324,25 @@ public struct EditDraft: Hashable, Sendable {
         }
         guard start != range.startUnixMilliseconds || end != range.endUnixMilliseconds, issue(start: start, end: end) == nil else { return false }
         range = try! TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: end)
+        return true
+    }
+
+    /// Carries the whole event to `day`, its start at the nearest grid line to `startMinute` (elapsed minutes of `day`), the length kept and the event held
+    /// inside the day. The draft's day becomes `day` (a person lifting the event and putting it down on another day). Never refuses; returns whether the
+    /// range or the day changed. Nothing changes when the event is longer than the day.
+    @discardableResult
+    public mutating func move(toDay day: LocalDate, startMinute: Int) -> Bool {
+        let step = Int64(Self.stepMinutes) * 60_000
+        let bounds = timeZone.dayBounds(day)
+        let length = range.endUnixMilliseconds - range.startUnixMilliseconds
+        guard length <= bounds.end - bounds.start else { return false }
+        let asked = Int64(startMinute) * 60_000
+        let snapped = (asked >= 0 ? (asked + step / 2) / step : -((-asked + step / 2) / step)) * step
+        let start = bounds.start + min(max(snapped, 0), bounds.end - bounds.start - length)
+        let end = start + length
+        guard extent != .singleDay(day) || start != range.startUnixMilliseconds, let moved = try? TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: end) else { return false }
+        extent = .singleDay(day)
+        range = moved
         return true
     }
 

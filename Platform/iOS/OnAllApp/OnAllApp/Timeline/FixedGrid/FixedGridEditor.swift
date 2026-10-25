@@ -131,6 +131,12 @@ final class FixedGridEditor {
             guard let original else { return }
             isSaving = true
             save(EventSaveRequest(original: original, proposedStart: draft.startDate, proposedEnd: draft.endDate, proposedTitle: newTitle), session: id)
+        case let .moved(id, moved):
+            guard id == session, var changed = draft else { return }
+            changed.move(toDay: moved.day, startMinute: moved.startMinute)
+            draft = changed
+            target = moved
+            reportDirty()
         case let .discard(id):
             guard id == session else { return }
             draft?.revert()
