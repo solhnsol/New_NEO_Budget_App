@@ -41,3 +41,11 @@ private func marker(_ id: String, minute: Int, won: Int64) throws -> Transaction
     let old = try JSONDecoder().decode(TransactionOverrideStore.self, from: Data(#"{"byTransaction":{}}"#.utf8))
     #expect(old.manual.isEmpty)
 }
+
+@Test func tagCountsListMostUsedFirstThenByName() {
+    var store = TransactionOverrideStore()
+    store[LedgerEntryID(rawValue: "a")] = TransactionOverride(tags: ["모임", "데이트"])
+    store[LedgerEntryID(rawValue: "b")] = TransactionOverride(tags: ["모임"])
+    let counts = AppModel.tagCounts(store)
+    #expect(counts.map(\.name) == ["모임", "데이트"] && counts.map(\.count) == [2, 1])
+}
