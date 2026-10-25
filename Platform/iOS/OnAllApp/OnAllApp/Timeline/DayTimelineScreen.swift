@@ -224,6 +224,7 @@ struct DayTimelineScreen: View {
             WeekStripView(
                 cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
                 onSelect: { day in
+                    guard unfold.allowsTap else { return }
                     unfold.close()
                     Task { await goTo(day) }
                 },

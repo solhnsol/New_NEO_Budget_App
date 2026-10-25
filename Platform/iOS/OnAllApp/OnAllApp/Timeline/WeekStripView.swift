@@ -13,6 +13,10 @@ import SwiftUI
 /// the same time, so the circle and capsule move with the days. Swiping the strip itself changes the week.
 /// When the week changes (a swipe on the strip), nothing morphs across pages: the old circle and capsule stay on their days and leave with
 /// the week, and the new ones simply appear on the new week.
+///
+/// One state drives all of it: the day number `position`. Each day's circle and number colour are drawn from whether that day is the
+/// position (one animation per day, keyed on that), and the capsule's two ends and the page are numbers animated towards it. A new day while
+/// any of those is mid-flight only retargets them; no task finishes, removes or places anything later.
 struct WeekStripView: View {
     let cells: [LocalDate: WeekStripDay]
     let selected: LocalDate
@@ -38,12 +42,9 @@ struct WeekStripView: View {
     /// The day (as a number) at the strip's left edge. Everything is placed by its own day number against this one value, so the strip can
     /// page between weeks, and be re-based when a swipe lands on a new week, without anything having to move.
     @State private var viewOffset: Double = 0
-    /// Where the circle is (a day number). Changed with its own animation, apart from the paging and the capsule.
-    @State private var ball: Int = 0
     @State private var seeded = false
-    /// The circle that has just left a day: it keeps following that day as it slides away, fading, so it never leaves an afterimage.
-    @State private var ghosts: [Ghost] = []
-    @State private var ballID = UUID()
+    /// The day whose circle is being carried off by its week (a week swipe): it keeps its circle, at full strength, until it is off screen.
+    @State private var leaving: Int?
     /// While a finger is dragging the strip, the strip follows it directly (no animation); on release it eases to the page it settles on.
     @State private var dragging = false
     @State private var stripWidth: CGFloat = 0
@@ -52,16 +53,15 @@ struct WeekStripView: View {
     /// A day tapped while (or just after) the strip is dragged is the drag's touch, not a pick.
     @State private var tapsBlockedUntil = Date.distantPast
     @State private var capsuleOpacity = 1.0
-    /// The trailing end's delayed catch-up: a newer move cancels the one before it, or it would land late and stretch the capsule.
-    @State private var catchUp: Task<Void, Never>?
-
-    /// Whether the circle that has just appeared grows in (a day change) or only fades in (a week swipe).
-    @State private var ballGrows = true
+    /// The new week's capsule appearing, and the end of a week swipe that moved no day: both are cancelled by the next move.
+    @State private var capsuleFade: Task<Void, Never>?
+    @State private var swipeReset: Task<Void, Never>?
     /// The capsule that has just left a week: it stays on the days it was on and slides away with them.
     @State private var capsuleGhosts: [CapsuleGhost] = []
 
-    private struct Ghost: Identifiable { let id = UUID(); let day: Int; let isToday: Bool; let fades: Bool }
     private struct CapsuleGhost: Identifiable { let id = UUID(); let lead: Double; let trail: Double }
+
+    private static let capsuleSpring = Animation.interpolatingSpring(stiffness: 190, damping: 19)
 
     private var weekStart: LocalDate { selected.adding(days: -selected.weekday) }
     private var position: Int { selected.daysSinceUnixEpoch + pendingShift }
@@ -100,7 +100,6 @@ struct WeekStripView: View {
                             ForEach(capsuleGhosts) { ghost in
                                 capsuleShape(lead: ghost.lead, trail: ghost.trail, offset: offset, cell: cell).transition(.identity)
                             }
-                            circles(cell: cell, offset: offset)
                             ForEach(low..<high, id: \.self) { number in
                                 dayCell(LocalDate(daysSinceUnixEpoch: number), cell: cell)
                                     .offset(x: (CGFloat(number) - CGFloat(offset)) * cell)
@@ -133,9 +132,13 @@ struct WeekStripView: View {
                         if far || flick, abs(value.translation.width) > 8 {
                             // The page changes with the day the strip's selection moves to (see `move`).
                             swipedWeek = true
-                            Task { @MainActor in
+                            leaving = position
+                            swipeReset?.cancel()
+                            swipeReset = Task { @MainActor in
                                 try? await Task.sleep(for: .milliseconds(600))
+                                guard !Task.isCancelled else { return }
                                 swipedWeek = false
+                                leaving = nil
                             }
                             // The strip does not wait for the day to move: it pages to the next week as the finger lets go (the screen may be busy
                             // moving the days below), and `move` then finds it already there. Until then it would sit half-way with no circle.
@@ -153,19 +156,17 @@ struct WeekStripView: View {
         .onAppear { seed() }
         // The day can change inside a transaction that turns animations off (the screen moves the selected day that way, so the grid below does not
         // animate): the strip's own motion is started in a fresh one, so the page, the circle leaving with its week and the capsule always move.
-        .onChange(of: position) { _, _ in withTransaction(Transaction()) { move() } }
+        .onChange(of: position) { old, _ in withTransaction(Transaction()) { move(from: old) } }
     }
 
     private enum Role { case none, first, second }
 
     private func role(of day: LocalDate) -> Role {
         let number = day.daysSinceUnixEpoch
-        if number == ball { return .first }
-        if showsNextDay, number == ball + 1 { return .second }
         // The circle and capsule that are leaving with their week still sit on their own days, so those numbers keep how they were written on them.
-        for ghost in ghosts where !ghost.fades {
-            if number == ghost.day { return .first }
-            if showsNextDay, number == ghost.day + 1 { return .second }
+        for anchor in [position] + (leaving.map { [$0] } ?? []) {
+            if number == anchor { return .first }
+            if showsNextDay, number == anchor + 1 { return .second }
         }
         return .none
     }
@@ -175,50 +176,31 @@ struct WeekStripView: View {
     private func seed() {
         var transaction = Transaction()
         transaction.disablesAnimations = true
-        withTransaction(transaction) { leading = Double(position); trailing = Double(position); viewOffset = Double(pageStart); ball = position }
+        withTransaction(transaction) { leading = Double(position); trailing = Double(position); viewOffset = Double(pageStart) }
         seeded = true
     }
 
-    /// The circle changes day at once; the capsule's left end follows it, and its right end a moment later, which is what makes it stretch
-    /// like a liquid. The paging, the circle and the capsule each have their own animation, set where they are drawn.
-    private func move() {
+    /// The capsule's left end follows the new day at once and its right end a moment later (the delay belongs to the animation), which is what
+    /// makes it stretch like a liquid. A newer day replaces both animations where they are, so nothing waits to land late.
+    private func move(from previous: Int) {
         guard seeded else { return seed() }
         let target = position
-        catchUp?.cancel()
+        let wasSwipe = swipedWeek
+        swipedWeek = false
+        swipeReset?.cancel()
+        capsuleFade?.cancel()
+        if !wasSwipe { leaving = nil; capsuleOpacity = 1 }
         viewOffset = Double(pageStart)
-        if ball != target {
-            let ghost = Ghost(day: ball, isToday: ball == today.daysSinceUnixEpoch, fades: !swipedWeek)
-            ghosts.append(ghost)
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(400))
-                ghosts.removeAll { $0.id == ghost.id }
-            }
-        }
-        let previous = ball
-        ballID = UUID()
-        ballGrows = !swipedWeek
-        ball = target
-        if swipedWeek {
-            swipedWeek = false
-            replaceCapsule(to: target)
-            return
-        }
+        if wasSwipe { return replaceCapsule(to: target) }
         // Going forward the circle's end moves first and the far end catches up (the capsule squeezes, then stretches). Going back it is the
         // far end that moves first and the circle's end that catches up, so the capsule does the same thing in both directions.
+        let quick = Self.capsuleSpring, slow = Self.capsuleSpring.delay(0.045)
         if target < previous {
-            trailing = Double(target)
-            catchUp = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(45))
-                guard !Task.isCancelled else { return }
-                leading = Double(target)
-            }
-            return
-        }
-        leading = Double(target)
-        catchUp = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(45))
-            guard !Task.isCancelled else { return }
-            trailing = Double(target)
+            withAnimation(quick) { trailing = Double(target) }
+            withAnimation(slow) { leading = Double(target) }
+        } else {
+            withAnimation(quick) { leading = Double(target) }
+            withAnimation(slow) { trailing = Double(target) }
         }
     }
 
@@ -234,8 +216,9 @@ struct WeekStripView: View {
         var transaction = Transaction()
         transaction.disablesAnimations = true
         withTransaction(transaction) { leading = Double(target); trailing = Double(target); capsuleOpacity = 0 }
-        Task { @MainActor in
+        capsuleFade = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(30))
+            guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.16)) { capsuleOpacity = 1 }
         }
     }
@@ -250,11 +233,9 @@ struct WeekStripView: View {
                     InterpolatedView(value: viewOffset) { offset in
                         capsuleShape(lead: lead, trail: trail, offset: offset, cell: cell).opacity(capsuleOpacity)
                     }
-                    .animation(dragging ? nil : .interpolatingSpring(stiffness: 190, damping: 19), value: viewOffset)
+                    .animation(dragging ? nil : Self.capsuleSpring, value: viewOffset)
                 }
-                .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: trailing)
             }
-            .animation(.interpolatingSpring(stiffness: 190, damping: 19), value: leading)
         }
     }
 
@@ -271,34 +252,21 @@ struct WeekStripView: View {
         if abs(stripWidth - width) > 0.5 { DispatchQueue.main.async { stripWidth = width } }
     }
 
-    /// The circle on the first day and the ones that have just left. They are placed like the days, by day number against the same
-    /// interpolated offset, so a circle that is fading out keeps sliding with its day.
-    private func circles(cell: CGFloat, offset: Double) -> some View {
-        ZStack(alignment: .topLeading) {
-            ForEach(ghosts) { ghost in
-                FadingBall(color: ghost.isToday ? Theme.accent : Theme.textPrimary, size: Self.ball, fades: ghost.fades)
-                    .transition(.identity)
-                    .offset(x: (CGFloat(ghost.day) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
-            }
-            GrowingBall(color: ball == today.daysSinceUnixEpoch ? Theme.accent : Theme.textPrimary, size: Self.ball, grows: ballGrows)
-                .id(ballID)
-                .transition(.identity)
-                .offset(x: (CGFloat(ball) - CGFloat(offset)) * cell + (cell - Self.ball) / 2, y: (Self.numberRow - Self.ball) / 2)
-        }
-    }
-
     private func dayCell(_ day: LocalDate, cell: CGFloat) -> some View {
         let info = cells[day]
         let role = role(of: day)
         return VStack(spacing: 0) {
             ZStack {
+                // The day's own circle: in when it is the first day, out when it is not, and the number's colour with it, all from `role`. A day
+                // changed again half-way simply turns back from wherever it is.
+                Circle().fill(day == today ? Theme.accent : Theme.textPrimary).frame(width: Self.ball, height: Self.ball)
+                    .scaleEffect(role == .first || swipedWeek ? 1 : 0.3)
+                    .opacity(role == .first ? 1 : 0)
+                    .allowsHitTesting(false)
                 Button { if Date() >= tapsBlockedUntil { onSelect(day) } } label: {
                     Text("\(day.day)")
                         .font(.callout.monospacedDigit().weight(role == .none ? .regular : .bold))
                         .foregroundStyle(numberColor(role, day))
-                        // The number changes colour in step with the circle growing in or fading out under it; switched at once, it would be
-                        // white on nothing (or dark on the circle still leaving) for the length of that fade.
-                        .animation(.easeOut(duration: 0.1), value: role)
                         .frame(maxWidth: .infinity, minHeight: Self.numberRow)
                         .contentShape(Rectangle())
                 }
@@ -307,6 +275,7 @@ struct WeekStripView: View {
                 .accessibilityAddTraits(isShown(day) ? .isSelected : [])
             }
             .frame(height: Self.numberRow)
+            .animation(roleAnimation(role), value: role)
             HStack(spacing: 3) {
                 Circle().fill((info?.eventCount ?? 0) > 0 ? Theme.accent : .clear).frame(width: 5, height: 5)
                 Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
@@ -322,6 +291,12 @@ struct WeekStripView: View {
             }
         }
         .frame(width: cell)
+    }
+
+    /// The circle grows in over a moment and fades out over a little longer; a circle carried off by its week is not animated at all.
+    private func roleAnimation(_ role: Role) -> Animation? {
+        if role == .first { return .easeOut(duration: 0.16) }
+        return swipedWeek ? nil : .easeOut(duration: 0.2)
     }
 
     private func numberColor(_ role: Role, _ day: LocalDate) -> Color {
@@ -374,34 +349,4 @@ private struct InterpolatedView<Content: View>: View, Animatable {
     }
 
     var body: some View { content(value) }
-}
-
-/// A circle that grows from its own centre when it appears (or, with `grows` off, only fades in).
-private struct GrowingBall: View {
-    let color: Color
-    let size: CGFloat
-    var grows = true
-    @State private var shown = false
-
-    var body: some View {
-        Circle().fill(color).frame(width: size, height: size)
-            .scaleEffect(grows && !shown ? 0.3 : 1)
-            .opacity(shown ? 1 : 0)
-            .onAppear { withAnimation(.easeOut(duration: 0.16)) { shown = true } }
-    }
-}
-
-/// A circle that fades out where it is (its owner keeps moving it with its day).
-private struct FadingBall: View {
-    let color: Color
-    let size: CGFloat
-    /// False when the circle should leave at full strength, only carried off by its week.
-    var fades = true
-    @State private var faded = false
-
-    var body: some View {
-        Circle().fill(color).frame(width: size, height: size)
-            .opacity(fades && faded ? 0 : 1)
-            .onAppear { withAnimation(.easeOut(duration: 0.2)) { faded = true } }
-    }
 }
