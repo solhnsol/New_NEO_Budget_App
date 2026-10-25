@@ -216,11 +216,10 @@ private struct ListBox<Lines: View>: View {
 
     private var gapContent: some View {
         VStack(alignment: .leading, spacing: Theme.Space.m) {
-            // The summary stays on top whether the stretch is folded or open, with a small arrow that says which way a tap goes.
+            // The summary stays on top whether the stretch is folded or open; a tap on it opens or folds the stretch.
             HStack(spacing: Theme.Space.xs) {
                 Text(["거래 \(gapCount)건", totalText].compactMap { $0 }.joined(separator: " · "))
                     .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.system(size: 10, weight: .semibold)).foregroundStyle(Theme.textTertiary)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
