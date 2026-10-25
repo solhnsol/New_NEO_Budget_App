@@ -134,7 +134,9 @@ private struct ListRail {
     static let gutter: CGFloat = 24
     static let barWidth: CGFloat = 6
     /// How far a transaction is set in from the line it hangs on (its dot sits on the line).
-    static let indent: CGFloat = 36
+    static let indent: CGFloat = 12
+    /// The column left of the line that carries each box's and transaction's time, as on a timeline.
+    static let timeWidth: CGFloat = 46
 }
 
 private extension EnvironmentValues {
@@ -155,6 +157,8 @@ private struct ListBox<Lines: View>: View {
     let symbol: String
     /// The empty stretch between events: no name, no time, no bar; only its transactions, always shown (never folded), on the grey line.
     var gap = false
+    /// When the box starts, shown in the column left of the line.
+    var startText: String?
     let hasLines: Bool
     var onSelect: (() -> Void)?
     @ViewBuilder let lines: () -> Lines
@@ -163,6 +167,10 @@ private struct ListBox<Lines: View>: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Theme.Space.s) {
+            Group {
+                if let startText { TimeLabel(text: startText).padding(.top, Theme.Space.m) } else { Color.clear }
+            }
+            .frame(width: ListRail.timeWidth, alignment: .trailing)
             rail_
             content
         }
@@ -245,11 +253,20 @@ private struct EventCard: View {
     let onSelect: () -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
+    /// How long it lasts, as a person says it: 1시간 30분.
+    private static func duration(from start: Int64, to end: Int64) -> String {
+        let minutes = max(0, Int((end - start) / 60_000))
+        let hours = minutes / 60, rest = minutes % 60
+        if hours == 0 { return "\(rest)분" }
+        return rest == 0 ? "\(hours)시간" : "\(hours)시간 \(rest)분"
+    }
+
     var body: some View {
         ListBox(
-            rail: rail, title: block.title, timeText: Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zone.identifier),
+            rail: rail, title: block.title, timeText: Self.duration(from: block.startUnixMilliseconds, to: block.endUnixMilliseconds),
             totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
-            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: model.calendarSymbol(id: block.eventKey.calendarID, title: block.calendarTitle), hasLines: !block.allocations.isEmpty, onSelect: onSelect
+            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: model.calendarSymbol(id: block.eventKey.calendarID, title: block.calendarTitle),
+            startText: Formatting.time(block.startUnixMilliseconds, zoneIdentifier: zone.identifier), hasLines: !block.allocations.isEmpty, onSelect: onSelect
         ) {
             ForEach(block.allocations, id: \.allocationID) { item in
                 DayListTransactionLine(
@@ -320,13 +337,17 @@ private struct DayListTransactionLine: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                 Text(title).font(Theme.Typo.label).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
             }
             Spacer(minLength: Theme.Space.s)
             Text((isRefund ? "+" : "") + amountText).font(.system(.subheadline, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
         }
         .listTap(onTap)
-        // A small dot on the day's line, level with the row: each transaction reads as a moment on the timeline.
+        // Its time sits in the column left of the line and a small dot on the line, level with the row: each transaction reads as a moment on a timeline.
+        .overlay(alignment: .leading) {
+            TimeLabel(text: detail).frame(width: ListRail.timeWidth, alignment: .trailing)
+                .offset(x: -(ListRail.timeWidth + Theme.Space.s + ListRail.gutter + Theme.Space.s + ListRail.indent))
+                .allowsHitTesting(false)
+        }
         .overlay(alignment: .leading) {
             Group {
                 if railRing {
@@ -338,6 +359,24 @@ private struct DayListTransactionLine: View {
             .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - (railRing ? 6 : 3.5))
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// A time in the column beside the line: the 오전/오후 small above the clock time; a date (a transaction of another day) is shown as it is.
+private struct TimeLabel: View {
+    let text: String
+
+    var body: some View {
+        let parts = text.split(separator: " ", maxSplits: 1).map(String.init)
+        VStack(alignment: .trailing, spacing: 0) {
+            if parts.count == 2 {
+                Text(parts[0]).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
+                Text(parts[1]).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+            } else {
+                Text(text).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        .lineLimit(1).minimumScaleFactor(0.8)
     }
 }
 
