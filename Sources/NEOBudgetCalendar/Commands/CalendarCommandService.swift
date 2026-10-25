@@ -215,6 +215,7 @@ public actor CalendarCommandService {
         case let .unassignTag(input): return await assignTag(input, remove: true)
         case let .setAllocations(input): return await setAllocations(input)
         case let .upsertPerson(person): return applyLocal([.upsertPerson(person)], activityID: nil)
+        case let .removePerson(id, by): return applyLocal([.removePerson(id, by: by)], activityID: nil)
         case let .addParticipant(input): return await participant(input, remove: false)
         case let .removeParticipant(input): return await participant(input, remove: true)
         case let .createObligation(input): return await createObligation(input)

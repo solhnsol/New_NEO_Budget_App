@@ -47,6 +47,13 @@ struct LedgerScreen: View {
                     .frame(maxWidth: 220)
                 }
                 ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        PeopleListView(model: model)
+                    } label: {
+                        Label("사람", systemImage: "person.2")
+                    }
+                }
                 if !model.isDemo {
                     ToolbarItem(placement: .topBarTrailing) {
                         NavigationLink {
