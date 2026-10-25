@@ -48,6 +48,8 @@ public struct IntakeLedger {
     public private(set) var setup: IntakeSetup
     public private(set) var repository: InMemoryCandidateProcessingRepository
     private var outcomes: [String: NotificationIntakeOutcome]
+    /// Where each received notification sits in `notifications`, which is also the set of IDs already received.
+    private var positions: [String: Int]
     public let intake: NotificationIntake
     public let history: ImportedHistory?
     /// What the history became (nil without one). The setup already holds its accounts.
@@ -63,6 +65,7 @@ public struct IntakeLedger {
         self.setup = setup
         self.repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
         self.outcomes = [:]
+        self.positions = [:]
         self.intake = intake
         try seedHistory()
         try replay(notifications)
@@ -71,8 +74,11 @@ public struct IntakeLedger {
     /// Adds the notifications not already received (by ID) and processes them. Returns the ones that were new.
     @discardableResult
     public mutating func receive(_ incoming: [RawNotification]) throws -> [RawNotification] {
-        var known = Set(notifications.map(\.id))
-        let fresh = incoming.filter { known.insert($0.id).inserted }
+        var fresh: [RawNotification] = []
+        for notification in incoming where positions[notification.id] == nil {
+            positions[notification.id] = notifications.count + fresh.count
+            fresh.append(notification)
+        }
         for notification in fresh {
             notifications.append(notification)
             if !isCoveredByImport(notification) { ingest(notification) }
@@ -149,7 +155,7 @@ public struct IntakeLedger {
     /// For a notification that waits only because its message never names the account (a pay app, a wallet, a
     /// transit card): which account messages like it belong to. Nil when a rule could not settle it.
     public func ruleQuestion(for notificationID: String) -> RuleQuestion? {
-        guard let notification = notifications.first(where: { $0.id == notificationID }) else { return nil }
+        guard let notification = notification(withID: notificationID) else { return nil }
         let evidence = intake.extractor.evidence(from: notification)
         guard case let .needsConfirmation(reason, _) = setup.registry.resolve(evidence),
               reason == .noIdentifier || reason == .weakIdentifier,
@@ -171,7 +177,7 @@ public struct IntakeLedger {
         _ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?,
         at unixMilliseconds: Int64, makeID: () -> String
     ) throws {
-        guard let notification = notifications.first(where: { $0.id == question.notificationID }) else { return }
+        guard let notification = notification(withID: question.notificationID) else { return }
         let evidence = intake.extractor.evidence(from: notification)
         var setup = self.setup
         let target: ResolvedLedgerBinding
@@ -187,16 +193,16 @@ public struct IntakeLedger {
     }
 
     public func status(of notificationID: String) -> IntakeStatus {
-        if let notification = notifications.first(where: { $0.id == notificationID }), isCoveredByImport(notification) { return .coveredByImport }
+        if let notification = notification(withID: notificationID), isCoveredByImport(notification) { return .coveredByImport }
         guard let outcome = outcomes[notificationID] else { return .failed }
         switch outcome {
         case let .notTransaction(reason): return .notTransaction(reason)
         case let .unreadable(failure): return .unreadable(failure)
         case let .processed(candidateID, _):
-            guard let snapshot = try? repository.processingSnapshot(), let stored = snapshot.candidates[candidateID] else { return .failed }
+            guard let stored = repository.storedCandidate(candidateID) else { return .failed }
             if let entry = stored.promotedEntryID { return .recorded(entry) }
             if let act = stored.corroborates?.candidateID {
-                if let entry = snapshot.candidates[act]?.promotedEntryID { return .recorded(entry) }
+                if let entry = repository.storedCandidate(act)?.promotedEntryID { return .recorded(entry) }
                 return .sameActAs(act)
             }
             return .waiting(stored.candidate.issues)
@@ -209,6 +215,7 @@ public struct IntakeLedger {
         repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
         outcomes = [:]
         notifications = []
+        positions = [:]
         try seedHistory()
         try replay(all)
     }
@@ -218,9 +225,13 @@ public struct IntakeLedger {
     private mutating func seedHistory() throws {
         guard let importPlan else { return }
         for candidate in importPlan.candidates {
-            let snapshot = try repository.processingSnapshot()
-            _ = try? repository.process(candidate, expectedCandidateRevision: snapshot.candidateRevision, expectedLedgerRevision: snapshot.ledger.revision)
+            let revisions = try repository.revisions()
+            _ = try? repository.process(candidate, expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger)
         }
+    }
+
+    private func notification(withID id: String) -> RawNotification? {
+        positions[id].map { notifications[$0] }
     }
 
     private func isCoveredByImport(_ notification: RawNotification) -> Bool {

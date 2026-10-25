@@ -33,7 +33,37 @@ public struct NotificationCorrelator: Sendable {
     /// Rule id of a bank withdrawal that was read as the Toss purchase it paid (`quickPayRecording`).
     public static let tossQuickPayRuleID = "toss-quick-pay"
 
+    /// How far in time from an incoming notification a stored one can still be a partner or a close. Every rule except the
+    /// refund suggestion compares times within one of the tolerances above, so records further away never matter.
+    public var searchRadiusMilliseconds: Int64 {
+        max(matchToleranceMilliseconds, walletTapToleranceMilliseconds, tossPairToleranceMilliseconds)
+    }
+
+    /// The shop (or payee) name with spacing and case removed, which is what a refund is matched to a purchase by. Nil when
+    /// there is none.
+    public static func purchaseNameKey(_ draft: TransactionCandidateDraft) -> String? { name(draft) }
+
+    /// The `purchaseNameKey` an incoming notification looks for earlier purchases under, or nil when it is not the kind of
+    /// notification that is suggested as the return of one (a refund, a cancellation or a deposit with no reference to the
+    /// original approval).
+    public static func refundSearchKey(for draft: TransactionCandidateDraft) -> String? {
+        guard [.refund, .cancellation, .deposit].contains(draft.kind),
+              !draft.evidence.contains(where: { $0.kind == .originalApprovalReference }) else { return nil }
+        return name(draft)
+    }
+
     public func decide(_ incoming: CorrelationObservation, against records: [CorrelationRecord]) -> CorrelationDecision {
+        decide(incoming, nearby: records, sameNamePurchases: records)
+    }
+
+    /// The same decision from a part of the records. `nearby` has every record whose time is within
+    /// `searchRadiusMilliseconds` of the incoming one, plus the records that corroborate any of them; `sameNamePurchases`
+    /// has every purchase record under the incoming notification's `purchaseNameKey` (the only rule that reaches back
+    /// further than the tolerances). Records outside both cannot change the decision, so a caller that keeps them indexed
+    /// need not hand over the whole history.
+    public func decide(
+        _ incoming: CorrelationObservation, nearby records: [CorrelationRecord], sameNamePurchases: [CorrelationRecord]
+    ) -> CorrelationDecision {
         let open = records.filter { $0.candidateID != incoming.candidateID }
         if let match = corroboration(of: incoming, in: open) { return .corroborates(match) }
 
@@ -48,7 +78,7 @@ public struct NotificationCorrelator: Sendable {
         }
         if !closes.isEmpty { return .newAct(NewAct(closes: closes)) }
 
-        let suggestions = refundSuggestions(for: incoming, in: open) + sameMoneySuggestions(for: incoming, in: open)
+        let suggestions = refundSuggestions(for: incoming, in: sameNamePurchases.filter { $0.candidateID != incoming.candidateID }) + sameMoneySuggestions(for: incoming, in: open)
         if !suggestions.isEmpty { return .suggests(suggestions) }
         return .newAct(NewAct())
     }
@@ -145,9 +175,7 @@ public struct NotificationCorrelator: Sendable {
     // MARK: Amount and time only: a suggestion, never a merge
 
     private func refundSuggestions(for incoming: CorrelationObservation, in records: [CorrelationRecord]) -> [CorrelationMatch] {
-        guard [.refund, .cancellation, .deposit].contains(incoming.draft.kind),
-              !incoming.draft.evidence.contains(where: { $0.kind == .originalApprovalReference }),
-              let name = Self.name(incoming.draft) else { return [] }
+        guard let name = Self.refundSearchKey(for: incoming.draft) else { return [] }
         return records
             .filter { record in
                 record.entryID != nil && record.corroborates == nil && record.draft.kind == .purchase && Self.name(record.draft) == name

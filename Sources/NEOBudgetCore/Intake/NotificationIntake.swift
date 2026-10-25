@@ -138,16 +138,14 @@ public struct NotificationIntake: Sendable {
             candidateID: TransactionCandidateID(rawValue: "-"), draft: draft, evidence: evidence,
             registry: setup.registry, fallbackSource: notification.source.applicationIdentifier
         )
-        let snapshot = try repository.processingSnapshot()
+        let revisions = try repository.revisions()
         // The second half of a Toss payment paid from a bank account is the expense: the account of the withdrawal, the shop of
         // the Toss alert. Neither alone can be booked, so what is assembled depends on the half already waiting.
         var recordedDraft = draft
         var recordedResolution = resolution
         var binding = observationWithoutID.binding
-        let waiting = snapshot.candidates.values.compactMap(\.correlationRecord)
-        let earlier = snapshot.candidates.values.first {
-            $0.candidate.sourceDraft.map { $0.rawNotificationID == draft.rawNotificationID && $0.eventIndex == draft.eventIndex } == true
-        }
+        let waiting = try repository.correlationRecords(near: draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
+        let earlier = try repository.storedCandidate(ofNotification: draft.rawNotificationID, eventIndex: draft.eventIndex)
         if let recorded = earlier?.observation, recorded.draft.ruleID == NotificationCorrelator.tossQuickPayRuleID || recorded.notificationType == .tossPayment {
             // The same notification again: it is recorded as it was the first time, whatever has been paired since.
             recordedDraft = recorded.draft
@@ -170,7 +168,7 @@ public struct NotificationIntake: Sendable {
         )
         let result = try repository.process(
             candidate, observation: observation, correlator: correlator,
-            expectedCandidateRevision: snapshot.candidateRevision, expectedLedgerRevision: snapshot.ledger.revision
+            expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger
         )
         return .processed(candidateID: candidate.id, result: result)
     }
