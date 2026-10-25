@@ -1,15 +1,15 @@
 import NEOBudgetCore
 import SwiftUI
 
-/// How the calendar shows a day: the time grid, or the list of cards (events with the transactions that went to them).
+/// How the calendar shows a day: the time grid, or one day at a time as a page (events with the transactions that went to them), turned sideways.
 enum CalendarStyle: String, CaseIterable {
-    case grid, list, pager
+    case grid, pager
 
     static let storageKey = "calendarStyle"
-    var title: String { switch self { case .grid: "시간표"; case .list: "리스트"; case .pager: "하루씩" } }
-    var symbol: String { switch self { case .grid: "calendar.day.timeline.left"; case .list: "list.bullet"; case .pager: "rectangle.portrait.on.rectangle.portrait" } }
-    /// The style the one-tap button switches to: grid, list, then the day-at-a-time pager, and round again.
-    var next: CalendarStyle { switch self { case .grid: .list; case .list: .pager; case .pager: .grid } }
+    var title: String { self == .grid ? "시간표" : "하루씩" }
+    var symbol: String { self == .grid ? "calendar.day.timeline.left" : "rectangle.portrait.on.rectangle.portrait" }
+    /// The style the one-tap button switches to.
+    var next: CalendarStyle { self == .grid ? .pager : .grid }
 }
 
 /// Where the ledger's own screens are opened from now that the ledger is not a tab.

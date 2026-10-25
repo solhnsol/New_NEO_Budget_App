@@ -81,7 +81,7 @@ struct DayTimelineScreen: View {
         let delta = day.daysSinceUnixEpoch - model.selectedDay.daysSinceUnixEpoch
         guard delta != 0 else { return }
         if style.wrappedValue != .grid {
-            // The list (or pager) scrolls itself to the selected day (it answers the selection changing); the week strip answers at once.
+            // The pager turns itself to the selected day (it answers the selection changing); the week strip answers at once.
             Haptics.snap()
             _ = model.moveTo(day)
             await model.loadMissing()
@@ -150,7 +150,6 @@ struct DayTimelineScreen: View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
         let isList = style.wrappedValue != .grid
-        let isPager = style.wrappedValue == .pager
         return ZStack(alignment: .top) {
           VStack(spacing: 0) {
             if isList {
@@ -164,17 +163,10 @@ struct DayTimelineScreen: View {
                         await model.loadMissing()
                     }
                 }
-                if isPager {
-                    DayPagerView(
-                        model: model, topInset: chromeFrame.maxY,
-                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                    )
-                } else {
-                    DayListView(
-                        model: model, topInset: chromeFrame.maxY,
-                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                    )
-                }
+                DayPagerView(
+                    model: model, topInset: chromeFrame.maxY,
+                    onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+                )
             } else {
                 Color.clear.frame(height: chromeHeight)
                 if BrowseAxisMode.current == .fixedGrid {
