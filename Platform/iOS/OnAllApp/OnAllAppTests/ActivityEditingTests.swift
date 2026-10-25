@@ -65,3 +65,25 @@ private let key = CalendarEventKey(calendarID: CalendarID(rawValue: "c"), eventI
     #expect(ActivityEditing.cleanName("   ") == nil)
     #expect(ActivityEditing.newID(prefix: "area") != ActivityEditing.newID(prefix: "area"))
 }
+
+@Test func eventChoicesListEachTimedEventOnceNearestTheTransactionFirstAndCandidatesSpanDays() throws {
+    func timed(_ id: String, minute: Int, on date: LocalDate) throws -> CalendarEvent {
+        let range = try TimedRange(startUnixMilliseconds: zone.instant(of: date, minuteOfDay: minute), endUnixMilliseconds: zone.instant(of: date, minuteOfDay: minute + 60))
+        return CalendarEvent(id: CalendarEventID(rawValue: id), calendarID: key.calendarID, title: id, time: .timed(range), revisionToken: "r")
+    }
+    func timeline(_ date: LocalDate, events: [CalendarEvent], spend: [TransactionMarker] = []) -> DayTimeline {
+        DayTimelineBuilder.build(DayTimelineInput(day: date, timeZone: zone, calendars: [], events: events, life: .empty, transactions: spend))
+    }
+    let tomorrow = day.adding(days: 1)
+    let lunch = try timed("lunch", minute: 720, on: day)
+    let dinner = try timed("dinner", minute: 1_080, on: day)
+    let breakfast = try timed("breakfast", minute: 480, on: tomorrow)
+    let night = TransactionMarker(id: LedgerEntryID(rawValue: "night"), occurredAtUnixMilliseconds: zone.instant(of: day, minuteOfDay: 1_380),
+                                  amount: try Money(minorUnits: 5_000, currency: "KRW"), flow: .spend, title: "night")
+    let timelines = [timeline(day, events: [lunch, dinner], spend: [night]), timeline(tomorrow, events: [breakfast])]
+    // Paid at 23:00: dinner is nearest, then tomorrow's breakfast, then lunch.
+    #expect(ActivityEditing.eventChoices(near: night.occurredAtUnixMilliseconds, in: timelines).map(\.title) == ["dinner", "breakfast", "lunch"])
+    // Breakfast tomorrow can take last night's payment, which is on yesterday's timeline.
+    let block = try #require(timelines[1].blocks.first)
+    #expect(ActivityEditing.linkCandidates(for: block, among: timelines.flatMap(\.markers)).map(\.transactionID.rawValue) == ["night"])
+}
