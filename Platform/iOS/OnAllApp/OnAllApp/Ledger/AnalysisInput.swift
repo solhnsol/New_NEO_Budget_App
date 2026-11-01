@@ -12,11 +12,11 @@ enum AnalysisInput {
         _ entries: [LedgerListEntry], life: LifeState, zone: DisplayTimeZone, recurring: RecurringDecisions = RecurringDecisions()
     ) -> [AnalysisTransaction] {
         let entries = entries.filter { $0.transaction.amount.currency == currency }
-        let pending = pendingByPurchase(entries, life: life)
         return entries.map { entry in
-            let net = entry.signedNetMinorUnits
-            // What is still expected from others is taken out of my share now, and shown as waiting; it can never take more than what is left.
-            let waiting = max(0, min(pending[entry.id] ?? 0, net))
+            // `netted` already takes what is still expected from others off the purchase (a `.pending` offset): it is shown as waiting, and can never take more than what is left.
+            let expected = entry.offsets.reduce(0 as Int64) { if case .pending = $1.kind { $0 + $1.minorUnits } else { $0 } }
+            let net = entry.signedNetMinorUnits + expected
+            let waiting = max(0, min(expected, net))
             let activity = activity(of: entry, life: life)
             return AnalysisTransaction(
                 id: entry.id.rawValue, date: zone.localDate(of: entry.transaction.occurredAtUnixMilliseconds), shareMinorUnits: net - waiting,
@@ -36,19 +36,6 @@ enum AnalysisInput {
                 amountMinorUnits: entry.transaction.amount.minorUnits
             )
         }
-    }
-
-    /// Open receivables, by the purchase they would pay back (the same purchase `LedgerList.netted` puts a received settlement on).
-    private static func pendingByPurchase(_ entries: [LedgerListEntry], life: LifeState) -> [LedgerEntryID: Int64] {
-        let spends = Set(entries.filter { $0.transaction.flow == .spend }.map(\.id))
-        var pending: [LedgerEntryID: Int64] = [:]
-        for obligation in life.obligations.values where obligation.direction == .receivable && obligation.currency == currency {
-            guard obligation.status == .open || obligation.status == .partiallySettled,
-                  let remaining = life.balance(of: obligation.id)?.remainingMinorUnits, remaining > 0,
-                  let purchase = LedgerList.purchase(for: obligation, life: life, isPurchase: { spends.contains($0) }) else { continue }
-            pending[purchase, default: 0] += remaining
-        }
-        return pending
     }
 
     /// shortcut: a transaction split across several activities is analysed with the first one; split by activity when this matters.
