@@ -140,6 +140,7 @@ private let transit = CanonicalCategoryID(rawValue: "transport")
     #expect(edited.title == "지하철" && edited.category?.rawValue == "food")              // the user's edit wins, field by field
     let plain = store.display(a, title: "Cafe", category: CanonicalCategoryID(rawValue: "x"))
     #expect(plain.title == "Cafe" && plain.category?.rawValue == "x")                    // nothing matched: untouched
+}
 
 @Test func tagCountsListMostUsedFirstThenByName() {
     var store = TransactionOverrideStore()
