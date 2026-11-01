@@ -136,11 +136,27 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
     public private(set) var profiles: [AccountProfile]
     public private(set) var candidates: [AccountCandidate]
     public private(set) var rules: [SourceRule]
+    /// Words a bank message uses for one of the user's own accounts (`토스페이충전`, the user's own name on a deposit).
+    /// Exists only because the user confirmed it.
+    public private(set) var counterpartAliases: [String: AccountID]
 
-    public init(profiles: [AccountProfile] = [], candidates: [AccountCandidate] = [], rules: [SourceRule] = []) {
+    public init(profiles: [AccountProfile] = [], candidates: [AccountCandidate] = [], rules: [SourceRule] = [],
+                counterpartAliases: [String: AccountID] = [:]) {
         self.profiles = profiles
         self.candidates = candidates
         self.rules = rules
+        self.counterpartAliases = counterpartAliases
+    }
+
+    private enum CodingKeys: String, CodingKey { case profiles, candidates, rules, counterpartAliases }
+
+    /// Registries saved before aliases existed have no `counterpartAliases`.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        profiles = try values.decode([AccountProfile].self, forKey: .profiles)
+        candidates = try values.decode([AccountCandidate].self, forKey: .candidates)
+        rules = try values.decode([SourceRule].self, forKey: .rules)
+        counterpartAliases = try values.decodeIfPresent([String: AccountID].self, forKey: .counterpartAliases) ?? [:]
     }
 
     public func profile(_ binding: ResolvedLedgerBinding) -> AccountProfile? {
@@ -349,6 +365,43 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
         guard let index = rules.firstIndex(where: { $0.id == id }) else { throw AccountRegistryError.unknownRule(id) }
         rules.remove(at: index)
     }
+
+    // MARK: Counterpart aliases
+
+    /// The user says a word in bank messages means this account of theirs, so the other side of the message is known
+    /// without a number. Throws `unknownBinding` for a card liability or an account that is not registered.
+    public mutating func addCounterpartAlias(_ phrase: String, to binding: ResolvedLedgerBinding) throws {
+        guard case let .account(account) = binding, profile(binding) != nil else { throw AccountRegistryError.unknownBinding(binding) }
+        let key = Self.aliasKey(phrase)
+        guard !key.isEmpty else { throw AccountRegistryError.emptyDisplayName }
+        counterpartAliases[key] = account
+    }
+
+    public mutating func removeCounterpartAlias(_ phrase: String) {
+        counterpartAliases[Self.aliasKey(phrase)] = nil
+    }
+
+    /// The account an alias in `text` stands for: a whole word (not inside a longer Korean or Latin word), active, and the
+    /// only account the text points to.
+    public func counterpartAlias(in text: String) -> AccountID? {
+        let text = NotificationText.normalize(text)
+        let hits = Set(counterpartAliases.compactMap { phrase, account -> AccountID? in
+            guard profile(.account(account))?.isActive == true else { return nil }
+            var from = text.startIndex
+            while let found = text.range(of: phrase, range: from..<text.endIndex) {
+                let before = found.lowerBound == text.startIndex ? nil : text[text.index(before: found.lowerBound)]
+                let after = found.upperBound == text.endIndex ? nil : text[found.upperBound]
+                if !(before.map(Self.isWordCharacter) ?? false) && !(after.map(Self.isWordCharacter) ?? false) { return account }
+                from = found.upperBound
+            }
+            return nil
+        })
+        return hits.count == 1 ? hits.first : nil
+    }
+
+    private static func aliasKey(_ text: String) -> String { NotificationText.normalize(text) }
+
+    private static func isWordCharacter(_ c: Character) -> Bool { c.isLetter || c.isNumber }
 
     // MARK: Internals
 

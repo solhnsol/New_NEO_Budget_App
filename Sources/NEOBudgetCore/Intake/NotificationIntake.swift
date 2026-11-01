@@ -61,6 +61,12 @@ public struct IntakeSetup: Codable, Equatable, Sendable {
                                    binding: binding, createdAtUnixMilliseconds: createdAtUnixMilliseconds)
     }
 
+    /// The user says a word in bank messages stands for this account of theirs (the wallet a top-up goes to, a deposit
+    /// from their own name): such a bank message is then a transfer, whichever alert arrives.
+    public mutating func addCounterpartAlias(_ phrase: String, to binding: ResolvedLedgerBinding) throws {
+        try registry.addCounterpartAlias(phrase, to: binding)
+    }
+
     private mutating func add(_ target: NewLedgerTarget) {
         switch target {
         case let .account(account):
@@ -144,9 +150,20 @@ public struct NotificationIntake: Sendable {
         var recordedDraft = draft
         var recordedResolution = resolution
         var binding = observationWithoutID.binding
+        var transferCounterpart = observationWithoutID.transferCounterpart
         let waiting = try repository.correlationRecords(near: draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
         let earlier = try repository.storedCandidate(ofNotification: draft.rawNotificationID, eventIndex: draft.eventIndex)
-        if let recorded = earlier?.observation, recorded.draft.ruleID == NotificationCorrelator.tossQuickPayRuleID || recorded.notificationType == .tossPayment {
+        if let recorded = earlier?.observation, recorded.draft.ruleID == Self.aliasTransferRuleID {
+            recordedDraft = recorded.draft
+            transferCounterpart = recorded.transferCounterpart
+        } else if earlier == nil, transferCounterpart == nil, case let .account(own)? = binding,
+                  let wallet = setup.registry.counterpartAlias(in: NotificationText.joined(notification)), wallet != own,
+                  let transfer = Self.asTransfer(draft) {
+            // A bank message that names one of the user's own accounts by a word they confirmed is a transfer to or from it
+            // (a Toss Pay Money top-up, the money coming back). It beats the Toss pairing: the shop is paid from the wallet.
+            recordedDraft = transfer
+            transferCounterpart = wallet
+        } else if let recorded = earlier?.observation, recorded.draft.ruleID == NotificationCorrelator.tossQuickPayRuleID || recorded.notificationType == .tossPayment {
             // The same notification again: it is recorded as it was the first time, whatever has been paired since.
             recordedDraft = recorded.draft
             if let paired = recorded.binding { recordedResolution = .resolved(paired) }
@@ -175,13 +192,13 @@ public struct NotificationIntake: Sendable {
         }
         let candidate = try assembler.assemble(recordedDraft, resolution: recordedResolution, context: CandidateAssemblyContext(
             timeZoneIdentifier: timeZoneIdentifier,
-            transferCounterpartAccountID: observationWithoutID.transferCounterpart,
+            transferCounterpartAccountID: transferCounterpart,
             cancelledPurchase: cancelled,
             policyVersion: policyVersion
         ))
         let observation = CorrelationObservation(
             candidateID: candidate.id, draft: recordedDraft, binding: binding,
-            transferCounterpart: observationWithoutID.transferCounterpart, source: observationWithoutID.source,
+            transferCounterpart: transferCounterpart, source: observationWithoutID.source,
             notificationType: observationWithoutID.notificationType, institution: observationWithoutID.institution,
             cancels: cancels
         )
@@ -193,6 +210,24 @@ public struct NotificationIntake: Sendable {
             try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
         }
         return .processed(candidateID: candidate.id, result: result)
+    }
+
+    static let aliasTransferRuleID = "alias-transfer"
+
+    /// A bank withdrawal or deposit read as the transfer it is; anything else stays as it was.
+    private static func asTransfer(_ draft: TransactionCandidateDraft) -> TransactionCandidateDraft? {
+        let kind: DraftEventKind
+        switch (draft.kind, draft.direction) {
+        case (.withdrawal, .outflow): kind = .transferOut
+        case (.deposit, .inflow): kind = .transferIn
+        default: return nil
+        }
+        return try? TransactionCandidateDraft(
+            rawNotificationID: draft.rawNotificationID, eventIndex: draft.eventIndex, parserID: draft.parserID,
+            parserVersion: draft.parserVersion, ruleID: aliasTransferRuleID, kind: kind, direction: draft.direction,
+            amount: draft.amount, balanceAfter: draft.balanceAfter, occurredAt: draft.occurredAt, instrument: draft.instrument,
+            counterparty: draft.counterparty, evidence: draft.evidence, issues: draft.issues, confidence: draft.confidence
+        )
     }
 
     /// A purchase was just recorded: cancellations that arrived before it (the bank sends a cancellation within the same

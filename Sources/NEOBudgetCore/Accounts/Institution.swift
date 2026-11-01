@@ -10,6 +10,8 @@ public struct InstitutionID: RawRepresentable, Codable, Hashable, Sendable {
     public static let hyundaiCard = InstitutionID(rawValue: "hyundaicard")
     public static let tossBank = InstitutionID(rawValue: "tossbank")
     public static let kakaoPay = InstitutionID(rawValue: "kakaopay")
+    /// Toss Pay Money, the prepaid balance inside the Toss app (not Toss Bank).
+    public static let tossPay = InstitutionID(rawValue: "tosspay")
     public static let transit = InstitutionID(rawValue: "transit")
 }
 
