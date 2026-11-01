@@ -366,6 +366,7 @@ extension DemoPreview {
     /// compressed middle, rests there (the zone moves by itself after 400 ms), nudges by 15 minutes, lets go, and leaves edit mode.
     @MainActor
     static func runScript(_ mode: String, on model: AppModel) async {
+        if DemoSettlement.modes.contains(mode) { await DemoSettlement.seed(mode, on: model); return }
         if mode == "script-return" { await runReturnScript(on: model); return }
         if mode == "script-oscillate" { await runReturnScript(on: model, oscillate: true); return }
         guard mode == "script-zoom", let editor = model.editor else { return }

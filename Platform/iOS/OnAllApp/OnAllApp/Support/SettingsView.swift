@@ -1,3 +1,4 @@
+import NEOBudgetCalendar
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,6 +10,7 @@ struct SettingsView: View {
     @State private var choosingFile = false
     @State private var imported: ImportSummary?
     @State private var importFailed = false
+    @AppStorage(SurplusSetting.key) private var surplusRaw = SurplusTreatment.income.rawValue
 
     private var pinned: Bool { AppMode.isPinnedByLaunchArgument(ProcessInfo.processInfo.arguments) }
 
@@ -37,6 +39,15 @@ struct SettingsView: View {
                         }
                     }
                 }
+            }
+            .onAllCardRow()
+            Section {
+                surplusRow(.income, title: "별도 수입으로 기록", detail: "더 받은 돈은 지출을 줄이지 않고 수입으로 따로 기록해요")
+                surplusRow(.reduceSpending, title: "그 지출에서 차감", detail: "수입 분류를 만들지 않고, 더 받은 만큼 그 지출의 내 몫을 줄여요")
+            } header: {
+                Text("정산보다 더 받은 돈")
+            } footer: {
+                Text("친구가 받을 돈보다 많이 보냈을 때 남는 금액을 어떻게 셀지 정해요. 통장 내역은 그대로예요.")
             }
             .onAllCardRow()
             Section {
@@ -102,6 +113,21 @@ struct SettingsView: View {
             return
         }
         imported = summary
+    }
+
+    private func surplusRow(_ treatment: SurplusTreatment, title: String, detail: String) -> some View {
+        let selected = surplusRaw == treatment.rawValue
+        return Button { surplusRaw = treatment.rawValue } label: {
+            HStack(spacing: Theme.Space.m) {
+                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                    Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                }
+                Spacer()
+                if selected { Image(systemName: "checkmark").foregroundStyle(Theme.accent).fontWeight(.semibold) }
+            }
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private func modeRow(_ mode: AppMode, title: String, detail: String, symbol: String) -> some View {
