@@ -67,6 +67,14 @@ public enum LedgerTimelineProjection {
         return details
     }
 
+    /// Entries whose other side looks like a private person (`PayeeKind`); automatic rules leave their category and tags alone.
+    public static func personEntryIDs(from snapshot: CandidateProcessingSnapshot) -> Set<LedgerEntryID> {
+        Set(snapshot.candidates.values.compactMap { stored in
+            guard let id = stored.promotedEntryID, let draft = stored.candidate.sourceDraft, PayeeKind.classify(draft) == .person else { return nil }
+            return id
+        })
+    }
+
     /// A time is exact only when the notification text itself states it to the minute or second. A day-only time,
     /// or a fallback to when the notification arrived or was captured, says when the app learned of the payment.
     public static func timePrecision(of timestamp: ObservedTimestamp) -> TimePrecision {

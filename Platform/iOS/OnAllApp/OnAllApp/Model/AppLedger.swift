@@ -90,6 +90,11 @@ actor AppLedger {
         LedgerTimelineProjection.transactions(in: try snapshot())
     }
 
+    /// Entries that look like a private person's transfer; rules must not file them.
+    func personEntryIDs() throws -> Set<LedgerEntryID> {
+        LedgerTimelineProjection.personEntryIDs(from: try snapshot())
+    }
+
     /// Each refund or cancellation and the purchase it gives money back for, as the ledger links them.
     func refundLinks() throws -> [LedgerEntryID: LedgerEntryID] {
         Self.refundLinks(in: try snapshot().ledger)

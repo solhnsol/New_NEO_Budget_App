@@ -82,6 +82,8 @@ final class AppModel {
     private let provider: any CalendarProvider
     private let eventKit: EventKitCalendarProvider?
     private let ledger: AppLedger
+    /// Ledger entries that look like a private person's transfer, read on every reload; rules rename them but never file them.
+    private var personEntries: Set<LedgerEntryID> = []
     private var service: CalendarCommandService?
     private let prepare: (@Sendable () async -> Void)?
     /// The data generation: moves only when the calendar may have changed (`reload`). A day read in an earlier generation is stale and is never kept. A move does
@@ -280,6 +282,7 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
+        personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
         dataGeneration += 1
         let mine = dataGeneration
         fullReloadsInFlight += 1
@@ -594,7 +597,8 @@ final class AppModel {
     /// A day as the calendar shows it: transaction names and categories after the user's edits and rules (the ledger tab goes through the same resolver).
     private func displayed(_ timeline: DayTimeline) -> DayTimeline {
         let overrides = transactionOverrides
-        return timeline.displayingTransactions { overrides.display($0, title: $1, category: $2) }
+        let persons = personEntries
+        return timeline.displayingTransactions { overrides.display($0, title: $1, category: $2, persons: persons) }
     }
 
     /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
@@ -683,7 +687,8 @@ final class AppModel {
         let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, rules: transactionOverrides.ruleSet, surplus: SurplusSetting.current())
+        let persons = (try? await ledger.personEntryIDs()) ?? personEntries
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, rules: transactionOverrides.ruleSet, persons: persons, surplus: SurplusSetting.current())
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
