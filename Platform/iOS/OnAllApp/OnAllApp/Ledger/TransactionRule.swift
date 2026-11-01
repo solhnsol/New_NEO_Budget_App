@@ -86,8 +86,8 @@ struct TransactionRuleSet: Equatable {
     }
 
     /// Applies every matching rule in priority order: names are rewritten step by step, the last category set wins, tags are collected.
-    /// `nil` when nothing matched or nothing changed.
-    func outcome(forOriginalTitle original: String?) -> RuleOutcome? {
+    /// `nil` when nothing matched or nothing changed. With `classifies` false (a person's transfer) only the name can change, never the category or tags.
+    func outcome(forOriginalTitle original: String?, classifies: Bool = true) -> RuleOutcome? {
         guard let original, !original.isEmpty else { return nil }
         let matched = matching(original)
         guard !matched.isEmpty else { return nil }
@@ -108,6 +108,7 @@ struct TransactionRuleSet: Equatable {
             }
         }
         if working != original { outcome.title = working }
+        if !classifies { outcome.category = nil; outcome.tags = [] }
         return outcome.title == nil && outcome.category == nil && outcome.tags.isEmpty ? nil : outcome
     }
 

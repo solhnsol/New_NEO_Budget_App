@@ -62,8 +62,9 @@ struct TransactionOverrideStore: Codable, Equatable {
 
     /// The one place that decides what a transaction is called and filed under on the calendar: the user's own edit, else a rule, else the original.
     /// `title` is the original name the ledger has.
-    func display(_ id: LedgerEntryID, title: String?, category: CanonicalCategoryID?) -> (title: String?, category: CanonicalCategoryID?) {
-        let rule = ruleSet.outcome(forOriginalTitle: title)
+    /// `persons` are the entries that look like a private person's transfer; rules may rename those but never file them.
+    func display(_ id: LedgerEntryID, title: String?, category: CanonicalCategoryID?, persons: Set<LedgerEntryID> = []) -> (title: String?, category: CanonicalCategoryID?) {
+        let rule = ruleSet.outcome(forOriginalTitle: title, classifies: !persons.contains(id))
         let edit = self[id]
         return (edit?.title ?? rule?.title ?? title, edit?.category ?? rule?.category ?? category)
     }

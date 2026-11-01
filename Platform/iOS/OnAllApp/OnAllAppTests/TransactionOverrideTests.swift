@@ -141,3 +141,15 @@ private let transit = CanonicalCategoryID(rawValue: "transport")
     let plain = store.display(a, title: "Cafe", category: CanonicalCategoryID(rawValue: "x"))
     #expect(plain.title == "Cafe" && plain.category?.rawValue == "x")                    // nothing matched: untouched
 }
+
+@Test func aPersonsTransferKeepsTheRuleRenameButNotItsCategoryOrTags() throws {
+    let set = TransactionRuleSet(rules: [rule("p", .contains, "홍*동", [.setTitle("동생"), .setCategory(transit), .addTags(["식비"])], at: 1)])
+    let person = try #require(set.outcome(forOriginalTitle: "홍*동", classifies: false))
+    #expect(person == RuleOutcome(title: "동생", category: nil, tags: []))
+    #expect(set.outcome(forOriginalTitle: "홍*동")?.category == transit)
+    var store = TransactionOverrideStore(rules: set.rules)
+    let id = LedgerEntryID(rawValue: "t")
+    #expect(store.display(id, title: "홍*동", category: nil, persons: [id]) == (title: "동생", category: nil))
+    store[id] = TransactionOverride(title: nil, category: transit, memo: nil, tags: [])   // the user's own edit still wins
+    #expect(store.display(id, title: "홍*동", category: nil, persons: [id]).category == transit)
+}

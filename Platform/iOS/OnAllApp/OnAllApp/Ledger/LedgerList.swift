@@ -104,9 +104,10 @@ struct LedgerDaySection: Identifiable, Equatable {
 enum LedgerList {
     static func sections(
         _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:],
-        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init()
+        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init(),
+        persons: Set<LedgerEntryID> = []
     ) -> [LedgerDaySection] {
-        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules) }, life: life, refundOf: refundOf)
+        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules, persons: persons) }, life: life, refundOf: refundOf)
         let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
@@ -114,10 +115,11 @@ enum LedgerList {
     }
 
     static func entry(
-        _ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil, rules: TransactionRuleSet = .init()
+        _ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil, rules: TransactionRuleSet = .init(),
+        persons: Set<LedgerEntryID> = []
     ) -> LedgerListEntry {
         let originalTitle = transaction.title
-        let rule = rules.outcome(forOriginalTitle: originalTitle)
+        let rule = rules.outcome(forOriginalTitle: originalTitle, classifies: !persons.contains(transaction.id))
         let transaction = renamed(transaction, to: override?.title ?? rule?.title)
         let allocations = life.allocationSet(for: transaction.id)?.allocations ?? []
         let portions = allocations.map { allocation in
