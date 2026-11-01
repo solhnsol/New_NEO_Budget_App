@@ -3,10 +3,36 @@
 public struct IntakeSetup: Codable, Equatable, Sendable {
     public private(set) var registry: AccountRegistry
     public private(set) var configuration: LedgerConfiguration
+    /// Balance breaks the user confirmed as real money (see `ConfirmedGap`), and the ones they chose to leave alone.
+    public private(set) var confirmedGaps: [ConfirmedGap]
+    public private(set) var acknowledgedBreaks: Set<String>
 
     public init(registry: AccountRegistry = AccountRegistry(), configuration: LedgerConfiguration = LedgerConfiguration()) {
         self.registry = registry
         self.configuration = configuration
+        self.confirmedGaps = []
+        self.acknowledgedBreaks = []
+    }
+
+    private enum CodingKeys: String, CodingKey { case registry, configuration, confirmedGaps, acknowledgedBreaks }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        registry = try values.decode(AccountRegistry.self, forKey: .registry)
+        configuration = try values.decode(LedgerConfiguration.self, forKey: .configuration)
+        // A setup saved before balance breaks existed has neither.
+        confirmedGaps = try values.decodeIfPresent([ConfirmedGap].self, forKey: .confirmedGaps) ?? []
+        acknowledgedBreaks = try values.decodeIfPresent(Set<String>.self, forKey: .acknowledgedBreaks) ?? []
+    }
+
+    public mutating func confirm(_ gap: ConfirmedGap) {
+        if !confirmedGaps.contains(where: { $0.key == gap.key }) { confirmedGaps.append(gap) }
+        acknowledgedBreaks.remove(gap.key)
+    }
+
+    public mutating func acknowledgeBreak(_ key: String) {
+        acknowledgedBreaks.insert(key)
+        confirmedGaps.removeAll { $0.key == key }
     }
 
     /// Records a notification's account evidence (a new key becomes an open candidate). Idempotent per notification.
