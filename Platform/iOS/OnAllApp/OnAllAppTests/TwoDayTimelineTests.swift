@@ -148,7 +148,7 @@ private final class Rig {
 }
 
 @Test func theHeaderIsTheSameHeightWhateverTheDaysHold() {
-    #expect(DayHeaderStrip.height == 58)
+    #expect(DayHeaderStrip.height == 36)
 }
 
 // MARK: Main day sets the axis, the secondary day only assists

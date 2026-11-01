@@ -134,6 +134,7 @@ private func gridCommands(_ commands: [I.Command]) -> [I.Command] { commands.fil
     // Another event is not "moved" into the session.
     #expect(machine.handle(.moved(meeting.moved(to: next, startMinute: 0, endMinute: 60))).isEmpty)
     // The saved time is anchored at the start, on the day it was put down on.
+    _ = machine.handle(.draftChanged(session: 1, isDirty: true))                                // the editor reports it once the draft has moved
     let finished = machine.handle(.confirm) + machine.handle(.commitFinished(session: 1, I.Committed(day: next, startMinute: 600, endMinute: 660)))
     #expect(finished.contains(.unfreeze(session: 1, .edge(.start, day: next, minute: 600))))
 }
