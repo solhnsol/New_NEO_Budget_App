@@ -108,6 +108,10 @@ public struct AccountEvidenceExtractor: Sendable {
             if let product = Self.capture(Self.tossCardMethod, in: text) {
                 return AccountEvidence(provider: provider, type: .tossPayment, instrument: cardInstrument(product: product))
             }
+            if Self.capture(Self.leadingBank, in: body) == "토스페이머니" {
+                return AccountEvidence(provider: provider, type: .tossPayment,
+                                       instrument: FinancialInstrumentHint(institution: .tossPay, kind: .prepaidWallet))
+            }
             if let word = Self.capture(Self.leadingBank, in: body), let bank = banks.institution(named: word) {
                 return AccountEvidence(provider: provider, type: .tossPayment,
                                        instrument: FinancialInstrumentHint(institution: bank, kind: .bankAccount))
