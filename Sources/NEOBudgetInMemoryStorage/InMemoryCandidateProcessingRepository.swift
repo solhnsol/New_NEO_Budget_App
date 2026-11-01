@@ -194,12 +194,19 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         expectedLedgerRevision: UInt64
     ) throws -> CandidateProcessingResult {
         guard observation.candidateID == candidate.id else { throw CandidateProcessingError.invalidCorrelationTarget(observation.candidateID) }
+        var waited = false
         if let stored = candidates[candidate.id], let earlier = stored.observation {
-            guard earlier == observation else { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
-            // A repeat: the earlier decision stands (judging again against later notifications could differ).
-            if let match = stored.corroborates, stored.promotedEntryID == nil { return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision) }
-            if stored.promotedEntryID != nil { return .alreadyPromoted(candidateRevision: candidateRevision, ledgerRevision: ledger.currentRevision) }
-            return .alreadyStored(candidateRevision: candidateRevision)
+            // A cancellation that waited for its purchase (or for the other alert of it) is judged again: what it waited for
+            // may have been recorded since. The same notification again with nothing new changes nothing.
+            waited = stored.promotedEntryID == nil && stored.corroborates == nil && earlier.cancels == nil
+                && observation.draft.kind == .cancellation && earlier.draft == observation.draft
+            if !waited {
+                guard earlier == observation else { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
+                // A repeat: the earlier decision stands (judging again against later notifications could differ).
+                if let match = stored.corroborates, stored.promotedEntryID == nil { return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision) }
+                if stored.promotedEntryID != nil { return .alreadyPromoted(candidateRevision: candidateRevision, ledgerRevision: ledger.currentRevision) }
+                return .alreadyStored(candidateRevision: candidateRevision)
+            }
         }
         let nearby = try correlationRecords(near: observation.draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
         var sameNamePurchases: [CorrelationRecord] = []
@@ -207,6 +214,13 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
             sameNamePurchases = (index.purchasesByName[name] ?? []).compactMap { candidates[$0]?.correlationRecord }
         }
         let decision = correlator.decide(observation, nearby: nearby, sameNamePurchases: sameNamePurchases)
+        if waited {
+            switch decision {
+            case .corroborates: break
+            case .newAct where observation.cancels != nil: break
+            default: return .alreadyStored(candidateRevision: candidateRevision)
+            }
+        }
 
         // The candidate, the candidates it closes and a reversal apply together or not at all.
         journal = Journal(candidateRevision: candidateRevision, ledger: ledger.checkpoint())
@@ -271,11 +285,18 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
             return .promoted(candidateRevision: revisionBefore, ledgerRevision: ledgerRevision)
 
         case let .corroborates(match):
-            if candidates[candidate.id] != nil { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
-            guard candidates[match.candidateID] != nil, match.candidateID != candidate.id else {
+            // Only a cancellation that was waiting is stored already (see `process`); it becomes evidence of the other alert.
+            if let waiting = candidates[candidate.id], waiting.promotedEntryID != nil || waiting.corroborates != nil {
+                throw CandidateProcessingError.conflictingCandidate(candidate.id)
+            }
+            guard let partner = candidates[match.candidateID], match.candidateID != candidate.id else {
                 throw CandidateProcessingError.invalidCorrelationTarget(match.candidateID)
             }
             try store(StoredTransactionCandidate(candidate: candidate, corroborates: match), expectedCandidateRevision: expectedCandidateRevision)
+            // A withdrawal and its cancellation are evidence of one another: neither stays open for review.
+            if match.rule == .cancellationPair {
+                put(partner.linked(to: CorrelationMatch(candidateID: candidate.id, rule: .cancellationPair)), id: match.candidateID)
+            }
             return .corroborated(existingCandidateID: match.candidateID, candidateRevision: candidateRevision)
 
         case let .suggests(matches):

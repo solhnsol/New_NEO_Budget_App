@@ -66,6 +66,9 @@ public struct NotificationCorrelator: Sendable {
     ) -> CorrelationDecision {
         let open = records.filter { $0.candidateID != incoming.candidateID }
         if let match = corroboration(of: incoming, in: open) { return .corroborates(match) }
+        if let match = cancellationPair(of: incoming, in: open) { return .corroborates(match) }
+        // A cancellation linked to its purchase is a new act; amount and name were already judged when it was linked.
+        if incoming.cancels != nil { return .newAct(NewAct()) }
 
         let closes = pendingClosed(by: incoming, in: open)
         if let counterpart = incoming.transferCounterpart, isTransferLeg(incoming) {
@@ -117,6 +120,10 @@ public struct NotificationCorrelator: Sendable {
         // A person's Toss transfer and the bank's own deposit alert of it: one deposit, whichever alert arrived first.
         if let partner = depositEchoPartner(of: incoming, in: committed, claimedAgainst: records) {
             return CorrelationMatch(candidateID: partner.candidateID, rule: .tossDepositEcho)
+        }
+        // The bank's alert of a cancellation a card app already reported, or the card app's alert of the bank's.
+        if let partner = echoedCancellation(of: incoming, in: committed, claimedAgainst: records) {
+            return CorrelationMatch(candidateID: partner.candidateID, rule: .bankCancellation)
         }
         // The other leg of a transfer already recorded from its first leg.
         if let binding = incoming.binding, case let .account(account) = binding {
@@ -170,6 +177,91 @@ public struct NotificationCorrelator: Sendable {
             result.append(CorrelationMatch(candidateID: withdrawal.candidateID, rule: .transferLegs))
         }
         return result
+    }
+
+    // MARK: Cancellations
+
+    /// How long after a purchase it can still be cancelled by a notification that does not name the original approval.
+    public static let cancellationWindowMilliseconds: Int64 = 7 * 24 * 3_600_000
+
+    /// The recorded purchase a cancellation undoes, or nil (the cancellation then waits for it). `records` must reach
+    /// `cancellationWindowMilliseconds` back from the cancellation. The choice does not depend on arrival order: the
+    /// purchase named by the original approval number; otherwise on the same account or card, the same amount (a smaller
+    /// one when both name the shop and the names match), not already cancelled, and the latest one at or before the
+    /// cancellation by the time printed in the message (ties go to the smaller ID).
+    public func cancelledPurchase(by incoming: CorrelationObservation, among records: [CorrelationRecord]) -> CorrelationRecord? {
+        guard incoming.draft.kind == .cancellation, let binding = incoming.binding else { return nil }
+        let others = records.filter { $0.candidateID != incoming.candidateID }
+        if echoedCancellation(of: incoming, in: others.filter { $0.entryID != nil && $0.corroborates == nil }, claimedAgainst: others) != nil { return nil }
+        let purchases = others.filter { record in
+            record.entryID != nil && record.corroborates == nil && record.draft.kind == .purchase && record.binding == binding
+                && record.draft.amount.currency == incoming.draft.amount.currency
+                && !others.contains { $0.cancels == record.candidateID && $0.entryID != nil }
+        }
+        let time = incoming.draft.occurredAt.unixMilliseconds
+        if let reference = incoming.draft.evidence.first(where: { $0.kind == .originalApprovalReference }) {
+            return purchases.filter { record in
+                record.draft.evidence.contains { $0.kind == .approvalNumber && $0.value == reference.value && $0.scope == reference.scope }
+            }.min { $0.candidateID.rawValue < $1.candidateID.rawValue }
+        }
+        // A card app's cancellation names the shop (as payee, since the money comes back); a bank's names nothing useful.
+        let cancelKey = incoming.draft.instrument.kind == .bankAccount ? nil
+            : Self.shopKey(name: incoming.draft.counterparty.merchantRaw ?? incoming.draft.counterparty.payeeRaw)
+        let candidates = purchases.filter { record in
+            let age = time - record.draft.occurredAt.unixMilliseconds
+            guard age >= -matchToleranceMilliseconds, age <= Self.cancellationWindowMilliseconds else { return false }
+            if record.draft.amount == incoming.draft.amount { return Self.sameShop(Self.shopKey(record.draft), cancelKey) }
+            // A partial cancellation is only believed when both sides name the shop.
+            guard record.draft.amount.minorUnits > incoming.draft.amount.minorUnits, let left = Self.shopKey(record.draft), let right = cancelKey else { return false }
+            return left.contains(right) || right.contains(left)
+        }
+        return candidates.min { lhs, rhs in
+            func rank(_ record: CorrelationRecord) -> (Int, Int, Int64, String) {
+                let delta = time - record.draft.occurredAt.unixMilliseconds
+                return (record.draft.amount == incoming.draft.amount ? 0 : 1, delta < 0 ? 1 : 0, abs(delta), record.candidateID.rawValue)
+            }
+            return rank(lhs) < rank(rhs)
+        }
+    }
+
+    /// Two names that are both known must contain one another; an unknown name (a bank line names no shop) agrees with anything.
+    private static func sameShop(_ lhs: String?, _ rhs: String?) -> Bool {
+        guard let lhs, let rhs else { return true }
+        return lhs.contains(rhs) || rhs.contains(lhs)
+    }
+
+    /// A cancellation already recorded as an act from another source (the card app and the bank report one cancellation).
+    private func echoedCancellation(of incoming: CorrelationObservation, in committed: [CorrelationRecord],
+                                    claimedAgainst records: [CorrelationRecord]) -> CorrelationRecord? {
+        guard incoming.draft.kind == .cancellation, let binding = incoming.binding else { return nil }
+        let partners = committed.filter { record in
+            record.draft.kind == .cancellation && record.cancels != nil && record.binding == binding && record.source != incoming.source
+                && sameMoney(record, incoming) && !claimed(record, by: .bankCancellation, in: records)
+        }
+        return nearest(partners, to: incoming)
+    }
+
+    /// A bank withdrawal that nothing explains and its cancellation (no card approval: an account payment) cancel each other out,
+    /// whichever arrived first. No entry is made: the ledger would hold -x and +x.
+    private func cancellationPair(of incoming: CorrelationObservation, in records: [CorrelationRecord]) -> CorrelationMatch? {
+        guard incoming.cancels == nil, case .account? = incoming.binding else { return nil }
+        let pending = records.filter { $0.entryID == nil && $0.corroborates == nil && $0.binding == incoming.binding && sameMoney($0, incoming) }
+        let partners: [CorrelationRecord]
+        switch incoming.draft.kind {
+        case .cancellation: partners = pending.filter { $0.draft.kind == .withdrawal }
+        case .withdrawal: partners = pending.filter { $0.draft.kind == .cancellation && $0.cancels == nil }
+        default: return nil
+        }
+        let time = incoming.draft.occurredAt.unixMilliseconds
+        // The withdrawal being cancelled is the one before the cancellation; the latest such one if there are several.
+        let partner = partners.min { lhs, rhs in
+            func rank(_ record: CorrelationRecord) -> (Int, Int64, String) {
+                let before = incoming.draft.kind == .cancellation ? record.draft.occurredAt.unixMilliseconds <= time : record.draft.occurredAt.unixMilliseconds >= time
+                return (before ? 0 : 1, abs(record.draft.occurredAt.unixMilliseconds - time), record.candidateID.rawValue)
+            }
+            return rank(lhs) < rank(rhs)
+        }
+        return partner.map { CorrelationMatch(candidateID: $0.candidateID, rule: .cancellationPair) }
     }
 
     // MARK: Amount and time only: a suggestion, never a merge
@@ -377,8 +469,10 @@ public struct NotificationCorrelator: Sendable {
     }
 
     /// Letters and digits only, so `코페이_2 - 스카이락 볼링장` and `스카이락볼링장` compare as one shop; too short a name never matches.
-    private static func shopKey(_ draft: TransactionCandidateDraft) -> String? {
-        guard let raw = draft.counterparty.merchantRaw else { return nil }
+    private static func shopKey(_ draft: TransactionCandidateDraft) -> String? { shopKey(name: draft.counterparty.merchantRaw) }
+
+    private static func shopKey(name raw: String?) -> String? {
+        guard let raw else { return nil }
         let key = String(NotificationText.normalize(raw).lowercased().filter { $0.isLetter || $0.isNumber })
         return key.count >= 2 ? key : nil
     }
@@ -419,10 +513,14 @@ public struct CorrelationObservation: Codable, Equatable, Sendable {
     public let notificationType: NotificationType?
     /// The institution the notification names, whether or not the account behind it resolved (a Toss transfer names only the bank).
     public let institution: InstitutionID?
+    /// For a cancellation: the purchase it undoes, found when it arrived (`cancelledPurchase`). Nil while it waits for one.
+    public let cancels: TransactionCandidateID?
 
     public init(candidateID: TransactionCandidateID, draft: TransactionCandidateDraft, binding: ResolvedLedgerBinding?,
                 transferCounterpart: AccountID? = nil, source: String,
-                notificationType: NotificationType? = nil, institution: InstitutionID? = nil) {
+                notificationType: NotificationType? = nil, institution: InstitutionID? = nil,
+                cancels: TransactionCandidateID? = nil) {
+        self.cancels = cancels
         self.candidateID = candidateID
         self.draft = draft
         self.binding = binding
@@ -442,6 +540,7 @@ public struct CorrelationRecord: Equatable, Sendable {
     public let source: String
     public let notificationType: NotificationType?
     public let institution: InstitutionID?
+    public let cancels: TransactionCandidateID?
     /// The entry it was committed as; nil while it waits for review or when it only corroborates another.
     public let entryID: LedgerEntryID?
     /// Committed as income (a deposit no transfer leg had claimed yet).
@@ -449,6 +548,12 @@ public struct CorrelationRecord: Equatable, Sendable {
     /// The candidate whose act this one is evidence of, and by which rule.
     public let corroborates: TransactionCandidateID?
     public let corroborationRule: CorrelationRule?
+
+    /// What the correlator was told of this notification when it arrived, with `cancels` as given (to judge it again).
+    public func observation(cancels: TransactionCandidateID?) -> CorrelationObservation {
+        CorrelationObservation(candidateID: candidateID, draft: draft, binding: binding, transferCounterpart: transferCounterpart,
+                               source: source, notificationType: notificationType, institution: institution, cancels: cancels)
+    }
 
     public init(observation: CorrelationObservation, entryID: LedgerEntryID? = nil, recordedAsIncome: Bool = false,
                 corroborates: CorrelationMatch? = nil) {
@@ -459,6 +564,7 @@ public struct CorrelationRecord: Equatable, Sendable {
         source = observation.source
         notificationType = observation.notificationType
         institution = observation.institution
+        cancels = observation.cancels
         self.entryID = entryID
         self.recordedAsIncome = recordedAsIncome
         self.corroborates = corroborates?.candidateID
@@ -481,6 +587,10 @@ public enum CorrelationRule: String, Codable, Sendable {
     case tossDepositEcho
     /// Toss and the bank report the same amount close in time, but too loosely to merge: suggested, never merged.
     case sameMoneySuggestion
+    /// A cancellation alert of the bank and the one of the card app: one cancellation.
+    case bankCancellation
+    /// A bank withdrawal nothing explains and its cancellation, which cancel each other out without an entry.
+    case cancellationPair
     /// A refund without an original reference and a recent purchase of the same name: suggested, never merged.
     case refundSuggestion
 }
