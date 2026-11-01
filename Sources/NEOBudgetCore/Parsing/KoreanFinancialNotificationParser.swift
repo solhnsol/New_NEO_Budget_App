@@ -223,7 +223,20 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
 
     private func containsAny(_ value: String, _ terms: [String]) -> Bool { terms.contains(where: value.contains) }
 
-    private func parseAmount(in lines: [String], classification: Classification) -> AmountResult {
+    /// `7.25 USD (10,760원) 결제`: the won amount Toss prints beside a foreign amount is the amount.
+    private static let foreignWithWon = try! NSRegularExpression(pattern: #"[0-9][0-9,.]*\s*(?:USD|EUR|JPY|CNY|GBP)\s*\(([0-9]+(?:,[0-9]{3})*)원\)"#, options: [.caseInsensitive])
+    /// `포인트 5,076원 사용`: points spent are part of the price, not a second amount.
+    private static let pointsUsed = try! NSRegularExpression(pattern: #"포인트\s*[0-9][0-9,]*\s*원\s*(?:사용|적립)"#)
+
+    private func parseAmount(in originalLines: [String], classification: Classification) -> AmountResult {
+        let lines = originalLines.map { line -> String in
+            var line = line
+            if let match = Self.foreignWithWon.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+               let whole = Range(match.range, in: line), let won = Range(match.range(at: 1), in: line) {
+                line.replaceSubrange(whole, with: line[won] + "원")
+            }
+            return Self.pointsUsed.stringByReplacingMatches(in: line, range: NSRange(line.startIndex..., in: line), withTemplate: "")
+        }
         if lines.contains(where: { line in
             containsAny(line.uppercased(), ["USD", "EUR", "JPY", "CNY", "GBP", "$"]) ||
                 (containsAny(line, ["약 ", "예상"]) && line.contains("원"))

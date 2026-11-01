@@ -306,3 +306,19 @@ private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateD
     ) == .failed(.unsupportedCurrency))
     #expect(try parser.parse(rawNotification(title: nil, body: "[사고예방] 해외사용 확인 알림"), context: parserContext()) == .notTransaction(.authentication))
 }
+
+// MARK: - notifications the phone could not read before (Toss won beside a foreign amount, points inside a price)
+
+@Test func aForeignAmountWithTheWonBesideItIsReadInWon() throws {
+    let draft = try parsedDraft(rawNotification(title: "7.25 USD (10,760원) 결제", body: "묵은지 작업실 카드 | RENDER.COM 잔액 44,344원 (토스뱅크 알림)"))
+    #expect(draft.amount == (try parserWon(10_760)) && draft.direction == .outflow)
+    // Without the won beside it the foreign amount still cannot be read.
+    #expect(try KoreanFinancialNotificationParser().parse(
+        rawNotification(title: nil, body: "테스트 님, 현대 체크 해외승인 \r\nUSD 98.55 10/12 21:25 \r\nTEST*MERCHANT"), context: parserContext()
+    ) == .failed(.unsupportedCurrency))
+}
+
+@Test func pointsSpentInsideAPriceAreNotASecondAmount() throws {
+    let draft = try parsedDraft(rawNotification(title: "13,924원 결제", body: "페이스페이 · 토스페이머니 · 온밥 신촌연세 본점 · 포인트 5,076원 사용"))
+    #expect(draft.amount == (try parserWon(13_924)) && draft.direction == .outflow)
+}
