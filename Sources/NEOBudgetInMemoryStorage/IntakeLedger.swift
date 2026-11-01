@@ -1,3 +1,4 @@
+import Foundation
 import NEOBudgetCore
 
 /// Where one received notification ended up, for the inbox the user reads.
@@ -94,6 +95,12 @@ public struct IntakeLedger {
     /// Adds the notifications not already received (by ID) and processes them. Returns the ones that were new.
     @discardableResult
     public mutating func receive(_ incoming: [RawNotification]) throws -> [RawNotification] {
+        let fresh = append(incoming)
+        try settleConfirmedGaps()
+        return fresh
+    }
+
+    private mutating func append(_ incoming: [RawNotification]) -> [RawNotification] {
         var fresh: [RawNotification] = []
         for notification in incoming where positions[notification.id] == nil && !deferredIDs.contains(notification.id) {
             positions[notification.id] = notifications.count + fresh.count
@@ -133,19 +140,141 @@ public struct IntakeLedger {
     /// notifications recorded, so this is what anchors a balance to the real one.
     public var reportedBalances: [AccountID: ReportedBalance] {
         var result: [AccountID: ReportedBalance] = [:]
-        for notification in notifications {
-            var evidence = intake.extractor.evidence(from: notification)
-            guard let balance = evidence.balanceMinorUnits else { continue }
-            // The no-charge and balance-only notices are the same Wallet transit card as a fare; a rule is scoped to the fare.
-            if evidence.type == .transitBalanceOnly || evidence.type == .transitNoCharge {
-                evidence = AccountEvidence(provider: evidence.provider, type: .transitFare, instrument: evidence.instrument, balanceMinorUnits: balance)
-            }
-            guard case let .resolved(.account(accountID), _) = setup.registry.resolve(evidence) else { continue }
-            let at = notification.notificationAtUnixMilliseconds ?? notification.capturedAtUnixMilliseconds
+        for (notification, accountID, balance) in resolvedBalances() {
+            let at = Self.time(of: notification)
             if let known = result[accountID], known.atUnixMilliseconds > at { continue }
             result[accountID] = ReportedBalance(accountID: accountID, minorUnits: balance, atUnixMilliseconds: at, notificationID: notification.id)
         }
         return result
+    }
+
+    private func resolvedBalances() -> [(RawNotification, AccountID, Int64)] {
+        notifications.compactMap { notification in
+            var evidence = intake.extractor.evidence(from: notification)
+            guard let balance = evidence.balanceMinorUnits else { return nil }
+            // The no-charge and balance-only notices are the same Wallet transit card as a fare; a rule is scoped to the fare.
+            if evidence.type == .transitBalanceOnly || evidence.type == .transitNoCharge {
+                evidence = AccountEvidence(provider: evidence.provider, type: .transitFare, instrument: evidence.instrument, balanceMinorUnits: balance)
+            }
+            guard case let .resolved(.account(accountID), _) = setup.registry.resolve(evidence) else { return nil }
+            return (notification, accountID, balance)
+        }
+    }
+
+    // MARK: Balance breaks
+
+    /// Where the balances notifications printed and the recorded movements disagree, and nothing explains it: not a user
+    /// choice already made ("그냥 넘어가요", confirmed as an entry), not acts waiting for the user that add up to the
+    /// difference. Each is a suggestion; nothing enters the ledger until `confirmBalanceGap`. A partial replay only sees the
+    /// part it replayed.
+    public var balanceBreaks: [BalanceBreak] {
+        let snapshot = try? repository.processingSnapshot()
+        let observations = balanceObservations()
+        return BalanceChain.breaks(observations: observations).filter { gap in
+            !setup.acknowledgedBreaks.contains(gap.id) && !setup.confirmedGaps.contains { $0.key == gap.id }
+                && !isExplained(gap, snapshot: snapshot, chain: observations)
+        }
+    }
+
+    /// The user says the break is real money of that kind: it becomes an expense or an income in the ledger, for as long as
+    /// the break is still there. A notification that arrives later and covers it replaces the entry.
+    public mutating func confirmBalanceGap(_ gap: BalanceBreak, label: String) throws {
+        var setup = self.setup
+        setup.confirm(ConfirmedGap(key: gap.id, accountID: gap.accountID, signedMinorUnits: gap.differenceMinorUnits,
+                                   atUnixMilliseconds: gap.after.atUnixMilliseconds, label: label))
+        try rebuild(setup)
+    }
+
+    /// "그냥 넘어가요": the break is not asked about again.
+    public mutating func acknowledgeBalanceBreak(_ gap: BalanceBreak) throws {
+        var setup = self.setup
+        setup.acknowledgeBreak(gap.id)
+        try rebuild(setup)
+    }
+
+    /// The balances of KRW accounts, each at the time of the act its notification reports and with the change it reports.
+    private func balanceObservations() -> [BalanceObservation] {
+        let currencies = Dictionary(uniqueKeysWithValues: setup.configuration.accounts.map { ($0.id, $0.openingBalance.currency) })
+        return resolvedBalances().compactMap { notification, accountID, balance in
+            guard currencies[accountID] == "KRW" else { return nil }
+            let draft = (try? repository.storedCandidate(ofNotification: notification.id, eventIndex: 0))?.candidate.sourceDraft
+            let delta: Int64 = switch draft?.direction {
+            case .outflow: -(draft?.amount.minorUnits ?? 0)
+            case .inflow: draft?.amount.minorUnits ?? 0
+            default: 0
+            }
+            return BalanceObservation(accountID: accountID, atUnixMilliseconds: draft?.occurredAt.unixMilliseconds ?? Self.time(of: notification),
+                                      minorUnits: balance, deltaMinorUnits: delta, notificationID: notification.id)
+        }
+    }
+
+    /// Money moves in the gap that the chain itself does not hold: entries on this account, and acts still waiting for the user
+    /// (their account is not known yet). The evidence of a link of the chain is the same money as that link, not another.
+    private func isExplained(_ gap: BalanceBreak, snapshot: CandidateProcessingSnapshot?, chain: [BalanceObservation]) -> Bool {
+        guard let snapshot else { return false }
+        let links = Set(chain.map(\.notificationID))
+        let linked = snapshot.candidates.values.filter { $0.candidate.sourceDraft.map { links.contains($0.rawNotificationID) } == true }
+        let sameMoney = Set(linked.compactMap { $0.corroborates?.candidateID })
+        let others = snapshot.candidates.values.compactMap { stored -> Int64? in
+            guard let draft = stored.candidate.sourceDraft, !links.contains(draft.rawNotificationID), stored.corroborates == nil,
+                  !sameMoney.contains(stored.candidate.id),
+                  draft.occurredAt.unixMilliseconds > gap.before.atUnixMilliseconds, draft.occurredAt.unixMilliseconds <= gap.after.atUnixMilliseconds
+            else { return nil }
+            if let entryID = stored.promotedEntryID {
+                let moved = snapshot.ledger.entries.first { $0.id == entryID }?.postings.filter { $0.accountID == gap.accountID }.reduce(Int64(0)) { $0 + $1.delta.minorUnits }
+                return moved.flatMap { $0 == 0 ? nil : $0 }
+            }
+            switch draft.direction {
+            case .outflow: return -draft.amount.minorUnits
+            case .inflow: return draft.amount.minorUnits
+            case .neutral: return nil
+            }
+        }
+        return BalanceChain.isExplained(gap, by: others)
+    }
+
+    /// Books each confirmed gap whose break is still there, and starts over when a booked one is no longer a break (a late
+    /// notification now covers it): replaying is how the entry goes away.
+    private mutating func settleConfirmedGaps() throws {
+        guard !setup.confirmedGaps.isEmpty else { return }
+        let snapshot = try? repository.processingSnapshot()
+        let observations = balanceObservations()
+        let current = BalanceChain.breaks(observations: observations).filter { !isExplained($0, snapshot: snapshot, chain: observations) }
+        let booked = Set((snapshot?.ledger.entries ?? []).map(\.id))
+        var stale = false
+        for gap in setup.confirmedGaps {
+            let holds = current.contains { $0.id == gap.key && $0.differenceMinorUnits == gap.signedMinorUnits }
+            let entryID = LedgerEntryID(rawValue: "entry:" + gap.key)
+            if holds && !booked.contains(entryID) {
+                try book(gap, as: entryID)
+            } else if !holds && booked.contains(entryID) {
+                stale = true
+            }
+        }
+        if stale { try rebuild(setup) }
+    }
+
+    private mutating func book(_ gap: ConfirmedGap, as id: LedgerEntryID) throws {
+        let amount = try Money(minorUnits: gap.signedMinorUnits, currency: "KRW")
+        let spent = try amount.negated()
+        let entry = gap.signedMinorUnits < 0
+            ? LedgerEntry(id: id, kind: .expense, occurredAtUnixMilliseconds: gap.atUnixMilliseconds,
+                          postings: [Posting(accountID: gap.accountID, delta: amount)],
+                          budgetImpact: BudgetImpact(kind: .expense, amount: spent, attributedMonth: try month(of: gap.atUnixMilliseconds)),
+                          evidenceIDs: [gap.key])
+            : LedgerEntry(id: id, kind: .income, occurredAtUnixMilliseconds: gap.atUnixMilliseconds,
+                          postings: [Posting(accountID: gap.accountID, delta: amount)], evidenceIDs: [gap.key])
+        let candidate = try TransactionCandidate(id: TransactionCandidateID(rawValue: "candidate:" + gap.key), evidenceIDs: [gap.key],
+                                                 status: .ready, proposedEntry: entry, policyVersion: intake.policyVersion)
+        let revisions = try repository.revisions()
+        _ = try repository.process(candidate, expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger)
+    }
+
+    private func month(of unixMilliseconds: Int64) throws -> BudgetMonth {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: intake.timeZoneIdentifier) ?? .current
+        let parts = calendar.dateComponents([.year, .month], from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+        return try BudgetMonth(year: parts.year ?? 0, month: parts.month ?? 0)
     }
 
     /// Imported balances against the balances Actual had, account by account (empty without a history).
@@ -237,7 +366,8 @@ public struct IntakeLedger {
         notifications = []
         positions = [:]
         try seedHistory()
-        try replay(all)
+        _ = append(all)
+        try settleConfirmedGaps()
     }
 
     /// The imported rows go in first, in date order, one by one through the same atomic promotion a notification uses. They are
