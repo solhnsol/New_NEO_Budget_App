@@ -136,7 +136,7 @@ struct LedgerScreen: View {
                             .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
-                        LedgerDayHeader(section: section, isToday: section.day == today)
+                        LedgerDayHeader(section: section, isToday: section.day == today, netted: nettedByDay[section.day] ?? [:])
                     }
                 }
             }
@@ -146,6 +146,8 @@ struct LedgerScreen: View {
             .background(Theme.surface)
         }
     }
+
+    private var nettedByDay: [LocalDate: [String: Int64]] { NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone) }
 
     private var today: LocalDate { model.dayZone.localDate(of: Int64(Date().timeIntervalSince1970 * 1_000)) }
 
@@ -183,15 +185,17 @@ struct LedgerScreen: View {
 struct LedgerDayHeader: View {
     let section: LedgerDaySection
     let isToday: Bool
+    var netted: [String: Int64] = [:]
 
     var body: some View {
+        let totals = NettedSpendingTotals.adding(netted, to: section.totals)
         HStack(alignment: .center, spacing: Theme.Space.s) {
             Text(Formatting.dayTitle(section.day)).font(.system(.subheadline, weight: .semibold)).foregroundStyle(Theme.textSecondary)
             if isToday { StatusBadge(text: "오늘", tone: .accent) }
             Spacer()
             // A day whose refunds outweigh its spending got money back: "+3,000원" in blue, not "-3,000원".
-            let isMoneyBack = !section.totals.isEmpty && section.totals.allSatisfy { $0.minorUnits < 0 }
-            Text(section.totals.map { ($0.minorUnits < 0 ? "+" : "") + Formatting.money(abs($0.minorUnits), currency: $0.currency) }.joined(separator: " · "))
+            let isMoneyBack = !totals.isEmpty && totals.allSatisfy { $0.minorUnits < 0 }
+            Text(totals.map { ($0.minorUnits < 0 ? "+" : "") + Formatting.money(abs($0.minorUnits), currency: $0.currency) }.joined(separator: " · "))
                 .font(.system(.subheadline, weight: .medium)).monospacedDigit().foregroundStyle(isMoneyBack ? Theme.accent : Theme.textTertiary)
         }
         .textCase(nil)

@@ -120,7 +120,7 @@ Hans가 정한 동작(2026-10-16):
 
 ## 정산 이후 결정 (2026-10-25, Hans)
 
-위 합의에 더해 정한 것. 구현은 `Sources/NEOBudgetCalendar/Settlement/SettlementFollowUp.swift`(순수 계산, 테스트 `SettlementFollowUpTests`)이고, 화면 연결은 맥 확인과 함께 이어서 한다.
+위 합의에 더해 정한 것. 구현은 `Sources/NEOBudgetCalendar/Settlement/SettlementFollowUp.swift`(순수 계산, 테스트 `SettlementFollowUpTests`)이고, 화면(2026-11-01): `DepositConfirmSheet`에 "받을 − 줄 = 입금" 카드와 "서로 정산하고 둘 다 닫기", 부족 알림이 연결됐다. 상계 지출은 가계부 날짜 헤더와 일 요약에 더해 보인다(`NettedSpendingTotals`, 표시 전용). 데모 `-demo-preview settlement-net`, 스크린샷 `docs/screenshots/settlement-netting-*.png`, `settlement-short-alert.png`.
 
 1. **입금은 자동으로 연결하지 않는다.** 정산이 안 된 모임이나 열린 요청이 있을 때만 "이 돈이 그 정산이 맞나요?"를 묻고(`depositReview`), 없으면 묻지 않는다. 그냥 받은 돈일 수 있다.
 2. **분석은 내 몫 기준이다.** 아직 못 받은 정산도 미리 뺀 값을 보여 주고 "정산 대기 중"을 붙인다(`activityShares`). 실제로 결제한 금액은 카드 실적·한도에만 쓴다. 탕감한 금액은 내 몫에 남는다.
@@ -139,6 +139,6 @@ Hans가 정한 동작(2026-10-16):
 
 1. 입금 확인 카드에 "받을 50,000 − 줄 18,000 = 입금 32,000"을 보여 주고(`SettlementProposal.nettingBreakdown`), 한 번 탭으로 양쪽을 같이 닫는다. 자동 연결은 하지 않는다. 매처는 이미 순액으로 맞춘다(`netMatch`).
 2. 상계로 닫힌 내 줄 돈 18,000원은 **상계한 날의 내 지출**이다(`LifeState.nettedSpending`). 정보가 없을 때의 기준이며, 나중에 앱 이용자끼리 공유되면 실제 날짜로 바꾼다. 통장 내역에는 입금 32,000만 나오고 카드 실적은 영향이 없다. 내가 순액을 보낸 경우에는 내 송금(32,000)을 뺀 나머지만 상계 지출이다.
-3. 줄 돈을 등록하지 않아 입금이 부족해 보이면, 탕감을 묻기 전에 "000님 정산 입금이 부족해요. 확인해 주세요" 알림을 띄우고 안에서 고른다: "부족액 요청 다시 보내기"(남은 금액을 열어 둠), "차액은 내 지출로"(`.waived`와 같은 계산: 내 몫에 남음), 줄 돈 등록 후 상계. 화면 연결은 맥 확인과 함께 이어서 한다.
+3. 줄 돈을 등록하지 않아 입금이 부족해 보이면, 탕감을 묻기 전에 "000님 정산 입금이 부족해요. 확인해 주세요" 알림을 띄우고 안에서 고른다: "부족액 요청 다시 보내기"(남은 금액을 열어 둠), "차액은 내 지출로"(`.waived`와 같은 계산: 내 몫에 남음), 줄 돈 등록 후 상계. 화면(2026-11-01): `DepositConfirmSheet`에 "받을 − 줄 = 입금" 카드와 "서로 정산하고 둘 다 닫기", 부족 알림이 연결됐다. 상계 지출은 가계부 날짜 헤더와 일 요약에 더해 보인다(`NettedSpendingTotals`, 표시 전용). 데모 `-demo-preview settlement-net`, 스크린샷 `docs/screenshots/settlement-netting-*.png`, `settlement-short-alert.png`.
 
 화면(2026-10-26): 가계부 도구 모음의 "정산" 허브(`SettlementHubView`)에 사람별 받을/줄 돈과 14일 넘은 표시, 확인할 입금 카드(`DepositConfirmSheet`: 덜/더 들어온 돈 선택, 별칭 기억), 줄 돈 미리 등록(`ExpectedPaymentSheet`)이 있다. 가계부 목록은 아직 못 받은 몫을 뺀 금액에 "정산 대기 중"을 붙인다. 초과 입금 처리는 설정의 "정산보다 더 받은 돈"에서 고른다. 스크린샷은 `docs/screenshots/settlement-*.png`(`-demo-full -demo-preview settlement`).

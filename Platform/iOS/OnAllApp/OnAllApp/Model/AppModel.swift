@@ -68,6 +68,8 @@ final class AppModel {
     private(set) var calendars: [CalendarDescriptor] = []
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
+    /// My owed money closed by netting, counted as spending on the netting day (display only; `LifeState.nettedSpending`).
+    private(set) var nettedSpending: [NettedSpending] = []
     /// Created once the command service exists (after the first successful start). Gestures go through it.
     private(set) var editor: TimelineEditor?
     /// The save path for an edit session's time change (Phase 3A): re-checks the original, then writes through the same command service.
@@ -300,7 +302,7 @@ final class AppModel {
             week = loadedWeek
             weekCells = cells
             calendars = loadedCalendars
-            if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
+            if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state); nettedSpending = state.nettedSpending() }
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == dataGeneration else { return }
@@ -612,6 +614,14 @@ final class AppModel {
             deposit, to: obligation, life: life, shortChoice: shortChoice, rememberAlias: rememberAlias,
             provenance: ActivityEditing.provenance(now: nowMilliseconds)
         ) { await service.perform($0) }
+        await reload()
+        return done
+    }
+
+    /// Closes both directions with the one-tap netting the user confirmed (`DepositConfirmation.netting`), then shows the result.
+    func recordNetting(_ proposal: SettlementProposal) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.applyNetting(proposal, provenance: ActivityEditing.provenance(now: nowMilliseconds)) { await service.perform($0) }
         await reload()
         return done
     }
