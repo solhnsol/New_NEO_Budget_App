@@ -156,20 +156,80 @@ public struct NotificationIntake: Sendable {
             recordedResolution = .resolved(recording.binding)
             binding = recording.binding
         }
+        // A cancellation is booked against the purchase it undoes, found among what is stored (not by an approval number
+        // only: bank cancellations carry none). A repeat keeps what it was linked to the first time.
+        var cancels = earlier?.observation?.cancels
+        var cancelled: CancelledPurchase?
+        if earlier == nil, recordedDraft.kind == .cancellation {
+            let probe = CorrelationObservation(
+                candidateID: TransactionCandidateID(rawValue: "-"), draft: recordedDraft, binding: binding,
+                transferCounterpart: nil, source: observationWithoutID.source
+            )
+            let records = try repository.correlationRecords(
+                near: recordedDraft.occurredAt.unixMilliseconds, within: NotificationCorrelator.cancellationWindowMilliseconds
+            )
+            if let purchase = correlator.cancelledPurchase(by: probe, among: records), let entryID = purchase.entryID {
+                cancels = purchase.candidateID
+                cancelled = CancelledPurchase(entryID: entryID, occurredAtUnixMilliseconds: purchase.draft.occurredAt.unixMilliseconds)
+            }
+        }
         let candidate = try assembler.assemble(recordedDraft, resolution: recordedResolution, context: CandidateAssemblyContext(
             timeZoneIdentifier: timeZoneIdentifier,
             transferCounterpartAccountID: observationWithoutID.transferCounterpart,
+            cancelledPurchase: cancelled,
             policyVersion: policyVersion
         ))
         let observation = CorrelationObservation(
             candidateID: candidate.id, draft: recordedDraft, binding: binding,
             transferCounterpart: observationWithoutID.transferCounterpart, source: observationWithoutID.source,
-            notificationType: observationWithoutID.notificationType, institution: observationWithoutID.institution
+            notificationType: observationWithoutID.notificationType, institution: observationWithoutID.institution,
+            cancels: cancels
         )
         let result = try repository.process(
             candidate, observation: observation, correlator: correlator,
             expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger
         )
+        if case .promoted = result, recordedDraft.kind == .purchase {
+            try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
+        }
         return .processed(candidateID: candidate.id, result: result)
+    }
+
+    /// A purchase was just recorded: cancellations that arrived before it (the bank sends a cancellation within the same
+    /// second as the payment, and the order of delivery is not the order of the payments) can now be booked against it, and
+    /// the alert of a cancellation that has just been booked is evidence of it. Oldest first, so the result is the same
+    /// whichever order they arrived in.
+    private func settleWaitingCancellations<Repository: CandidateProcessingRepository>(
+        near time: Int64, repository: inout Repository
+    ) throws {
+        let window = NotificationCorrelator.cancellationWindowMilliseconds
+        let waiting = try repository.correlationRecords(near: time, within: window).filter {
+            $0.entryID == nil && $0.corroborates == nil && $0.cancels == nil && $0.draft.kind == .cancellation
+        }.sorted { ($0.draft.occurredAt.unixMilliseconds, $0.candidateID.rawValue) < ($1.draft.occurredAt.unixMilliseconds, $1.candidateID.rawValue) }
+        for record in waiting {
+            // Records are read again each time: the cancellation before this one may have taken the purchase.
+            let records = try repository.correlationRecords(near: record.draft.occurredAt.unixMilliseconds, within: window)
+            let purchase = correlator.cancelledPurchase(by: record.observation(cancels: nil), among: records)
+            let observation = record.observation(cancels: purchase?.candidateID)
+            switch correlator.decide(observation, against: records) {
+            case .corroborates: break
+            case .newAct where purchase != nil: break
+            default: continue
+            }
+            guard let binding = record.binding else { continue }
+            let candidate = try assembler.assemble(record.draft, resolution: .resolved(binding), context: CandidateAssemblyContext(
+                timeZoneIdentifier: timeZoneIdentifier,
+                transferCounterpartAccountID: record.transferCounterpart,
+                cancelledPurchase: purchase.flatMap { found in
+                    found.entryID.map { CancelledPurchase(entryID: $0, occurredAtUnixMilliseconds: found.draft.occurredAt.unixMilliseconds) }
+                },
+                policyVersion: policyVersion
+            ))
+            let revisions = try repository.revisions()
+            _ = try repository.process(
+                candidate, observation: observation, correlator: correlator,
+                expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger
+            )
+        }
     }
 }

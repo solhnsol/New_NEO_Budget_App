@@ -297,7 +297,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
     }
 
     /// The first line of a Hyundai Card app alert (`<이름> 님, 현대 MM 승인`); the merchant is the line after the amount.
-    private static let issuerApprovalHeader = try! NSRegularExpression(pattern: #"현대\s*[A-Za-z가-힣0-9]+\s*(?:해외)?(?:승인|취소)\s*$"#)
+    private static let issuerApprovalHeader = try! NSRegularExpression(pattern: #"현대\s*[A-Za-z가-힣0-9]+\s*(?:해외)?(?:승인취소|승인|취소)\s*$"#)
 
     /// The word a bank withdrawal's counterparty starts with when it begins with `토스` (`토스퀵계좌이체`, or `토스` before a name),
     /// wherever the bank lays it out in the message. `토스뱅크` is the bank itself, not a Toss payment. The correlator pairs such

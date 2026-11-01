@@ -23,11 +23,23 @@ public struct AdjustmentOriginal: Codable, Equatable, Sendable {
     }
 }
 
+/// The purchase a cancellation was matched to by the correlator (no approval number needed): its entry and the time it was booked at.
+public struct CancelledPurchase: Codable, Equatable, Sendable {
+    public let entryID: LedgerEntryID
+    public let occurredAtUnixMilliseconds: Int64
+
+    public init(entryID: LedgerEntryID, occurredAtUnixMilliseconds: Int64) {
+        self.entryID = entryID
+        self.occurredAtUnixMilliseconds = occurredAtUnixMilliseconds
+    }
+}
+
 public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
     public let timeZoneIdentifier: String
     public let transferCounterpartAccountID: AccountID?
     public let cardPaymentInstrumentID: CreditInstrumentID?
     public let adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal]
+    public let cancelledPurchase: CancelledPurchase?
     public let policyVersion: String
 
     public init(
@@ -35,6 +47,7 @@ public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
         transferCounterpartAccountID: AccountID? = nil,
         cardPaymentInstrumentID: CreditInstrumentID? = nil,
         adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal] = [:],
+        cancelledPurchase: CancelledPurchase? = nil,
         policyVersion: String
     ) throws {
         guard !policyVersion.isEmpty else { throw CandidateValidationError.emptyPolicyVersion }
@@ -45,6 +58,7 @@ public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
         self.transferCounterpartAccountID = transferCounterpartAccountID
         self.cardPaymentInstrumentID = cardPaymentInstrumentID
         self.adjustmentOriginalsByEvidenceValue = adjustmentOriginalsByEvidenceValue
+        self.cancelledPurchase = cancelledPurchase
         self.policyVersion = policyVersion
     }
 }
@@ -97,7 +111,7 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
                 evidenceIDs: evidenceIDs
             )
         case .cancellation, .refund:
-            guard let original = original(for: draft, in: context) else {
+            guard let original = try original(for: draft, in: context) else {
                 return try review(candidateID, draft, evidenceIDs, .missingOriginalEntry, context)
             }
             entry = try adjustment(entryID, draft, binding, original, evidenceIDs)
@@ -208,11 +222,18 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
         )
     }
 
-    private func original(for draft: TransactionCandidateDraft, in context: CandidateAssemblyContext) -> AdjustmentOriginal? {
-        draft.evidence.lazy
-            .filter { $0.kind == .originalApprovalReference }
-            .compactMap { context.adjustmentOriginalsByEvidenceValue[$0.value] }
-            .first
+    private func original(for draft: TransactionCandidateDraft, in context: CandidateAssemblyContext) throws -> AdjustmentOriginal? {
+        if let found = draft.evidence.lazy
+            .filter({ $0.kind == .originalApprovalReference })
+            .compactMap({ context.adjustmentOriginalsByEvidenceValue[$0.value] })
+            .first { return found }
+        guard let purchase = context.cancelledPurchase else { return nil }
+        // The cancellation returns the money to the month the purchase was booked in.
+        return AdjustmentOriginal(
+            entryID: purchase.entryID,
+            budgetMonth: try budgetMonth(for: ObservedTimestamp(unixMilliseconds: purchase.occurredAtUnixMilliseconds, precision: .second, source: .notificationTime),
+                                         timeZoneIdentifier: context.timeZoneIdentifier)
+        )
     }
 
     private func review(
