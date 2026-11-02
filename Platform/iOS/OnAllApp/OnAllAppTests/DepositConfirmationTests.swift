@@ -130,3 +130,31 @@ private struct Scene {
     #expect(life.surplusIncomeMinorUnits(currency: "KRW", treatment: .reduceSpending) == 0)
     #expect(life.surplusIncomeMinorUnits(currency: "KRW") == 5_000)
 }
+
+@Test func aDepositThatNetsBothWaysShowsTheBreakdownAndClosesBothOnConfirm() async throws {
+    let scene = try await Scene(asking: 50_000)
+    _ = await scene.service.perform(.createObligation(CreateObligationInput(
+        counterpartyID: scene.friend, direction: .payable, currency: "KRW", amount: .exact(18_000), label: "테스트 빌린 돈", provenance: provenance
+    )))
+    var life = try await scene.service.lifeSnapshot().state
+    let found = try #require(DepositConfirmation.netting(try scene.deposit(32_000), from: scene.friend, in: life))
+    #expect(found.breakdown == NettingBreakdown(receivableMinorUnits: 50_000, payableMinorUnits: 18_000))
+    #expect(life.nettedSpending().isEmpty)               // nothing is linked until the user confirms
+    let done = await DepositConfirmation.applyNetting(found.proposal, provenance: provenance) { await scene.service.perform($0) }
+    #expect(done)
+    life = try await scene.service.lifeSnapshot().state
+    #expect(life.obligations.values.allSatisfy { !$0.isSettleable })
+    #expect(life.nettedSpending().map(\.minorUnits) == [18_000])
+    let byDay = NettedSpendingTotals.byDay(life.nettedSpending(), zone: zone)
+    #expect(byDay[day.adding(days: 1)] == ["KRW": 18_000])
+    #expect(NettedSpendingTotals.month(life.nettedSpending(), year: 2027, month: 3, zone: zone) == ["KRW": 18_000])
+    #expect(NettedSpendingTotals.adding(["KRW": 18_000], to: [LedgerTotal(currency: "KRW", minorUnits: 5_000)]) == [LedgerTotal(currency: "KRW", minorUnits: 23_000)])
+}
+
+@Test func aPlainDepositIsNotANettingAndAShortOneWithoutAPayableAsksFirst() async throws {
+    let scene = try await Scene()
+    let life = try await scene.service.lifeSnapshot().state
+    #expect(DepositConfirmation.netting(try scene.deposit(30_000), from: scene.friend, in: life) == nil)
+    #expect(DepositConfirmation.isUnexplainedShort(.short(leftMinorUnits: 10_000), counterparty: scene.friend, in: life))
+    #expect(!DepositConfirmation.isUnexplainedShort(.exact, counterparty: scene.friend, in: life))
+}

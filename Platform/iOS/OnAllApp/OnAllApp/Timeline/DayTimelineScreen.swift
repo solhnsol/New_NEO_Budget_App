@@ -203,7 +203,7 @@ struct DayTimelineScreen: View {
             // The day totals sit under the time grid only; the list uses the whole screen. The fixed grid shows its edit bar (cancel / done) there instead.
             if BrowseAxisMode.current != .fixedGrid && !isList {
                 Divider()
-                SummaryBar(timelines: timelines)
+                SummaryBar(timelines: timelines, netted: NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone))
             }
           }
           MonthScrim(state: unfold).zIndex(0.5)
@@ -335,6 +335,7 @@ private struct DayHeader: View {
 /// One line per day on screen: how many events, how many transactions belong to none, and what was spent.
 private struct SummaryBar: View {
     let timelines: [DayTimeline]
+    var netted: [LocalDate: [String: Int64]] = [:]
 
     var body: some View {
         let probe = BrowseProbe.begin(.summaryBody)
@@ -349,8 +350,13 @@ private struct SummaryBar: View {
                         Label("활동 없는 지출 \(summary.unlinkedTransactionCount)건", systemImage: "creditcard")
                     }
                     Spacer()
+                    let extra = netted[timeline.day] ?? [:]
+                    let onlyNetted = extra.keys.filter { currency in !summary.totals.contains { $0.currency == currency } }.sorted()
+                    ForEach(onlyNetted, id: \.self) { currency in
+                        Text(Formatting.money(extra[currency] ?? 0, currency: currency)).font(.footnote.monospacedDigit().bold())
+                    }
                     ForEach(summary.totals, id: \.currency) { total in
-                        let spent = total.linkedNetMinorUnits + total.unlinkedNetMinorUnits
+                        let spent = total.linkedNetMinorUnits + total.unlinkedNetMinorUnits + (extra[total.currency] ?? 0)
                         Text(Formatting.money(spent, currency: total.currency) + (total.uncertainNetMinorUnits > 0 ? " + 미정" : ""))
                             .font(.footnote.monospacedDigit().bold())
                     }

@@ -34,6 +34,32 @@ enum DepositConfirmation {
         return paid < left ? .short(leftMinorUnits: left - paid) : .over(extraMinorUnits: paid - left)
     }
 
+    /// A deposit that closes money owed both ways at once: the matcher's net proposal and its "받을 − 줄 = 입금" split. `nil` unless both
+    /// directions are in it. Only offered; nothing is linked until the user confirms (`applyNetting`).
+    static func netting(_ deposit: LedgerDeposit, from sender: PersonID?, in life: LifeState) -> (proposal: SettlementProposal, breakdown: NettingBreakdown)? {
+        guard let sender, let transfer = try? ActualTransfer(
+            transactionID: deposit.id, counterpartyID: sender, direction: .incoming,
+            amount: deposit.amount, occurredAtUnixMilliseconds: deposit.occurredAtUnixMilliseconds
+        ), case let .netMatch(proposal) = SettlementMatcher.match(transfer, in: life) else { return nil }
+        let breakdown = proposal.nettingBreakdown(in: life)
+        return breakdown.isNetted ? (proposal, breakdown) : nil
+    }
+
+    /// Closes both sides with the proposal the user confirmed.
+    static func applyNetting(
+        _ proposal: SettlementProposal, provenance: AssignmentProvenance, perform: (CalendarCommand) async -> CalendarCommandOutcome?,
+        isolation: isolated (any Actor)? = #isolation
+    ) async -> Bool {
+        guard case .applied? = await perform(.applySettlement(ApplySettlementInput(proposal: proposal, provenance: provenance))) else { return false }
+        return true
+    }
+
+    /// A short deposit from someone I have no registered payable to: it may be a netting I forgot to register, so ask before choosing.
+    static func isUnexplainedShort(_ fit: Fit, counterparty: PersonID, in life: LifeState) -> Bool {
+        guard case .short = fit else { return false }
+        return !life.obligations.values.contains { $0.isSettleable && $0.direction == .payable && $0.counterpartyID == counterparty }
+    }
+
     /// Whether the sender's name in the notification already is this person's name or alias; if not, the user may want it remembered.
     static func isNewAlias(_ deposit: LedgerDeposit, for person: Person) -> Bool {
         guard let title = deposit.title.flatMap(ActivityEditing.cleanName) else { return false }

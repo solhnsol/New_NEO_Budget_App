@@ -28,6 +28,7 @@ struct DepositConfirmSheet: View {
     @State private var rememberAlias = false
     @State private var isSaving = false
     @State private var failed = false
+    @State private var askingShort = false
 
     private var review: DepositReview {
         let sender = deposit.title.flatMap { name in life.persons.values.first { !$0.isSelf && $0.matches(name: name) } }
@@ -44,6 +45,15 @@ struct DepositConfirmSheet: View {
         return ids.compactMap { life.activities[$0] }
     }
 
+    private var senderID: PersonID? {
+        deposit.title.flatMap { name in life.persons.values.first { !$0.isSelf && $0.matches(name: name) } }?.id
+    }
+
+    /// Money owed both ways that this one deposit closes: shown as "받을 − 줄 = 입금", confirmed in one tap, never linked on its own.
+    private var netting: (proposal: SettlementProposal, breakdown: NettingBreakdown)? {
+        DepositConfirmation.netting(deposit, from: senderID, in: life)
+    }
+
     private var chosen: Obligation? { picked.flatMap { life.obligations[$0] } }
     private var fit: DepositConfirmation.Fit? { chosen.map { DepositConfirmation.fit(deposit, $0, in: life) } }
     private var money: (Int64) -> String { { Formatting.money($0, currency: deposit.amount.currency) } }
@@ -55,6 +65,21 @@ struct DepositConfirmSheet: View {
                     AmountHero(label: "\(senderName)님이 보낸 돈", amount: "+" + money(deposit.amount.minorUnits))
                 }
                 .onAllCardRow()
+                if let netting {
+                    Section {
+                        Text("받을 \(money(netting.breakdown.receivableMinorUnits)) − 줄 \(money(netting.breakdown.payableMinorUnits)) = 입금 \(money(netting.breakdown.netMinorUnits))")
+                            .font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).monospacedDigit()
+                        Button { Task { await saveNetting(netting.proposal) } } label: {
+                            Text("서로 정산하고 둘 다 닫기").font(Theme.Typo.rowTitle).foregroundStyle(Theme.accent)
+                        }
+                        .disabled(isSaving)
+                    } header: {
+                        Text("서로 줄 돈이 있어요")
+                    } footer: {
+                        Text("내가 줄 돈 \(money(netting.breakdown.payableMinorUnits))은 이날 내 지출로 보여요. 통장 내역과 카드 실적은 그대로예요.")
+                    }
+                    .onAllCardRow()
+                }
                 Section {
                     ForEach(requests, id: \.id) { obligation in
                         pickRow(
@@ -94,9 +119,20 @@ struct DepositConfirmSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } } }
             .primaryActionBar(isShown: true, isEnabled: (picked != nil || pickedGathering != nil) && !isSaving) {
-                Task { await save() }
+                if let chosen, let fit, DepositConfirmation.isUnexplainedShort(fit, counterparty: chosen.counterpartyID, in: life) {
+                    askingShort = true
+                } else {
+                    Task { await save() }
+                }
             } label: {
                 Text(picked == nil && pickedGathering == nil ? "정산을 골라 주세요" : "정산으로 기록하기")
+            }
+            .alert("\(senderName)님 정산 입금이 부족해요. 확인해 주세요", isPresented: $askingShort) {
+                Button("부족액 요청 다시 보내기") { shortChoice = .keepOpen; Task { await save() } }
+                Button("차액은 내 지출로") { shortChoice = .close; Task { await save() } }
+                Button("취소", role: .cancel) {}
+            } message: {
+                if case let .short(left)? = fit { Text("\(money(left))이 덜 왔어요. 줄 돈이 있다면 먼저 등록한 뒤 상계할 수도 있어요.") }
             }
             .alert("저장하지 못했어요", isPresented: $failed) { Button("확인", role: .cancel) {} } message: { Text("다시 시도해 주세요.") }
         }
@@ -159,6 +195,12 @@ struct DepositConfirmSheet: View {
             }
         }
         .accessibilityAddTraits(isOn ? .isSelected : [])
+    }
+
+    private func saveNetting(_ proposal: SettlementProposal) async {
+        isSaving = true
+        defer { isSaving = false }
+        if await model.recordNetting(proposal) { dismiss() } else { failed = true }
     }
 
     private func save() async {

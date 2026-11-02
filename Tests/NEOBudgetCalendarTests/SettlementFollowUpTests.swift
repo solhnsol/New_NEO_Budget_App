@@ -210,3 +210,38 @@ private func owed(_ id: String, _ person: String, _ amount: Int64, activity: Str
     #expect(try JSONDecoder().decode(Person.self, from: Data(old.utf8)).aliases.isEmpty)
     #expect(try JSONDecoder().decode(Person.self, from: JSONEncoder().encode(minsu)) == minsu)
 }
+
+// MARK: One deposit closes money owed both ways
+
+@Test func aDepositOfTheNetClosesBothWaysAndTheOwedPartIsSpendingOnTheDayItWasNetted() throws {
+    let life = lifeWithPeople(["b"], extra: [
+        .createObligation(obligation("recv", with: "b", .receivable, .exact(50_000))),
+        .createObligation(obligation("pay", with: "b", .payable, .exact(18_000))),
+    ])
+    guard case let .netMatch(proposal) = SettlementMatcher.match(transfer("t", "b", .incoming, 32_000), in: life) else {
+        Issue.record("expected the net to match")
+        return
+    }
+    #expect(proposal.nettingBreakdown(in: life) == NettingBreakdown(receivableMinorUnits: 50_000, payableMinorUnits: 18_000))
+    #expect(proposal.nettingBreakdown(in: life).isNetted && proposal.nettingBreakdown(in: life).netMinorUnits == 32_000)
+    #expect(life.nettedSpending().isEmpty)                                    // nothing is spent until it is settled
+    let settled = try settle(life, proposal)
+    #expect(settled.settlementSummaries(nowUnixMilliseconds: 2).isEmpty)
+    let spent = settled.nettedSpending()
+    #expect(spent.map(\.minorUnits) == [18_000] && spent.first?.obligationID == oid("pay"))
+}
+
+@Test func whenISendTheNetOnlyTheRestOfWhatIOweIsNettedSpending() throws {
+    let life = lifeWithPeople(["b"], extra: [
+        .createObligation(obligation("recv", with: "b", .receivable, .exact(18_000))),
+        .createObligation(obligation("pay", with: "b", .payable, .exact(50_000))),
+    ])
+    let settled = try settle(life, try #require(SettlementMatcher.match(transfer("t", "b", .outgoing, 32_000), in: life).proposal))
+    #expect(settled.nettedSpending().map(\.minorUnits) == [18_000])           // 32,000 left my account as an ordinary transfer
+}
+
+@Test func aPlainDepositOrAPlainPaymentNetsNothing() throws {
+    let life = lifeWithPeople(["b"], extra: [.createObligation(obligation("pay", with: "b", .payable, .exact(20_000)))])
+    let settled = try settle(life, try #require(SettlementMatcher.match(transfer("t", "b", .outgoing, 20_000), in: life).proposal))
+    #expect(settled.nettedSpending().isEmpty)
+}

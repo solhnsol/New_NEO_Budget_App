@@ -237,3 +237,63 @@ extension LifeState {
             .reduce(0) { $0 + $1.amount.minorUnits }
     }
 }
+
+// MARK: One deposit that closes money owed both ways
+
+/// What a deposit nets: "받을 50,000 − 줄 18,000 = 입금 32,000". For the confirm card; a read of a proposal, nothing is recorded.
+public struct NettingBreakdown: Hashable, Sendable {
+    public let receivableMinorUnits: Int64
+    public let payableMinorUnits: Int64
+    public var netMinorUnits: Int64 { receivableMinorUnits - payableMinorUnits }
+
+    public init(receivableMinorUnits: Int64, payableMinorUnits: Int64) {
+        self.receivableMinorUnits = receivableMinorUnits
+        self.payableMinorUnits = payableMinorUnits
+    }
+
+    /// Only a proposal that closes money in both directions is a netting.
+    public var isNetted: Bool { receivableMinorUnits > 0 && payableMinorUnits > 0 }
+}
+
+extension SettlementProposal {
+    public func nettingBreakdown(in life: LifeState) -> NettingBreakdown {
+        var receivable: Int64 = 0, payable: Int64 = 0
+        for application in applications {
+            guard let direction = life.obligations[application.obligationID]?.direction else { continue }
+            if direction == .receivable { receivable += application.appliedMinorUnits } else { payable += application.appliedMinorUnits }
+        }
+        return NettingBreakdown(receivableMinorUnits: receivable, payableMinorUnits: payable)
+    }
+}
+
+/// Money I owed that a settlement closed without a transfer of mine: it is my spending, dated when it was netted (Hans, 2026-11-01), until
+/// shared data between users can give the real date.
+public struct NettedSpending: Hashable, Sendable {
+    public let settlementID: SettlementID
+    public let obligationID: ObligationID
+    public let activityID: ActivityID?
+    public let currency: String
+    public let minorUnits: Int64
+    public let atUnixMilliseconds: Int64
+}
+
+extension LifeState {
+    /// For each settlement, the payables it closed beyond what my own outgoing transfer already paid (all of them for an incoming deposit).
+    /// Add these to the day's spending; the ledger and card numbers are untouched.
+    public func nettedSpending() -> [NettedSpending] {
+        settlements.values.sorted { $0.id < $1.id }.flatMap { settlement -> [NettedSpending] in
+            var covered = settlement.transfer.direction == .outgoing ? settlement.transfer.amount.minorUnits : 0
+            return settlement.allocations.compactMap { allocation in
+                guard let obligation = obligations[allocation.obligationID], obligation.direction == .payable else { return nil }
+                let paid = min(covered, allocation.appliedMinorUnits)
+                covered -= paid
+                let rest = allocation.appliedMinorUnits - paid
+                guard rest > 0 else { return nil }
+                return NettedSpending(
+                    settlementID: settlement.id, obligationID: obligation.id, activityID: obligation.activityID,
+                    currency: obligation.currency, minorUnits: rest, atUnixMilliseconds: settlement.transfer.occurredAtUnixMilliseconds
+                )
+            }
+        }
+    }
+}
