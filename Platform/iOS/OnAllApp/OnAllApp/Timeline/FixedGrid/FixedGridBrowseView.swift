@@ -37,6 +37,8 @@ struct FixedGridBrowseView: View {
     @State private var dragStart: Double?
     @State private var ticking = false
     @State private var caughtTarget: Int?
+    /// The selected day when the finger took hold: a swipe lands at most a day from it, however many days the drag itself already passed.
+    @State private var swipeBase = 0
     /// The days are running to a day something else picked (the week strip, the header, "오늘"): where from and to. The time is blended between these two only.
     @State private var flight: (from: Int, to: Int)?
     /// The selected day this screen moved itself to (a touch taking over a move, a move coming to rest), so the change is not taken for one from outside.
@@ -1193,21 +1195,25 @@ struct FixedGridBrowseView: View {
             applyMove()
         case .began:
             BrowseProbe.mark(.dragBegan)
+            let heading = caughtTarget                       // a flight was caught: the swipe goes on from the day it was headed for, so it is not lost
             caughtTarget = nil
             flight = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
+            swipeBase = heading ?? selectedEpoch
             dragStart = move.position
         case .changed(let translation):
             if dragStart == nil { dragStart = move.position; if move.phase != .dragging { move.beginDrag() } }
             let raw = geometry.position(startingAt: dragStart ?? move.position, translation: translation)
             move.drag(to: DayPrefetchPolicy.browse.clampedPosition(raw, selected: selectedEpoch))
+            takeOverSelection()                              // the selected day is the nearest day: it moves with the white circle
             applyMove()
         case .ended(let velocity):
             BrowseProbe.mark(.released)
             dragStart = nil
             move.release(velocity: -Double(velocity / geometry.dayWidth))
             holdToHop()
+            if move.target != selectedEpoch { moveSelectedDay(by: move.target - selectedEpoch) }   // the day it lands on is selected at the release
             startTicker()
         case .cancelled:
             dragStart = nil
@@ -1225,7 +1231,7 @@ struct FixedGridBrowseView: View {
     /// A release carries the days at most `maximumHop` from the selected day (a swipe never skips a day, as in Browse): the model's own limit is from where the finger was, which
     /// may already be a day away.
     private func holdToHop() {
-        let target = FixedGridMove.held(target: move.target, selected: selectedEpoch)
+        let target = FixedGridMove.held(target: move.target, selected: swipeBase)
         if target != move.target { move.retarget(to: target) }
     }
 
@@ -1240,6 +1246,7 @@ struct FixedGridBrowseView: View {
     private func moveSelectedDay(by delta: Int) {
         ownEpoch = selectedEpoch + delta
         onMoveDays(delta)
+        if let haptic = room.haptic { haptic.selectionChanged(); haptic.prepare() } else { Haptics.snap() }
     }
 
     /// The model around the selected day, with the days either side the cache keeps; at `position` (dragging) or at rest on the day.
@@ -1258,7 +1265,8 @@ struct FixedGridBrowseView: View {
         defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
         // A move to a day something else picked: the week strip is on that day already.
-        let pending = flight != nil ? 0 : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
+        // Once released the strip goes to the day the spring is headed for, at once (not when the position passes the half), so it moves once and never flips back mid-settle.
+        let pending = flight != nil ? 0 : move.phase == .settling ? min(max(move.target - selectedEpoch, -1), 1) : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
         if room.pending != pending || pendingDays != pending && !ProbeExperiment.stripOff {
             BrowseProbe.mark(.boundary)
             room.pending = pending
