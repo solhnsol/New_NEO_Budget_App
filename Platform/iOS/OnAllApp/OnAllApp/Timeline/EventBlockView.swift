@@ -179,6 +179,8 @@ struct EventBlockView: View {
     var startIsCovered = false
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
+    /// When set, each row's middle from the card's top: the rows are written there, at the time they happened, not stacked under the title.
+    var timeCenters: [CGFloat]?
     /// The stack's padding and spacing, which `DayRenderPlan.rowsFrame` also places the rows by.
     static let verticalPadding: CGFloat = 3
     static let rowSpacing: CGFloat = 1
@@ -200,7 +202,7 @@ struct EventBlockView: View {
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
             // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
             Color.clear.frame(height: titleRow)
-            ForEach(Array(rows.prefix(shownRows).enumerated()), id: \.element.allocationID) { index, item in
+            ForEach(Array(rows.prefix(timeCenters == nil ? shownRows : 0).enumerated()), id: \.element.allocationID) { index, item in
                 // The row's own middle, from the card's top, as the stack below lays it out.
                 let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
                 let middle = Self.verticalPadding + titleRow + Self.rowSpacing + CGFloat(index) * (rowHeight + Self.rowSpacing) + rowHeight / 2
@@ -216,6 +218,19 @@ struct EventBlockView: View {
         }
         .padding(.horizontal, 6).padding(.vertical, Self.verticalPadding)
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .overlay(alignment: .topLeading) {
+            if let timeCenters {
+                let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
+                ZStack(alignment: .topLeading) {
+                    ForEach(Array(rows.enumerated()), id: \.element.allocationID) { index, item in
+                        if timeCenters.indices.contains(index) {
+                            AllocationRow(item: item, scale: scale, anchorDy: 0, quiet: true).offset(y: timeCenters[index] - rowHeight / 2)
+                        }
+                    }
+                }
+                .padding(.horizontal, 6)
+            }
+        }
         // However little height there is, the card is exactly that tall: what is inside is cut off, never what gives the card its size.
         .frame(height: max(0, height), alignment: .top)
         .clipped()
@@ -286,6 +301,8 @@ private struct AllocationRow: View {
     var scale: CGFloat = 1
     /// How far from this row's middle the transaction really happened (up or down); `nil` when unknown.
     var anchorDy: CGFloat?
+    /// Written at its own time inside a tall card: quieter than a row in a stack, so it reads as part of the event and not as a chip.
+    var quiet = false
 
     var body: some View {
         // Written like the rows outside events: a line out of the timeline at the moment it happened, bending to this row, then the
@@ -300,7 +317,7 @@ private struct AllocationRow: View {
                 .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
         }
         .font(.system(size: 10 * scale))
-        .foregroundStyle(item.flow == .refund ? Color.green : Color.primary)          // a transaction keeps full contrast
+        .foregroundStyle(item.flow == .refund ? Color.green : (quiet ? Color.primary.opacity(0.62) : Color.primary))
         .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
         .overlay(alignment: .topLeading) {
             LeaderMark(originX: -6, dy: anchorDy ?? 0, height: (InlineAllocationPlan.rowHeight - 2) * scale, scale: scale)

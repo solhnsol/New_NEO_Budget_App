@@ -1913,7 +1913,7 @@ private struct FixedBlockCell: View {
             presentation: item.presentation, scale: scale, hasHeader: item.header != nil, zoneIdentifier: zoneIdentifier,
             endIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.maxY - 16, width: 48, height: 16)) },
             startIsCovered: overlays.contains { $0.intersects(CGRect(x: frame.maxX - 48, y: frame.minY + 3, width: 48, height: 11)) },
-            anchors: item.insideAnchors.map { $0 - frame.minY }
+            anchors: item.insideAnchors.map { $0 - frame.minY }, timeCenters: item.timeCenters
         )
         .frame(width: frame.width, height: frame.height, alignment: .topLeading)
         .offset(x: frame.minX, y: frame.minY)

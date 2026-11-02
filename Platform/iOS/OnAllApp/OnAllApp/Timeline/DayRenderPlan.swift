@@ -50,6 +50,9 @@ struct DayRenderPlan {
         var startTimeFits = true
         /// Where the card writes its inside rows (with the "그 외"/summary row), in the stack `EventBlockView` lays out; `nil` when it writes none.
         var rowsFrame: CGRect?
+        /// For a tall card whose transactions all have room at their own time: each row's middle (from the card's top), in the order of `insideRows`.
+        /// The card then writes each row at that height instead of stacking them under the title; `nil` stacks them.
+        var timeCenters: [CGFloat]?
     }
 
     struct LineItem {
@@ -385,6 +388,29 @@ struct DayRenderPlan {
             ))
         }
 
+        // A tall card with room at the time of every transaction inside it writes each one there. Anything else drawn in its way (another event over it,
+        // an unrelated transaction in its time, two rows too close) keeps the stacked rows: the rows never cover anything.
+        for index in eventItems.indices {
+            let item = eventItems[index]
+            let count = item.insideRows.count
+            guard count > 0, item.presentation.level == .detail, item.presentation.transactions >= 1, item.hiddenRows == 0, !item.presentation.showsSummaryRow,
+                  item.shownRows == count, item.insideAnchors.count == count, item.header == nil, !item.presentation.showsTitle || item.title.dy == 0 else { continue }
+            let rowHeight = (InlineAllocationPlan.rowHeight - 2) * scale
+            let card = item.drawnFrame
+            let top = card.minY + EventBlockView.verticalPadding + InlineAllocationPlan.titleHeight * scale + EventBlockView.rowSpacing
+            let bottom = card.maxY - (metrics.timeLine + 2 * metrics.padding + 4 * scale)
+            guard bottom - top >= 5 * rowHeight else { continue }
+            let sorted = item.insideAnchors.sorted()
+            guard let first = sorted.first, let last = sorted.last, first - rowHeight / 2 >= top, last + rowHeight / 2 <= bottom,
+                  zip(sorted, sorted.dropFirst()).allSatisfy({ $1 - $0 >= rowHeight + 2 * scale }) else { continue }
+            let area = CGRect(x: card.minX, y: first - rowHeight / 2, width: card.width, height: last - first + rowHeight)
+            let covered = eventItems.contains { $0.block.id != item.block.id && $0.frame.intersects(area) }
+            let unrelated = prepared.units.contains { (top...bottom).contains(geometry.y(minute: $0.anchor)) }  // inside transactions are rows, not units
+            guard !covered, !unrelated else { continue }
+            eventItems[index].timeCenters = item.insideAnchors.map { $0 - card.minY }
+            eventItems[index].rowsFrame = area
+        }
+
         // Transactions. Every one is written at the time it happened (its row's middle is the axis' y of that minute), and only where a row
         // really has room: a row is written once there is a row's height between it and the one before it in time, whether or not that one
         // is written (so what is written only ever grows with the room, and never flickers); until then its dot stays, and so does its touch
@@ -542,7 +568,9 @@ struct DayRenderPlan {
             copy.titleMaxWidth = kept.titleMaxWidth
             copy.header = kept.header.map { CGRect(x: $0.minX, y: item.drawnFrame.minY - $0.height, width: $0.width, height: $0.height) }
             copy.showsTitleInCard = kept.showsTitleInCard
-            copy.rowsFrame = Self.rowsFrame(card: item.drawnFrame, titleOffset: item.title.dy, hasHeader: copy.header != nil, presentation: item.presentation, scale: scale)
+            if item.timeCenters == nil {
+                copy.rowsFrame = Self.rowsFrame(card: item.drawnFrame, titleOffset: item.title.dy, hasHeader: copy.header != nil, presentation: item.presentation, scale: scale)
+            }
             return copy
         }
         return held
