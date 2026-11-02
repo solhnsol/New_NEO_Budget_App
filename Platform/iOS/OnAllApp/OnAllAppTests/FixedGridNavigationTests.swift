@@ -348,7 +348,7 @@ private struct Run {
 
 @Test func aOneDaySwipeRestsWhenTheMotionHasEnded() {
     var move = DayMoveModel(day: 100, bounds: 99...102, maximumHop: 1)
-    move.beginDrag(); move.drag(to: 100.3); move.release(velocity: 0.5)
+    move.beginDrag(); move.drag(to: 100.3); move.release(velocity: 3) // 0.3 + 3·lookahead rounds to day 101; a slower release falls back to 100
     var seconds = 0.0
     while move.phase == .settling && seconds < 2 { move.advance(by: 1.0 / 120); seconds += 1.0 / 120 }
     #expect(move.phase == .resting && move.position == 101 && seconds < 0.7)
