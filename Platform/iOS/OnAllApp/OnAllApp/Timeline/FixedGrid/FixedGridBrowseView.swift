@@ -1123,12 +1123,14 @@ struct FixedGridBrowseView: View {
             if dragStart == nil { dragStart = move.position; if move.phase != .dragging { move.beginDrag() } }
             let raw = geometry.position(startingAt: dragStart ?? move.position, translation: translation)
             move.drag(to: DayPrefetchPolicy.browse.clampedPosition(raw, selected: selectedEpoch))
+            takeOverSelection()                              // the selected day is the nearest day: it moves with the white circle
             applyMove()
         case .ended(let velocity):
             BrowseProbe.mark(.released)
             dragStart = nil
             move.release(velocity: -Double(velocity / geometry.dayWidth))
             holdToHop()
+            if move.target != selectedEpoch { moveSelectedDay(by: move.target - selectedEpoch) }   // the day it lands on is selected at the release
             startTicker()
         case .cancelled:
             dragStart = nil
