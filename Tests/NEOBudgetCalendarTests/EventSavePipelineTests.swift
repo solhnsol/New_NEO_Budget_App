@@ -226,7 +226,8 @@ private func stored(_ harness: Harness, _ key: CalendarEventKey) async -> Calend
     }
     let asked = request(base, from: at(today, 14), to: at(today, 15))
     let edited = await failing { await provider.editExternally(base.key, update: CalendarEventUpdate(title: "x")) }.save(asked)
-    #expect(edited == .refused(.targetChanged(current: await stored(harness, base.key)!)))
+    let storedNow = await stored(harness, base.key)!
+    #expect(edited == .refused(.targetChanged(current: storedNow)))
     let other = meeting("other")
     let harness2 = Harness.make(events: [other])
     let provider2 = harness2.provider

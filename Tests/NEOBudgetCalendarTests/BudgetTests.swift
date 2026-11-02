@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 import NEOBudgetCalendar
 
@@ -156,4 +157,41 @@ private func tx(
     #expect(run(spent: 380_000, elapsed: 13, day: 14) != nil)         // 1.79× is 0.3 worse than 1.43×
     #expect(run(spent: 560_000, elapsed: 15, day: 16) != nil)         // 2.29× is 0.4 worse than 1.79×
     #expect(run(spent: 490_000, elapsed: 20, day: 21) == nil)         // already three alerts this period
+}
+
+// MARK: Storage and settings
+
+@Test func aPlanKeepsApplyingUntilALaterOneAndPastMonthsKeepTheirs() {
+    var store = BudgetStore()
+    #expect(store.plan(for: BudgetPeriodMonth(year: 2027, month: 10)) == nil)
+    store.setPlan(BudgetPlan(monthlyLimitMinorUnits: 700_000), from: BudgetPeriodMonth(year: 2027, month: 10))
+    store.setPlan(BudgetPlan(monthlyLimitMinorUnits: 600_000), from: BudgetPeriodMonth(year: 2027, month: 11))
+    #expect(store.plan(for: BudgetPeriodMonth(year: 2027, month: 9)) == nil)
+    #expect(store.plan(for: BudgetPeriodMonth(year: 2027, month: 10))?.monthlyLimitMinorUnits == 700_000)
+    #expect(store.plan(for: BudgetPeriodMonth(year: 2028, month: 2))?.monthlyLimitMinorUnits == 600_000)
+}
+
+@Test func theStoreSurvivesTheFileAndOldFilesStillOpen() throws {
+    var store = BudgetStore()
+    store.setPlan(BudgetPlan(categoryLimits: [cat("food"): 250_000], leftover: .carrySameCategory), from: BudgetPeriodMonth(year: 2027, month: 11))
+    store.settings = BudgetSettings(startDay: 25, namedByEndMonth: true, consumption: ConsumptionDateRule(cutoffMinutes: 180), paceMultiplier: 1.5)
+    store.periodBudgets = [PeriodBudget(id: "t", name: "여행", amountMinorUnits: 1_200_000, first: d(1, 1), last: d(12, 31), scope: PeriodBudgetScope(tags: ["여행"]), mode: .accrue)]
+    store.alertStates["2027-11"] = SpendPaceAlertState()
+    let decoded = try JSONDecoder().decode(BudgetStore.self, from: JSONEncoder().encode(store))
+    #expect(decoded == store)
+    let old = try JSONDecoder().decode(BudgetStore.self, from: Data("{}".utf8))
+    #expect(old == BudgetStore() && old.settings.paceMultiplier == 1.3 && old.settings.consumption.cutoffMinutes == 120)
+}
+
+@Test func aSalaryDayMonthIsNamedByItsStartOrItsEnd() throws {
+    let byStart = BudgetSettings(startDay: 25), byEnd = BudgetSettings(startDay: 25, namedByEndMonth: true)
+    let nov = BudgetPeriodMonth(year: 2027, month: 11)
+    #expect(try byStart.period(of: nov) == AnalysisPeriod(first: d(11, 25), last: d(12, 24)))
+    #expect(try byEnd.period(of: nov) == AnalysisPeriod(first: d(10, 25), last: d(11, 24)))
+    #expect(byStart.month(containing: d(11, 24)) == BudgetPeriodMonth(year: 2027, month: 10))
+    #expect(byStart.month(containing: d(11, 25)) == nov && byStart.month(containing: d(12, 24)) == nov)
+    #expect(byEnd.month(containing: d(11, 25)) == BudgetPeriodMonth(year: 2027, month: 12))
+    #expect(byEnd.month(containing: d(11, 24)) == nov)
+    #expect(BudgetSettings().month(containing: d(1, 1)) == BudgetPeriodMonth(year: 2027, month: 1))
+    #expect(try BudgetSettings(startDay: 25, namedByEndMonth: true).period(of: BudgetPeriodMonth(year: 2027, month: 1)).first == d(12, 25, year: 2026))
 }

@@ -59,3 +59,18 @@ private func purchase(_ id: String, won: Int64, title: String = "테스트 저�
     #expect(AnalysisInput.transactions(entries, life: .empty, zone: zone, recurring: decisions).allSatisfy { $0.isRecurring })
     #expect(AnalysisInput.transactions(entries, life: .empty, zone: zone).allSatisfy { !$0.isRecurring })
 }
+
+@Test func anEarlyMorningPaymentCountsForTheDayBeforeButADateOnlyOneStaysPut() throws {
+    func entry(_ id: String, minute: Int) throws -> LedgerListEntry {
+        let marker = TransactionMarker(
+            id: LedgerEntryID(rawValue: id), occurredAtUnixMilliseconds: zone.instant(of: day, minuteOfDay: minute),
+            amount: try Money(minorUnits: 5_000, currency: "KRW"), flow: .spend, title: "테스트 편의점")
+        return try #require(LedgerList.sections([marker], life: .empty, zone: zone).flatMap(\.entries).first)
+    }
+    let entries = [try entry("late", minute: 90), try entry("dateOnly", minute: 0), try entry("day", minute: 600)]
+    let rule = ConsumptionDateRule()          // before 02:00 counts for the day before
+    let dates = Dictionary(uniqueKeysWithValues: AnalysisInput.transactions(entries, life: .empty, zone: zone, consumption: rule).map { ($0.id, $0.date) })
+    #expect(dates["late"] == day.adding(days: -1))
+    #expect(dates["dateOnly"] == day && dates["day"] == day)
+    #expect(AnalysisInput.transactions(entries, life: .empty, zone: zone).allSatisfy { $0.date == day })   // off unless asked
+}

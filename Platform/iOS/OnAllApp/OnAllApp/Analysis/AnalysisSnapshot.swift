@@ -22,7 +22,7 @@ struct AnalysisSnapshot {
         let entries = sections.flatMap(\.entries)
         var snapshot = AnalysisSnapshot(today: model.dayZone.localDate(of: model.nowMilliseconds))
         snapshot.entriesByID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        snapshot.rows = AnalysisInput.transactions(entries, life: life, zone: model.dayZone, recurring: model.recurringDecisions)
+        snapshot.rows = AnalysisInput.transactions(entries, life: life, zone: model.dayZone, recurring: model.recurringDecisions, consumption: model.budgetStore.settings.consumption)
         snapshot.recurringInputs = AnalysisInput.recurringInputs(entries, zone: model.dayZone)
         snapshot.people = life.persons.mapValues(\.displayName)
         snapshot.me = life.persons.values.first(where: \.isSelf)?.id
