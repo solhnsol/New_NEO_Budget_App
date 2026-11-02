@@ -58,6 +58,7 @@ struct DayListView: View {
             }
             .scrollTargetLayout()
         }
+        .scrollTargetBehavior(.viewAligned)
         .scrollPosition(id: $topEpoch, anchor: .top)
         .task(id: topEpoch) { await readAround(topEpoch) }
         .onChange(of: topEpoch) { _, epoch in scrolled(to: epoch) }
