@@ -37,6 +37,8 @@ struct FixedGridBrowseView: View {
     @State private var dragStart: Double?
     @State private var ticking = false
     @State private var caughtTarget: Int?
+    /// The selected day when the finger took hold: a swipe lands at most a day from it, however many days the drag itself already passed.
+    @State private var swipeBase = 0
     /// The days are running to a day something else picked (the week strip, the header, "오늘"): where from and to. The time is blended between these two only.
     @State private var flight: (from: Int, to: Int)?
     /// The selected day this screen moved itself to (a touch taking over a move, a move coming to rest), so the change is not taken for one from outside.
@@ -1118,6 +1120,7 @@ struct FixedGridBrowseView: View {
             flight = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
+            swipeBase = selectedEpoch
             dragStart = move.position
         case .changed(let translation):
             if dragStart == nil { dragStart = move.position; if move.phase != .dragging { move.beginDrag() } }
@@ -1148,7 +1151,7 @@ struct FixedGridBrowseView: View {
     /// A release carries the days at most `maximumHop` from the selected day (a swipe never skips a day, as in Browse): the model's own limit is from where the finger was, which
     /// may already be a day away.
     private func holdToHop() {
-        let target = FixedGridMove.held(target: move.target, selected: selectedEpoch)
+        let target = FixedGridMove.held(target: move.target, selected: swipeBase)
         if target != move.target { move.retarget(to: target) }
     }
 
@@ -1163,6 +1166,7 @@ struct FixedGridBrowseView: View {
     private func moveSelectedDay(by delta: Int) {
         ownEpoch = selectedEpoch + delta
         onMoveDays(delta)
+        if let haptic = room.haptic { haptic.selectionChanged(); haptic.prepare() } else { Haptics.snap() }
     }
 
     /// The model around the selected day, with the days either side the cache keeps; at `position` (dragging) or at rest on the day.
