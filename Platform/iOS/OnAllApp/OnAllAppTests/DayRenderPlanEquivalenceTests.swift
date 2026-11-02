@@ -151,8 +151,9 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
     // presentation, so every digest with an event moved, and nothing else did (the default three rows, every frame, hit and reveal are the same).
     // busy: retaken when a card's rows began to stop where an event inside it begins (`rowRoom`): its 9:00 card, which holds the 9:10 one, writes fewer rows
     // above it. A title moved down its card also takes its rows' room with it, and moves beside a title rather than onto a card inside its own; no day here has either.
+    // Retaken when a tall card began to write its transactions at their own time (`EventItem.timeCenters`): its `rowsFrame` is then the span of those rows.
     let expected: [String: String] = [
-        "busy": "6a2f785d77b8ca81", "dense": "7aecb3eba99b2161", "overlapping": "128e82f39c884118", "longAndShort": "ec2f2b956aabaa76", "empty": "6913f3cb5b16accc",
+        "busy": "4accc48096575b66", "dense": "18799a80f71d879a", "overlapping": "60078692f0aa1acd", "longAndShort": "ecd5de1c9dc41adb", "empty": "6913f3cb5b16accc",
     ]
     for day in try days() {
         let list = combinations(of: day)
@@ -161,4 +162,25 @@ private func combinations(of day: Day) -> [(label: String, digest: String)] {
         print("EQ|\(day.name)|COMBINED|\(combined)")
         #expect(combined == expected[day.name], "\(day.name)")
     }
+}
+
+@Test func aTallCardWritesItsTransactionsAtTheirTimeWithoutCoveringAnything() throws {
+    var timed = 0
+    for day in try days() {
+        for (_, geometry) in geometries() {
+            let plan = DayRenderPlan(
+                timeline: day.timeline, role: nil, layout: nil, geometry: geometry, layoutWidth: 217.5, textScale: 1,
+                titleWidth: { DayContentLayout.estimatedTitleWidth($0, extra: 14) }
+            )
+            for item in plan.events {
+                guard let centers = item.timeCenters else { continue }
+                timed += 1
+                #expect(centers == item.insideAnchors.map { $0 - item.drawnFrame.minY })
+                let sorted = centers.sorted()
+                #expect(zip(sorted, sorted.dropFirst()).allSatisfy { $1 - $0 >= (InlineAllocationPlan.rowHeight - 2) })
+                for other in plan.events where other.block.id != item.block.id { #expect(!other.frame.intersects(item.rowsFrame ?? .null)) }
+            }
+        }
+    }
+    #expect(timed > 0)
 }
