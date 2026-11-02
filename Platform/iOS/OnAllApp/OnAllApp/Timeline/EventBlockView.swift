@@ -117,6 +117,8 @@ struct EventTitleLayer: View {
     var startFits = true
     /// A transaction line is written where the start time would be.
     var startIsCovered = false
+    /// Extra room before the title, so it clears the connector lines of the transactions written at their time inside the card.
+    var leadingMargin: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -152,7 +154,7 @@ struct EventTitleLayer: View {
                     .opacity(presentation.startTime)
             }
         }
-        .padding(.horizontal, Self.horizontalPadding).padding(.top, 3)
+        .padding(.leading, Self.horizontalPadding + leadingMargin).padding(.trailing, Self.horizontalPadding).padding(.top, 3)
         .frame(width: max(0, min(place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx, maxTitleWidth.map { $0 + 2 * Self.horizontalPadding } ?? .infinity)), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .leading)
         .opacity(presentation.title)
         .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)

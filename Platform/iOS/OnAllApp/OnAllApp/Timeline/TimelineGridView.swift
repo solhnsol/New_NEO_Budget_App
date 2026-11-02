@@ -304,7 +304,8 @@ struct TimelineGridView: View {
                         block: item.block, frame: item.frame, place: item.title, columnRight: geometry.gutterWidth + geometry.contentWidth(totalWidth: width),
                         scale: scale, zoneIdentifier: timeline.timeZoneIdentifier, presentation: item.presentation,
                         maxTitleWidth: item.titleMaxWidth, startFits: item.startTimeFits,
-                        startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) }
+                        startIsCovered: (plan.lines.map(\.frame) + plan.overflows.map(\.frame)).contains { $0.intersects(CGRect(x: item.frame.maxX - 48, y: item.frame.minY + 3, width: 48, height: 11)) },
+                        leadingMargin: item.timeCenters == nil ? 0 : 10 * scale
                     )
                 }
             }
