@@ -34,10 +34,12 @@ public struct AnalysisTransaction: Equatable, Sendable {
     public let tags: Set<String>
     public let activity: AnalysisActivity?
     public let isRecurring: Bool
+    /// Big one-off spending (`SpendingNature.irregular`): kept out of the monthly living budget.
+    public let isIrregular: Bool
 
     public init(
         id: String, date: LocalDate, shareMinorUnits: Int64, pendingMinorUnits: Int64 = 0, category: CanonicalCategoryID? = nil,
-        tags: Set<String> = [], activity: AnalysisActivity? = nil, isRecurring: Bool = false
+        tags: Set<String> = [], activity: AnalysisActivity? = nil, isRecurring: Bool = false, isIrregular: Bool = false
     ) {
         self.id = id
         self.date = date
@@ -47,6 +49,7 @@ public struct AnalysisTransaction: Equatable, Sendable {
         self.tags = tags
         self.activity = activity
         self.isRecurring = isRecurring
+        self.isIrregular = isIrregular
     }
 }
 
