@@ -25,6 +25,9 @@ struct DayMoveModel: Equatable {
 
     /// The spring's natural frequency (rad/s): a move of one day settles in about 0.4 s.
     static let frequency = 14.0
+    /// Rests once the spring is under a third of a point from the day and no faster than the eye can follow, so the day commits when the motion ends (not ~0.4 s after).
+    static let restDistance = 0.002
+    static let restSpeed = 0.05
     /// How far ahead a release looks: a flick of `v` days per second lands `v · lookahead` days further on.
     static let lookahead = 0.15
     /// The default for the most days one release may carry the window over (the DEBUG grid). Browse starts at 1: see `DayPrefetchPolicy.browse`.
@@ -78,7 +81,7 @@ struct DayMoveModel: Equatable {
         target = min(max(day, bounds.lowerBound), bounds.upperBound)
         velocity = newVelocity
         phase = .settling
-        if abs(position - Double(target)) < 1e-4, abs(velocity) < 1e-3 { position = Double(target); velocity = 0; phase = .resting }
+        if abs(position - Double(target)) < Self.restDistance, abs(velocity) < Self.restSpeed { position = Double(target); velocity = 0; phase = .resting }
     }
 
     /// Move the spring on by `seconds`. Only a settle moves by itself.
@@ -93,7 +96,7 @@ struct DayMoveModel: Equatable {
         position = Double(target) + x
         velocity = v
         if position < Double(bounds.lowerBound) || position > Double(bounds.upperBound) { position = clamp(position); velocity = 0 }
-        if abs(position - Double(target)) < 1e-4, abs(velocity) < 1e-3 {
+        if abs(position - Double(target)) < Self.restDistance, abs(velocity) < Self.restSpeed {
             position = Double(target); velocity = 0; phase = .resting
         }
     }

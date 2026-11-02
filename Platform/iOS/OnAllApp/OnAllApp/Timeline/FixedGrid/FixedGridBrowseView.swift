@@ -1179,7 +1179,8 @@ struct FixedGridBrowseView: View {
         defer { costs.record(apply: (CFAbsoluteTimeGetCurrent() - started) * 1000); BrowseProbe.end(probe) }
         position = move.position
         // A move to a day something else picked: the week strip is on that day already.
-        let pending = flight != nil ? 0 : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
+        // Once released the strip goes to the day the spring is headed for, at once (not when the position passes the half), so it moves once and never flips back mid-settle.
+        let pending = flight != nil ? 0 : move.phase == .settling ? min(max(move.target - selectedEpoch, -1), 1) : FixedGridMove.pending(position: move.position, selected: selectedEpoch)
         if room.pending != pending || pendingDays != pending && !ProbeExperiment.stripOff {
             BrowseProbe.mark(.boundary)
             room.pending = pending
