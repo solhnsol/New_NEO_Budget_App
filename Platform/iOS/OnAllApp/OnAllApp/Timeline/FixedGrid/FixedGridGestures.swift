@@ -141,7 +141,7 @@ enum FixedGridGestures {
         case createDraft
         /// A transaction picked up from its line, to be put down on an event (`FixedGridTransactionCarry`). The line's id is the transaction's.
         case pickUpTransaction(String)
-        /// An event long pressed in browse: an edit session opens on it and the event is lifted at once (an event that cannot be edited here opens its details).
+        /// An event long pressed in browse: an edit session opens on it and the event is lifted at once (an event that cannot be edited here says why).
         case edit(BlockID)
         /// The chosen event long pressed while editing: lifted, to be put down at another time or on another day.
         case liftChosen

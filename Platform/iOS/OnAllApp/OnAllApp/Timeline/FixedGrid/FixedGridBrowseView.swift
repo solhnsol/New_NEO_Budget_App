@@ -750,10 +750,12 @@ struct FixedGridBrowseView: View {
     }
 
     /// A long press on an event in browse: a session opens on it (its handles, its time wheel, its title) and the event is in the hand at once. One that cannot
-    /// be edited here opens its details instead.
+    /// be edited here says why instead.
     private func pickUpEvent(_ id: BlockID, at point: CGPoint) {
         guard move.phase == .resting, edit.session == nil, let found = touched(at: point), let block = found.timeline.blocks.first(where: { $0.id == id }) else { return }
-        guard block.isEditable, FixedGridEditor.refusal(for: block, zone: zone) == nil else { onSelect(.event(block)); return }
+        // One that cannot be edited here says why (a tap opens its details), so a long press is never taken for a tap.
+        let refusal = block.isEditable ? FixedGridEditor.refusal(for: block, zone: zone) : .readOnly
+        if let refusal { Haptics.snap(); editor?.tell(FixedGridEditor.text(for: refusal)); return }
         edit.send(.enter(FixedGridEditInteraction.Target(day: found.timeline.day, block: block)))
         guard edit.session != nil else { return }
         lift(day: found.timeline.day, startMinute: block.startMinute, endMinute: block.endMinute, totalMinutes: found.timeline.totalMinutes, at: point)
