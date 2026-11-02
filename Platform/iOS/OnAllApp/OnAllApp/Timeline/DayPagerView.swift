@@ -50,6 +50,8 @@ struct DayPagerView: View {
                             )
                             .padding(.bottom, Theme.Space.xl)
                         }
+                        // A day that fits has nothing to scroll: without the bounce the vertical scroll cannot grab a sideways drag.
+                        .scrollBounceBehavior(.basedOnSize, axes: .vertical)
                         .contentMargins(.top, topInset, for: .scrollContent)
                         .contentMargins(.top, topInset, for: .scrollIndicators)
                         .ignoresSafeArea(edges: .top)
