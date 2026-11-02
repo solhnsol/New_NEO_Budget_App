@@ -28,6 +28,9 @@ public enum LifeValidationError: Error, Hashable, Sendable {
     case duplicateSelf
     case relationshipLabelRequiresUser
     case counterpartyIsSelf(PersonID)
+    case cannotRemoveSelf
+    /// Someone obligations, settlements, requests, corrections or shared expenses still refer to.
+    case personInUse(PersonID)
 
     // Allocations
     case unknownAllocation(AllocationID)
@@ -111,6 +114,8 @@ public enum LifeChange: Hashable, Sendable {
     case upsertTag(Tag)
     case upsertArea(Area)
     case upsertPerson(Person)
+    /// Forgets a person who has no money history. Only the user asks; they leave every event they were on.
+    case removePerson(PersonID, by: AssignmentProvenance)
 
     case createActivity(Activity)
     case updateAssociation(ActivityID, CalendarEventAssociation)
@@ -338,6 +343,24 @@ public struct LifeState: Codable, Equatable, Sendable {
                 guard label.provenance.source == .user else { throw LifeValidationError.relationshipLabelRequiresUser }
             }
             persons[person.id] = person
+
+        case let .removePerson(id, by):
+            try requireValid(by)
+            guard by.source == .user else { throw LifeValidationError.userAssignmentProtected }
+            guard let person = persons[id] else { throw LifeValidationError.unknownPerson(id) }
+            guard !person.isSelf else { throw LifeValidationError.cannotRemoveSelf }
+            let inUse = obligations.values.contains { $0.counterpartyID == id }
+                || settlements.values.contains { $0.transfer.counterpartyID == id }
+                || settlementRequests.values.contains { $0.counterpartyID == id }
+                || correctionGroups.values.contains { $0.counterpartyID == id }
+                || components.values.contains { $0.payerID == id || ($0.participants ?? []).contains(id) || $0.excludedParticipants.contains(id) }
+            guard !inUse else { throw LifeValidationError.personInUse(id) }
+            for (activityID, var activity) in activities where activity.participants.contains(where: { $0.personID == id }) {
+                activity.participants.removeAll { $0.personID == id }
+                activities[activityID] = activity
+            }
+            policyOverrides[.person(id)] = nil
+            persons[id] = nil
 
         case let .createActivity(activity):
             guard !activity.id.rawValue.isEmpty else { throw LifeValidationError.emptyIdentifier(entity: "activity") }

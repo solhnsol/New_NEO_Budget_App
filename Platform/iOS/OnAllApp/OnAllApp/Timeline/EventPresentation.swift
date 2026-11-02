@@ -52,14 +52,15 @@ struct EventPresentation: Equatable {
         /// The small title's type, against the title's (see `EventTitleLayer`).
         static let compactShare: CGFloat = 0.7
         /// Room for the title in small type: a card thinner than the title's line but at least this tall writes it small.
-        var compactNeed: CGFloat { (titleLine * Self.compactShare).rounded(.up) + padding }
+        var compactNeed: CGFloat { CardStyle.current.isApple ? 9 : (titleLine * Self.compactShare).rounded(.up) + padding }
         /// Each thing begins to appear only once the one before it is fully there, so going down the title is the last to go.
         /// The start time sits on the title's line, so it needs that line and a little more.
         var startNeed: CGFloat { titleNeed + ramp }
         /// The end time has a line of its own at the bottom, clear of the title's.
         var endNeed: CGFloat { max(titleNeed + timeLine + 2 * padding, startNeed + ramp) }
         /// A count of linked transactions shares the end time's line.
-        var summaryNeed: CGFloat { endNeed + ramp }
+        /// Apple's card writes the time range under the title, so the count's pill waits for a second line below it.
+        var summaryNeed: CGFloat { endNeed + ramp + (CardStyle.current.isApple ? 12 : 0) }
         /// What the card keeps free below the title for the end time's line.
         var reserved: CGFloat { endNeed }
         /// Room for the first transaction row.
@@ -74,6 +75,9 @@ struct EventPresentation: Equatable {
     let title: CGFloat
     /// 0 … 1: the title in small type, for a card too thin for the title. It gives way to the title as the card gets tall enough for it.
     var compactTitle: CGFloat = 0
+    /// 0 … 1: how far a card too thin for even the small title has become a dot (its name is written beside it, like a transaction's chip). 0 from the
+    /// height that has room for the small title, 1 at the height of a line, so a card shrinks into the dot as it thins and grows out of it as it thickens.
+    var dot: CGFloat = 0
     let startTime: CGFloat
     let endTime: CGFloat
     /// The count of linked transactions ("거래 N건"), when the rows do not fit.
@@ -147,6 +151,7 @@ struct EventPresentation: Equatable {
         return EventPresentation(
             height: height, level: level, card: card,
             title: title, compactTitle: appearing(height, over: metrics.compactNeed, ramp: ramp) * (1 - title),
+            dot: min(1, max(0, (metrics.compactNeed - height) / max(0.001, metrics.compactNeed - metrics.lineHeight))),
             startTime: appearing(height, over: metrics.startNeed, ramp: ramp),
             endTime: endTime, transactionSummary: summary,
             transactions: hasRows ? appearing(rowsHeight, over: metrics.detailNeed, ramp: ramp) : 0,

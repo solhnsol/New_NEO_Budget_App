@@ -65,9 +65,13 @@ final class AppModel {
     private(set) var week: [WeekStripDay] = []
     /// The days of the week on screen and the weeks either side, by date, so the strip can page between weeks without waiting for a read.
     private(set) var weekCells: [LocalDate: WeekStripDay] = [:]
+    /// The days of the months the month panel has been opened on (events and what was spent), read when it opens or moves to a month.
+    private(set) var monthCells: [LocalDate: WeekStripDay] = [:]
     private(set) var calendars: [CalendarDescriptor] = []
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
+    /// My owed money closed by netting, counted as spending on the netting day (display only; `LifeState.nettedSpending`).
+    private(set) var nettedSpending: [NettedSpending] = []
     /// Created once the command service exists (after the first successful start). Gestures go through it.
     private(set) var editor: TimelineEditor?
     /// The save path for an edit session's time change (Phase 3A): re-checks the original, then writes through the same command service.
@@ -80,6 +84,8 @@ final class AppModel {
     private let provider: any CalendarProvider
     private let eventKit: EventKitCalendarProvider?
     private let ledger: AppLedger
+    /// Ledger entries that look like a private person's transfer, read on every reload; rules rename them but never file them.
+    private var personEntries: Set<LedgerEntryID> = []
     private var service: CalendarCommandService?
     private let prepare: (@Sendable () async -> Void)?
     /// The data generation: moves only when the calendar may have changed (`reload`). A day read in an earlier generation is stale and is never kept. A move does
@@ -119,6 +125,7 @@ final class AppModel {
         self.dayZone = dayZone
         self.ledger = ledger
         self.isDemo = isDemo
+        calendarIcons = CalendarIconStore.load(key: isDemo ? "calendarIcons.demo" : "calendarIcons")
         self.prepare = prepare
         selectedDay = dayZone.localDate(of: Self.nowMilliseconds())
     }
@@ -148,6 +155,8 @@ final class AppModel {
 
     func start() async {
         if let prepare { await prepare() }
+        loadOverrides()
+        loadRecurring()
         observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
@@ -170,6 +179,13 @@ final class AppModel {
         await bindSpendingByTime()
         await reload()
         observeChanges()
+        // The ledger opened on the recent notifications; the older ones are replayed now and swapped in, then the days on
+        // screen are read again.
+        Task { [weak self] in
+            guard let self, await ledger.isHistoryPartial else { return }
+            await ledger.completeHistory()
+            await ledgerDidChange()
+        }
     }
 
     private func makeService() async throws {
@@ -182,6 +198,9 @@ final class AppModel {
             if let events = try? await provider.events(from: bounds.start, to: bounds.end, calendarIDs: nil) {
                 initialLife = DemoLife.initialState(events: events)
             }
+        } else if let imported = await ledger.importedLife(now: Self.nowMilliseconds()) {
+            // Settlements from an imported Actual ledger start the calendar side with their receivables already paid.
+            initialLife = imported
         }
         let service = CalendarCommandService(
             provider: provider,
@@ -239,7 +258,7 @@ final class AppModel {
         var result: [StripDay] = []
         for day in days {
             let timeline: DayTimeline?
-            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = try? await service.dayTimeline(for: day) }
+            if let known = cache[day] { timeline = known } else { dayReads += 1; timeline = (try? await service.dayTimeline(for: day)).map(displayed) }
             result.append(StripDay(day: day, timeline: timeline))
         }
         return result
@@ -265,6 +284,7 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
+        personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
         dataGeneration += 1
         let mine = dataGeneration
         fullReloadsInFlight += 1
@@ -288,7 +308,7 @@ final class AppModel {
             week = loadedWeek
             weekCells = cells
             calendars = loadedCalendars
-            if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state) }
+            if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state); nettedSpending = state.nettedSpending() }
             phase = .ready
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == dataGeneration else { return }
@@ -297,6 +317,22 @@ final class AppModel {
             guard mine == dataGeneration else { return }
             phase = .failed("일정과 거래를 불러오지 못했어요")
         }
+    }
+
+    /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank. What was read is kept in one go (and only
+    /// what differs), so a screen that shows it is re-drawn once and not once per week.
+    func loadMonth(startingAt first: LocalDate) async {
+        guard let service else { return }
+        let last = first.adding(days: LocalDate.daysInMonth(year: first.year, month: first.month) - 1)
+        var read: [LocalDate: WeekStripDay] = [:]
+        var day = first
+        while day <= last {
+            if let days = try? await service.weekStrip(containing: day, firstWeekday: 0) { for cell in days { read[cell.day] = cell } }
+            day = day.adding(days: 7)
+        }
+        if let days = try? await service.weekStrip(containing: last, firstWeekday: 0) { for cell in days { read[cell.day] = cell } }
+        let changed = read.filter { monthCells[$0.key] != $0.value }
+        if !changed.isEmpty { monthCells.merge(changed) { _, new in new } }
     }
 
     /// After a move to another day: reads only the required days that are not kept yet (and, for a continuous move, `extra` more each side), the weeks
@@ -425,7 +461,7 @@ final class AppModel {
 
     private func readTimeline(_ day: LocalDate, service: CalendarCommandService) async throws -> DayTimeline {
         dayReads += 1
-        let direct: @MainActor () async throws -> DayTimeline = { try await service.dayTimeline(for: day) }
+        let direct: @MainActor () async throws -> DayTimeline = { [self] in displayed(try await service.dayTimeline(for: day)) }
         if let dayReadInterceptor { return try await dayReadInterceptor(day, direct) }
         return try await direct()
     }
@@ -457,14 +493,204 @@ final class AppModel {
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
 
+    /// Only a screenshot demo sets this (`DemoSettlement`): the settlement hub reads the time this much later, to show what an old request looks like.
+    var displayClockOffsetMilliseconds: Int64 = 0
+
+    // MARK: Calendars
+
+    private var calendarIconKey: String { isDemo ? "calendarIcons.demo" : "calendarIcons" }
+    /// The icons the reader picked for calendars (settings), by calendar.
+    private(set) var calendarIcons = CalendarIconStore()
+
+    /// The icon to draw for a calendar: the picked one, else a guess from its name.
+    func calendarSymbol(id: CalendarID, title: String?) -> String {
+        CalendarIcon.symbol(picked: calendarIcons.symbol(for: id), title: title)
+    }
+
+    func setCalendarIcon(_ symbol: String, for id: CalendarID) {
+        calendarIcons.set(symbol, for: id)
+        calendarIcons.save(key: calendarIconKey)
+    }
+
+    /// Makes a calendar in the device calendar (the demo's own, in demo) with the icon the reader picked. Returns why it failed, or `nil`.
+    func addCalendar(title: String, colorHex: String, symbol: String) async -> String? {
+        switch await provider.createCalendar(title: title, colorHex: colorHex) {
+        case let .success(calendar):
+            setCalendarIcon(symbol, for: calendar.id)
+            await reload()
+            return nil
+        case let .failure(failure): return Self.message(for: failure)
+        case .conflict: return "캘린더를 만들지 못했어요."
+        }
+    }
+
+    /// Renames and recolors a calendar (what is unchanged is left alone) and sets its icon. Returns why it failed, or `nil`.
+    func editCalendar(_ calendar: CalendarDescriptor, title: String, colorHex: String, symbol: String) async -> String? {
+        setCalendarIcon(symbol, for: calendar.id)
+        let newTitle = title == calendar.title ? nil : title
+        let newColor = colorHex == calendar.colorHex ? nil : colorHex
+        if newTitle != nil || newColor != nil {
+            switch await provider.updateCalendar(calendar.id, title: newTitle, colorHex: newColor) {
+            case .success: break
+            case let .failure(failure): return Self.message(for: failure)
+            case .conflict: return "캘린더를 바꾸지 못했어요."
+            }
+        }
+        await reload()
+        return nil
+    }
+
+    /// Removes a calendar with all its events. The events are gone from the device calendar too.
+    func removeCalendar(_ id: CalendarID) async -> String? {
+        switch await provider.deleteCalendar(id) {
+        case .success:
+            calendarIcons.set(nil, for: id)
+            calendarIcons.save(key: calendarIconKey)
+            await reload()
+            return nil
+        case let .failure(failure): return Self.message(for: failure)
+        case .conflict: return "캘린더를 지우지 못했어요."
+        }
+    }
+
+    private static func message(for failure: CalendarProviderFailure) -> String {
+        switch failure {
+        case .accessUnavailable: return "캘린더 접근을 허용해 주세요."
+        case .calendarNotWritable: return "이 캘린더는 앱에서 바꿀 수 없어요."
+        case .calendarMissing: return "이미 없는 캘린더예요."
+        case .unsupported: return "이 기기에서는 캘린더를 추가하거나 지울 수 없어요."
+        case .eventMissing, .saveFailed: return "저장하지 못했어요. 잠시 뒤에 다시 해 주세요."
+        }
+    }
+
+    /// What the user changed about transactions for display. Kept in a file, except in the demo (a restart gives the demo back unchanged).
+    private(set) var transactionOverrides = TransactionOverrideStore()
+    /// Moves with every edit, so the ledger tab reloads.
+    private(set) var overrideRevision = 0
+    private var overridesURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "transaction-overrides.json") }
+
+    /// Reads the saved edits; called once at start.
+    func loadOverrides() {
+        if let url = overridesURL { transactionOverrides = .load(from: url) }
+        overrideRevision += 1
+    }
+
+    /// Adds a transaction the user typed in (and what they set on it), then shows it.
+    func addManual(title: String, won: Int64, isRefund: Bool, at unixMilliseconds: Int64, override: TransactionOverride?) {
+        let id = ManualTransaction.idPrefix + UUID().uuidString
+        transactionOverrides.manual.append(.init(id: id, title: title, amount: won, isRefund: isRefund, occurredAtUnixMilliseconds: unixMilliseconds))
+        transactionOverrides[LedgerEntryID(rawValue: id)] = override
+        saveOverrides()
+    }
+
+    /// Deletes a typed-in transaction. Ledger transactions cannot be deleted.
+    func removeManual(_ id: LedgerEntryID) {
+        transactionOverrides.manual.removeAll { $0.id == id.rawValue }
+        transactionOverrides[id] = nil
+        saveOverrides()
+    }
+
+    private func saveOverrides() {
+        if let url = overridesURL { transactionOverrides.save(to: url) }
+        overrideRevision += 1
+        Task { await reload() }                                 // the cached days were built with the old edits and rules
+    }
+
+    /// A day as the calendar shows it: transaction names and categories after the user's edits and rules (the ledger tab goes through the same resolver).
+    private func displayed(_ timeline: DayTimeline) -> DayTimeline {
+        let overrides = transactionOverrides
+        let persons = personEntries
+        return timeline.displayingTransactions { overrides.display($0, title: $1, category: $2, persons: persons) }
+    }
+
+    /// Sets (or, when `override` is empty, clears) what the user changed about one transaction.
+    /// `originalTitle` is the name the ledger has; with it, the edit is also kept in the edit log.
+    func edit(_ id: LedgerEntryID, to override: TransactionOverride?, originalTitle: String? = nil) {
+        transactionOverrides[id] = override
+        if let override, !override.isEmpty {
+            transactionOverrides.record(.init(
+                id: UUID().uuidString, transactionID: id.rawValue, originalTitle: originalTitle, title: override.title, category: override.category,
+                memo: override.memo, tags: override.tags, atUnixMilliseconds: nowMilliseconds
+            ))
+        }
+        saveOverrides()
+    }
+
+    /// Adds a rule, or replaces the one with the same id.
+    func saveRule(_ rule: TransactionRule) {
+        if let index = transactionOverrides.rules.firstIndex(where: { $0.id == rule.id }) {
+            transactionOverrides.rules[index] = rule
+        } else {
+            transactionOverrides.rules.append(rule)
+        }
+        saveOverrides()
+    }
+
+    // MARK: Analysis
+
+    /// What the user decided about repeating expenses (`RecurringDecisions`), kept as one small file. Detection results are never saved.
+    private(set) var recurringDecisions = RecurringDecisions()
+    /// Moves with every decision, so the analysis screens reload.
+    private(set) var recurringRevision = 0
+    private var recurringURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "recurring-decisions.json") }
+
+    func loadRecurring() {
+        if let url = recurringURL, let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(RecurringDecisions.self, from: data) {
+            recurringDecisions = saved
+        }
+        recurringRevision += 1
+    }
+
+    /// Applies the user's yes/no on a repeating expense and saves it.
+    func decideRecurring(_ change: (inout RecurringDecisions) -> Void) {
+        change(&recurringDecisions)
+        if let url = recurringURL, let data = try? JSONEncoder().encode(recurringDecisions) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+        recurringRevision += 1
+    }
+
+    /// The tags the user has put on transactions, most used first (what the tag field offers).
+    var knownTags: [String] { Self.tagCounts(transactionOverrides).map(\.name) }
+
+    nonisolated static func tagCounts(_ store: TransactionOverrideStore) -> [(name: String, count: Int)] {
+        var counts: [String: Int] = [:]
+        for override in store.byTransaction.values { for tag in override.tags { counts[tag, default: 0] += 1 } }
+        return counts.map { ($0.key, $0.value) }.sorted { ($0.1, $1.0) > ($1.1, $0.0) }
+    }
+
+    /// Renames the user's tag on every transaction (a name that already exists merges the two); an empty `new` takes the tag off.
+    func renameTag(_ old: String, to new: String?) {
+        for (id, var override) in transactionOverrides.byTransaction where override.tags.contains(old) {
+            var seen = Set<String>()
+            override.tags = override.tags.compactMap { $0 == old ? new : $0 }.filter { seen.insert($0).inserted }
+            transactionOverrides.byTransaction[id] = override.isEmpty ? nil : override
+        }
+        saveOverrides()
+    }
+
+    func deleteRule(id: String) {
+        transactionOverrides.rules.removeAll { $0.id == id }
+        saveOverrides()
+    }
+
+    /// The original names of the ledger's transactions, for previewing how many a rule would catch.
+    func ledgerTitles() async -> [String] {
+        ((try? await ledger.transactions()) ?? []).compactMap(\.title)
+    }
+
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
     /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
     /// transactions are still listed, without allocations.
     func ledgerSections() async -> [LedgerDaySection]? {
-        guard let transactions = try? await ledger.transactions() else { return nil }
+        let overrides = transactionOverrides.lookup
+        guard let ledgerTransactions = try? await ledger.transactions() else { return nil }
+        let transactions = ledgerTransactions + transactionOverrides.manualMarkers
         let life = (try? await service?.lifeSnapshot().state) ?? .empty
         let refundOf = (try? await ledger.refundLinks()) ?? [:]
-        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf)
+        let persons = (try? await ledger.personEntryIDs()) ?? personEntries
+        return LedgerList.sections(transactions, life: life, zone: dayZone, refundOf: refundOf, overrides: overrides, rules: transactionOverrides.ruleSet, persons: persons, surplus: SurplusSetting.current())
     }
 
     /// Deposits that can still be put on a purchase, from `since` on, newest first. Empty before the service exists: putting one needs it.
@@ -481,6 +707,35 @@ final class AppModel {
         ) { await service.perform($0) }
         await reload()
         return applied
+    }
+
+    /// Records a deposit against the request the user picked (`DepositConfirmation`), then shows the result.
+    func record(_ deposit: LedgerDeposit, to obligation: Obligation, life: LifeState, shortChoice: DepositConfirmation.ShortChoice, rememberAlias: Bool) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.apply(
+            deposit, to: obligation, life: life, shortChoice: shortChoice, rememberAlias: rememberAlias,
+            provenance: ActivityEditing.provenance(now: nowMilliseconds)
+        ) { await service.perform($0) }
+        await reload()
+        return done
+    }
+
+    /// Closes both directions with the one-tap netting the user confirmed (`DepositConfirmation.netting`), then shows the result.
+    func recordNetting(_ proposal: SettlementProposal) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.applyNetting(proposal, provenance: ActivityEditing.provenance(now: nowMilliseconds)) { await service.perform($0) }
+        await reload()
+        return done
+    }
+
+    /// Records a deposit for a gathering that has no request yet.
+    func record(_ deposit: LedgerDeposit, forGathering activity: ActivityID, senderName: String, life: LifeState, provenance: AssignmentProvenance) async -> Bool {
+        guard let service else { return false }
+        let done = await DepositConfirmation.applyToGathering(
+            deposit, activity: activity, senderName: senderName, life: life, provenance: provenance, newID: { ActivityEditing.newID(prefix: $0) }
+        ) { await service.perform($0) }
+        await reload()
+        return done
     }
 
     /// The meaning kept around events (people, headcounts, components, obligations), for sheets that show it. `nil` before the service exists.
@@ -502,6 +757,16 @@ final class AppModel {
     func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
 
     func registeredAccounts() async -> [AccountProfile] { await ledger.registeredAccounts() }
+
+    /// Imported rows that still wait for the user, newest first.
+    func pendingImports() async -> [PendingImport] { await ledger.pendingImports() }
+
+    /// Brings in an Actual Budget ledger file (`imported-history.json`). `nil` if the file could not be used.
+    func importHistory(_ data: Data) async -> ImportSummary? {
+        guard let summary = try? await ledger.importHistory(data) else { return nil }
+        await ledgerDidChange()
+        return summary
+    }
 
     /// Applies the user's answer about an account and replays the ledger with it. `false` if it could not be applied.
     @discardableResult

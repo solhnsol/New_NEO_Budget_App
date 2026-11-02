@@ -23,4 +23,4 @@
 | `danger` | #F04452 | 오류, 지우기 |
 | `caution` | #FF8A00 | 기다리는 상태 |
 
-다크 모드 값은 `Theme.swift`에 함께 있다. `Color.accentColor`를 쓰는 코드(그리드·주간 달력)도 같은 파랑이 되도록 `Assets.xcassets`의 `AccentColor`에 같은 값을 넣고 앱 전역 강조색으로 정했다. 캘린더 그리드(일정 카드·거래 줄)는 캘린더 색을 그대로 쓰고 이 토큰을 적용하지 않았다(그리드는 다른 작업이 진행 중).
+다크 모드 값은 `Theme.swift`에 함께 있다. `Color.accentColor`를 쓰는 코드(그리드·주간 달력)도 같은 파랑이 되도록 `Assets.xcassets`의 `AccentColor`에 같은 값을 넣고 앱 전역 강조색으로 정했다. 캘린더 그리드의 머리(날짜·종일 띠), 일정 카드의 알약, 주간 스트립은 2026-10-23부터 이 토큰을 쓴다(`docs/grid-display-policy.md` 정돈안). 일정 카드의 색은 캘린더 색에 투명도를 준 것이다.

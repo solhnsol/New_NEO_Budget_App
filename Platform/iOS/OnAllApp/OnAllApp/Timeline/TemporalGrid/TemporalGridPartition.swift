@@ -23,6 +23,11 @@ struct TemporalGridPartition: Equatable, Sendable {
     private let blendEnds: [TemporalGridPartition]
     private let blendProgress: Double
 
+    /// The two ends and how far along, for a partition made by `interpolated`; `nil` for a planned one.
+    var blend: (from: TemporalGridPartition, to: TemporalGridPartition, progress: Double)? {
+        blendEnds.count == 2 ? (blendEnds[0], blendEnds[1], blendProgress) : nil
+    }
+
     var slotCount: Int { boundaries.count - 1 }
     var slotHeight: CGFloat { totalHeight / CGFloat(slotCount) }
 

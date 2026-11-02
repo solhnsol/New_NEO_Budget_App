@@ -11,6 +11,9 @@ struct EventActivitySheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var newArea = ""
     @State private var failure: String?
+    /// Transactions of the day before and after the event's day, so a payment just outside the day can still be linked.
+    @State private var neighbours: [TransactionMarkerItem] = []
+    @State private var picked: Set<LedgerEntryID> = []
 
     /// The event and the day it is on (`AppModel.locate`).
     private var located: (block: EventBlock, timeline: DayTimeline)? { model.locate(eventKey) }
@@ -24,6 +27,11 @@ struct EventActivitySheet: View {
             .navigationTitle(block?.title ?? "일정")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } } }
+        }
+        .task(id: model.dataGeneration) {
+            guard let day = located?.timeline.day else { return }
+            let days = await model.readDays([day.adding(days: -1), day.adding(days: 1)])
+            neighbours = days.compactMap(\.timeline).flatMap(\.markers)
         }
     }
 
@@ -102,18 +110,48 @@ struct EventActivitySheet: View {
             if let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds) { Text("합계 \(total)") }
         }
         .onAllCardRow()
-        let candidates = ActivityEditing.linkCandidates(for: block, in: timeline)
+        let candidates = ActivityEditing.linkCandidates(for: block, among: timeline.markers + neighbours)
         if !candidates.isEmpty {
-            Section("연결할 수 있는 거래") {
+            Section {
                 ForEach(candidates, id: \.transactionID) { marker in
-                    HStack(spacing: Theme.Space.m) {
-                        transactionLabel(marker.title, at: marker.occurredAtUnixMilliseconds, timeline)
-                        Spacer()
-                        Text(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency)).font(Theme.Typo.amount)
-                        Button("연결") { run(ActivityEditing.link(marker.transactionID, event: eventKey, now: model.nowMilliseconds)) }
-                            .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
+                    let isPicked = picked.contains(marker.transactionID)
+                    Button {
+                        if isPicked { picked.remove(marker.transactionID) } else { picked.insert(marker.transactionID) }
+                    } label: {
+                        HStack(spacing: Theme.Space.m) {
+                            Image(systemName: isPicked ? "checkmark.circle.fill" : "circle").foregroundStyle(isPicked ? Theme.accent : Theme.textTertiary)
+                            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
+                                Text(marker.title ?? "거래").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                                Text(Formatting.shortDate(marker.occurredAtUnixMilliseconds, zoneIdentifier: timeline.timeZoneIdentifier) + " "
+                                     + Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: timeline.timeZoneIdentifier))
+                                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                            }
+                            Spacer()
+                            Text(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(isPicked ? .isSelected : [])
                 }
+                if !picked.isEmpty {
+                    Button("\(picked.count)건 연결") {
+                        let ids = candidates.map(\.transactionID).filter(picked.contains)
+                        picked = []
+                        // One after another: each edit reloads the days, and two at once would read each other's half-written state.
+                        Task {
+                            for id in ids {
+                                let outcome = await model.perform(ActivityEditing.link(id, event: eventKey, now: model.nowMilliseconds))
+                                if case let .rejected(reason)? = outcome { failure = "저장하지 못했어요. (\(reason))"; return }
+                            }
+                            failure = nil
+                        }
+                    }
+                    .buttonStyle(SecondaryButtonStyle(tint: Theme.accent))
+                }
+            } header: {
+                Text("연결할 수 있는 거래")
+            } footer: {
+                Text("전날과 다음 날 거래도 보여요. 이미 다른 일정에 들어간 거래는 거래 상세에서 옮길 수 있어요.")
             }
             .onAllCardRow()
         }

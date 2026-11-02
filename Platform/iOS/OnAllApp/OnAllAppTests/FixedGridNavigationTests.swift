@@ -345,3 +345,11 @@ private struct Run {
     #expect(model.cachedTimeline(for: model.selectedDay) != nil && model.cachedTimeline(for: start.adding(days: -40)) == nil)
     #expect(revisions.last! > revisions.first!)                                       // the revision moved as days were read
 }
+
+@Test func aOneDaySwipeRestsWhenTheMotionHasEnded() {
+    var move = DayMoveModel(day: 100, bounds: 99...102, maximumHop: 1)
+    move.beginDrag(); move.drag(to: 100.3); move.release(velocity: 0.5)
+    var seconds = 0.0
+    while move.phase == .settling && seconds < 2 { move.advance(by: 1.0 / 120); seconds += 1.0 / 120 }
+    #expect(move.phase == .resting && move.position == 101 && seconds < 0.7)
+}

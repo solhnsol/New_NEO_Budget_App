@@ -27,6 +27,9 @@ public enum CandidateIssue: String, Codable, Hashable, Sendable {
     case promotionRejected
     /// A refund or deposit that may return an earlier purchase; the user confirms which (never merged on amount alone).
     case possibleReturnOfEarlierPurchase
+    /// Toss and the bank (or two records) report the same amount close in time but not tightly enough to merge: the user
+    /// confirms whether it is the same money (never merged on amount and time alone).
+    case possibleSameMoneyRecorded
 }
 
 public enum CandidateValidationError: Error, Equatable, Sendable {

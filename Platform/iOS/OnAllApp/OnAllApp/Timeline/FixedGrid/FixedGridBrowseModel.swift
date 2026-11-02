@@ -149,8 +149,9 @@ final class FixedGridBrowseModel {
     private(set) var transitionsBegun = 0
 
     /// The zoom a layout is decided at: a quarter of a unit is the same decision, so a pinch that ends near where it was needs no new run.
-    /// A card on the fixed grid writes every transaction it holds as soon as it is tall enough for the row (the collapsed block's three is for a card that cannot grow).
-    static let maximumInlineRows = 12
+    /// A card on the fixed grid does not write its transactions as rows: it holds one pill with their count and total, and the rows are in the event's details
+    /// (Hans, 2026-10-23: inside an event only the total matters). 0 rows makes `InlineAllocationPlan` fall back to its summary chip at every height.
+    static let maximumInlineRows = 0
 
     static func zoomKey(_ zoom: CGFloat) -> Int { Int((zoom * 4).rounded()) }
 

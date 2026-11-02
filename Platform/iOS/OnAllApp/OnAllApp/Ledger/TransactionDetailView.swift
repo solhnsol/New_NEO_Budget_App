@@ -6,10 +6,18 @@ import SwiftUI
 /// split into.
 struct TransactionDetailView: View {
     let entry: LedgerListEntry
-    let zone: DisplayTimeZone
+    let model: AppModel
+    @State private var editing = false
+    @State private var choosingEvent = false
+    /// The entry as stored now: putting the transaction in an event or taking it out changes what this screen shows while it is open.
+    @State private var fresh: LedgerListEntry?
+    @State private var failure: String?
+    private var current: LedgerListEntry { fresh ?? entry }
+    private var zone: DisplayTimeZone { model.dayZone }
     private var zoneIdentifier: String { zone.identifier }
 
     var body: some View {
+        let entry = current
         let transaction = entry.transaction
         let isRefund = transaction.flow == .refund
         List {
@@ -38,6 +46,17 @@ struct TransactionDetailView: View {
                 }
             }
             .onAllCardRow()
+            if !(entry.override?.memo ?? "").isEmpty || !entry.tags.isEmpty {
+                Section {
+                    if let memo = entry.override?.memo, !memo.isEmpty { Text(memo).foregroundStyle(Theme.textPrimary) }
+                    if !entry.tags.isEmpty {
+                        Text(entry.tags.map { "#" + $0 }.joined(separator: " ")).foregroundStyle(Theme.accent)
+                    }
+                } header: {
+                    Text((entry.override?.memo ?? "").isEmpty ? "태그" : "메모·태그")
+                }
+                .onAllCardRow()
+            }
             if !entry.offsets.isEmpty, let net = entry.netMinorUnits {
                 Section {
                     ForEach(entry.offsets) { offset in
@@ -82,22 +101,46 @@ struct TransactionDetailView: View {
                         }
                     }
                 }
+                if transaction.flow == .spend {
+                    let linked = entry.portions.contains { $0.activityID != nil }
+                    Button(linked ? "다른 일정으로 옮기기" : "일정에 넣기") { choosingEvent = true }
+                    if linked {
+                        Button("일정에서 빼기", role: .destructive) {
+                            Task {
+                                let outcome = await model.perform(ActivityEditing.unlink(transaction.id, now: model.nowMilliseconds))
+                                if case let .rejected(reason)? = outcome { failure = "빼지 못했어요. (\(reason))" } else { failure = nil }
+                            }
+                        }
+                    }
+                }
+                if let failure { Label(failure, systemImage: "exclamationmark.circle.fill").foregroundStyle(Theme.danger).font(Theme.Typo.caption) }
             } header: {
                 Text("활동")
             } footer: {
-                if entry.portions.isEmpty { Text("활동 없는 지출도 괜찮아요. 캘린더 탭에서 일정과 연결할 수 있어요.") }
+                if entry.portions.isEmpty { Text("활동 없는 지출도 괜찮아요. 일정에 넣고 싶으면 위 버튼을 눌러 주세요.") }
+                else if entry.portions.contains(where: { $0.activityID != nil }) { Text("일정에서 뺀 거래는 시간이 겹쳐도 다시 들어가지 않아요.") }
             }
             .onAllCardRow()
         }
         .onAllGroupedScreen()
         .navigationTitle(transaction.title ?? "거래")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("수정") { editing = true } } }
+        .sheet(isPresented: $editing) { TransactionEditSheet(entry: current, model: model) }
+        .sheet(isPresented: $choosingEvent) {
+            TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: Set(current.portions.compactMap(\.activityID)))
+        }
+        .task(id: [model.dataGeneration, model.overrideRevision]) {
+            fresh = await model.ledgerSections()?.lazy.flatMap(\.entries).first { $0.id == entry.id }
+        }
     }
 
     private func offsetTitle(_ offset: LedgerListEntry.Offset) -> String {
         switch offset.kind {
         case .refund: "환불"
         case let .settlement(from): from + " 정산"
+        case let .pending(from): from + " 정산 대기 중"
+        case let .surplus(from): from + " 더 보낸 돈"
         }
     }
 

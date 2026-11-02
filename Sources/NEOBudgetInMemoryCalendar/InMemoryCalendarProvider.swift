@@ -14,6 +14,7 @@ public actor InMemoryCalendarProvider: CalendarProvider {
     private var eventsByKey: [CalendarEventKey: CalendarEvent] = [:]
     private var seriesByKey: [CalendarEventKey: Int] = [:]
     private var nextEventNumber = 1
+    private var nextCalendarNumber = 1
     private var nextSeriesNumber = 1
     private var nextRevision = 1
     private var accessAvailable = true
@@ -133,6 +134,41 @@ public actor InMemoryCalendarProvider: CalendarProvider {
             Task { await self?.removeListener(id) }
         }
         return stream
+    }
+
+    public func createCalendar(title: String, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        guard accessAvailable else { return .failure(.accessUnavailable) }
+        let calendar = CalendarDescriptor(id: CalendarID(rawValue: "mem-cal-\(nextCalendarNumber)"), title: title, colorHex: colorHex)
+        nextCalendarNumber += 1
+        calendarsByID[calendar.id] = calendar
+        signalChange()
+        return .success(calendar)
+    }
+
+    public func updateCalendar(_ id: CalendarID, title: String?, colorHex: String?) async -> CalendarProviderResult<CalendarDescriptor> {
+        guard accessAvailable else { return .failure(.accessUnavailable) }
+        guard let calendar = calendarsByID[id] else { return .failure(.calendarMissing(id)) }
+        guard calendar.isWritable else { return .failure(.calendarNotWritable(id)) }
+        let changed = CalendarDescriptor(
+            id: id, title: title ?? calendar.title, colorHex: colorHex ?? calendar.colorHex,
+            isWritable: calendar.isWritable, sourceTitle: calendar.sourceTitle
+        )
+        calendarsByID[id] = changed
+        signalChange()
+        return .success(changed)
+    }
+
+    public func deleteCalendar(_ id: CalendarID) async -> CalendarProviderResult<Bool> {
+        guard accessAvailable else { return .failure(.accessUnavailable) }
+        guard let calendar = calendarsByID[id] else { return .failure(.calendarMissing(id)) }
+        guard calendar.isWritable else { return .failure(.calendarNotWritable(id)) }
+        calendarsByID[id] = nil
+        for key in eventsByKey.keys where key.calendarID == id {
+            eventsByKey[key] = nil
+            seriesByKey[key] = nil
+        }
+        signalChange()
+        return .success(true)
     }
 
     public func createEvent(_ draft: CalendarEventDraft) async -> CalendarProviderResult<CalendarEvent> {

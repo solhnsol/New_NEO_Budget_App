@@ -224,7 +224,7 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
         #expect(abs(item.frame.minY - 600 * ppm) < 0.001 && abs(item.frame.height - 60 * ppm) < 0.001) // exactly the axis' span, never stretched for text
         #expect(item.presentation == EventPresentation.make(height: item.frame.height, insideCount: 1, metrics: .standard()))
         #expect(p.hit(at: CGPoint(x: item.drawnFrame.midX, y: item.drawnFrame.midY)) == .event(item.block.id))      // the same touch target, line or card
-        if item.presentation.showsTitle { #expect(item.showsTitleInCard || item.header != nil) }
+        if item.presentation.showsTitle { #expect(item.showsTitleInCard) }
         if levels.last != item.presentation.level { levels.append(item.presentation.level) }
         ppm += 0.01
     }
@@ -327,4 +327,24 @@ private func plan(_ tl: DayTimeline, pointsPerMinute: CGFloat, scale: CGFloat = 
         let p = EventPresentation.make(height: m.compactNeed + CGFloat(step), metrics: m)
         #expect(p.title + p.compactTitle <= 1.0001)
     }
+}
+
+// MARK: Dots for events too thin for any text
+
+@Test func anEventTooThinForTheSmallTitleIsADotWithItsNameBesideIt() throws {
+    let tl = try timeline([event(0, "전화", 480, 483)], [])
+    let item = try #require(plan(tl, pointsPerMinute: 1.3).events.first)
+    #expect(item.presentation.dot > 0.9 && !item.showsTitleInCard)
+    let label = try #require(item.dotLabel)
+    #expect(label.reveal == 1 && label.frame.minX > item.frame.minX && abs(label.frame.midY - item.drawnFrame.midY) < 0.01)
+    #expect(plan(tl, pointsPerMinute: 5).events.first?.dotLabel == nil)                           // tall enough for the small title: no dot
+}
+
+@Test func namesOfDotsThatMeetShareTheNameAreaInTwoColumnsAndNeverOverlap() throws {
+    let tl = try timeline([event(0, "전화", 480, 483), event(1, "택배 수령", 486, 489), event(2, "문자 답장", 490, 492)], [])
+    let labels = plan(tl, pointsPerMinute: 1.3).events.compactMap { $0.dotLabel }.sorted { $0.frame.minY < $1.frame.minY }
+    #expect(labels.count == 3)
+    #expect(labels[0].reveal == 1 && labels[1].reveal == 1 && labels[1].frame.minX >= labels[0].frame.maxX)       // side by side
+    #expect(labels[2].reveal == 0)                                                                                // a third has no column: only its dot
+    #expect(!labels[0].frame.intersects(labels[1].frame))
 }

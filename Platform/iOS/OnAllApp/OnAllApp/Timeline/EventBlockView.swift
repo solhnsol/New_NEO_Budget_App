@@ -117,6 +117,8 @@ struct EventTitleLayer: View {
     var startFits = true
     /// A transaction line is written where the start time would be.
     var startIsCovered = false
+    /// The time range under an Apple-style title is under a card in front or a chip.
+    var rangeIsCovered = false
     /// Extra room before the title, so it clears the connector lines of the transactions written at their time inside the card.
     var leadingMargin: CGFloat = 0
 
@@ -130,11 +132,14 @@ struct EventTitleLayer: View {
     /// A card too thin for the title writes it in small type, in the middle of the card's height and cut at the card's width; nothing about it
     /// moves aside for another title (there is no room in a thin card to move it to).
     private var compactTitle: some View {
-        let size = 12 * EventPresentation.Metrics.compactShare * scale
+        let apple = CardStyle.current.isApple
+        let size = (apple ? 9 : 12 * EventPresentation.Metrics.compactShare) * scale
         let line = ceil(size * 1.25)
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
         return Text(block.title)
             .font(.system(size: size, weight: .semibold)).lineLimit(1)
-            .padding(.horizontal, Self.horizontalPadding)
+            .foregroundStyle(apple ? CardStyle.text(color) : Color.primary)
+            .padding(.leading, apple ? CardStyle.textInset : Self.horizontalPadding).padding(.trailing, Self.horizontalPadding)
             .frame(width: max(0, frame.width), height: line, alignment: .leading)
             .opacity(presentation.compactTitle)
             .offset(x: frame.minX, y: frame.minY + (frame.height - line) / 2)
@@ -143,6 +148,37 @@ struct EventTitleLayer: View {
     }
 
     private var fullTitle: some View {
+        CardStyle.current.isApple ? AnyView(appleTitle) : AnyView(classicTitle)
+    }
+
+    /// Apple's order: the title in the event's darker colour, the time range under it.
+    private var appleTitle: some View {
+        let color = CardStyle.text(Color(hex: block.calendarColorHex) ?? Theme.accent)
+        let plain = place.dx == 0 && place.dy == 0 && !place.overflows && maxTitleWidth == nil
+        let range: String? = {
+            guard plain, !zoneIdentifier.isEmpty, !block.continuesFromPreviousDay, !block.continuesToNextDay else { return nil }
+            return "\(Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier)) – \(Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))"
+        }()
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 3) {
+                if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
+                Text(block.title).font(.system(size: 12 * scale, weight: .semibold)).lineLimit(1)
+                if block.isRecurringInstance { Image(systemName: "repeat").font(.system(size: 8)) }
+            }
+            if let range, !rangeIsCovered {
+                Text(range).font(.system(size: 10.5 * scale).monospacedDigit()).lineLimit(1).opacity(0.85 * presentation.endTime)
+            }
+        }
+        .foregroundStyle(color)
+        .padding(.leading, CardStyle.textInset + leadingMargin).padding(.trailing, Self.horizontalPadding).padding(.top, 3)
+        .frame(width: max(0, min(place.overflows ? columnRight - frame.minX - place.dx : frame.width - place.dx, maxTitleWidth.map { $0 + CardStyle.textInset + Self.horizontalPadding } ?? .infinity)), height: (InlineAllocationPlan.titleHeight + 3) * scale, alignment: .topLeading)
+        .opacity(presentation.title)
+        .offset(x: frame.minX + place.dx, y: frame.minY + place.dy)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var classicTitle: some View {
         HStack(spacing: 3) {
             if block.continuesFromPreviousDay { Image(systemName: "arrow.up").font(.system(size: 8)) }
             Text(block.title).font(.caption.weight(.semibold)).lineLimit(1)
@@ -174,11 +210,12 @@ struct EventBlockView: View {
     var rows: [AllocationItem] = []
     var presentation = EventPresentation.make(height: 1000)
     var scale: CGFloat = 1
-    /// The title is in a header above the card: the card's own top edge is then drawn firmly, as the real start.
-    var hasHeader = false
     var zoneIdentifier = ""
     var endIsCovered = false
     var startIsCovered = false
+    /// A transaction's chip lies over the count's pill at the card's foot; the pill gives way (the card's detail has the count).
+    var summaryIsCovered = false
+    @Environment(\.colorScheme) private var colorScheme
     /// Where each shown row's transaction really happened, in the card's own coordinates (from its top): its leader bends from there.
     var anchors: [CGFloat] = []
     /// When set, each row's middle from the card's top: the rows are written there, at the time they happened, not stacked under the title.
@@ -186,23 +223,24 @@ struct EventBlockView: View {
     /// The stack's padding and spacing, which `DayRenderPlan.rowsFrame` also places the rows by.
     static let verticalPadding: CGFloat = 3
     static let rowSpacing: CGFloat = 1
+    /// The dot a card too thin for any text becomes.
+    static let dotDiameter: CGFloat = 6
 
     var body: some View {
-        let color = Color(hex: block.calendarColorHex) ?? .accentColor
+        let apple = CardStyle.current.isApple
+        // A hair of space between cards, as in Apple's Calendar.
+        let height = apple ? max(0, self.height - 1) : self.height
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
         let missing = block.state == .eventMissing
         let card = presentation.card
+        let tint = apple ? (colorScheme == .dark ? 0.32 : 0.17) : (colorScheme == .dark ? 0.30 : 0.22)
         let shownRows = presentation.shownRows
         let hiddenRows = presentation.hiddenRows
         let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds)
-        // With a header above it, the card's top corners are square: the header's own corners are the pair's, and its sides continue
-        // straight down into the card's, so the two read as one event.
-        let radius = min(6, height / 2)
-        let shape = UnevenRoundedRectangle(
-            topLeadingRadius: hasHeader ? 0 : radius, bottomLeadingRadius: radius, bottomTrailingRadius: radius, topTrailingRadius: hasHeader ? 0 : radius
-        )
-        let titleRow = hasHeader ? 2 : InlineAllocationPlan.titleHeight * scale + titleOffset
+        let shape = RoundedRectangle(cornerRadius: min(apple ? CardStyle.cornerRadius : 10, height / 2), style: .continuous)
+        let titleRow = InlineAllocationPlan.titleHeight * scale + titleOffset
         VStack(alignment: .leading, spacing: Self.rowSpacing) {
-            // The title itself is in `EventTitleLayer` (or the header); this keeps its room.
+            // The title itself is in `EventTitleLayer`; this keeps its room.
             Color.clear.frame(height: titleRow)
             ForEach(Array(rows.prefix(timeCenters == nil ? shownRows : 0).enumerated()), id: \.element.allocationID) { index, item in
                 // The row's own middle, from the card's top, as the stack below lays it out.
@@ -237,38 +275,44 @@ struct EventBlockView: View {
         .frame(height: max(0, height), alignment: .top)
         .clipped()
         .opacity(presentation.transactions)
-        .background(color.opacity((missing ? 0.08 : 0.22) * card), in: shape)
+        .background(color.opacity((missing ? 0.08 : tint) * card), in: shape)
         .background(Color(.systemBackground).opacity(card), in: shape)
         // The colour of the line it thins into: solid when the card is only a line, gone when it is a card (the stripe stays).
         .background(color.opacity(1 - card), in: shape)
-        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: min(3, max(1, height))) }
+        // The left stripe is only the line the card thins into; a full card is one tinted fill, with no stripe and no outline.
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: min(3, max(1, height))).opacity(1 - card) }
+        .overlay(alignment: .leading) {
+            if apple {
+                // Apple's bar: a rounded line inset from the card's edge, there as soon as the card is.
+                Capsule().fill(color).frame(width: CardStyle.barWidth)
+                    .padding(.vertical, min(3, max(0, (height - 6) / 2))).padding(.leading, 3).opacity(card)
+            }
+        }
         .overlay(alignment: .bottom) {
             // The last line: how many transactions the event holds (where there is no room for rows) on the left, the end time on the
             // right. The count gives way to the time, never the other way round.
             HStack(spacing: 6) {
                 if presentation.transactionSummary > 0 {
-                    SummaryCount(count: rows.count, total: total, scale: scale).opacity(presentation.transactionSummary)
+                    SummaryCount(count: rows.count, total: total, scale: scale).opacity(summaryIsCovered ? 0 : presentation.transactionSummary)
                 }
                 Spacer(minLength: 0)
-                if !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty {
+                if !apple, !block.continuesToNextDay, !endIsCovered, !zoneIdentifier.isEmpty {
                     CornerTime(text: Formatting.shortClock(block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
                         .opacity(presentation.endTime)
                 }
             }
-            .padding(.horizontal, 6).padding(.bottom, 4 * scale)
+            .padding(.leading, apple ? CardStyle.textInset : 6).padding(.trailing, 6).padding(.bottom, 4 * scale)
         }
-        .overlay(alignment: .topTrailing) {
-            // The header has no time of its own: the start is in this card's top right corner.
-            if hasHeader, !startIsCovered, !block.continuesFromPreviousDay, !zoneIdentifier.isEmpty {
-                CornerTime(text: Formatting.shortClock(block.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), scale: scale)
-                    .padding(.horizontal, 6).padding(.top, 5 * scale)
-                    .opacity(presentation.startTime)
-            }
-        }
-        .overlay(alignment: .top) { if hasHeader { Rectangle().fill(color).frame(height: 2) } }
-        .overlay(shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: missing ? [3] : [])))
+        .overlay { if missing { shape.stroke(color.opacity(0.5 * card), style: StrokeStyle(lineWidth: 1, dash: [3])) } }
         .opacity(missing ? 0.7 : 1)
         .clipShape(shape)
+        // Thinner than the small title needs, the card narrows to a dot and gives way to it (the dot is drawn over the card's middle, taller than the card may be).
+        .opacity(1 - presentation.dot)
+        .mask { GeometryReader { proxy in Rectangle().frame(width: proxy.size.width + (Self.dotDiameter * scale + 4 - proxy.size.width) * presentation.dot) } }
+        .overlay(alignment: .leading) {
+            Circle().fill(color).frame(width: Self.dotDiameter * scale, height: Self.dotDiameter * scale).padding(.leading, 2).opacity(presentation.dot)
+        }
+        .offset(y: apple ? 0.5 : 0)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityText)
         .accessibilityAddTraits(.isButton)
@@ -281,7 +325,7 @@ struct EventBlockView: View {
     }
 }
 
-/// "거래 3건 · 12,300원" in the room of one small line; the count alone where the total does not fit.
+/// "3건 · 12,300원" as one pill; the total alone, then the count alone, where it does not fit.
 private struct SummaryCount: View {
     let count: Int
     let total: String?
@@ -289,11 +333,20 @@ private struct SummaryCount: View {
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
-            if let total { Text("거래 \(count)건 · \(total)").fixedSize() }
-            Text("거래 \(count)건").fixedSize()
+            // The total is what matters, so it is what stays when room is short: count and total, then the total alone, then the count.
+            if let total { pill("\(count)건 · \(total)") }
+            if let total { pill(total) }
+            pill("\(count)건")
             Color.clear.frame(width: 0)
         }
-        .font(.system(size: 9 * scale)).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    /// A white pill on the card (a step up from it, in the dark too), so the total reads as one thing to touch.
+    private func pill(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11 * scale, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.textPrimary).lineLimit(1).fixedSize()
+            .padding(.horizontal, 9 * scale).padding(.vertical, 3 * scale)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: CardStyle.current.isApple ? CardStyle.cornerRadius : 100, style: .continuous))
     }
 }
 
@@ -307,23 +360,22 @@ private struct AllocationRow: View {
     var quiet = false
 
     var body: some View {
-        // Written like the rows outside events: a line out of the timeline at the moment it happened, bending to this row, then the
-        // category icon (if classified), the name and the amount.
+        // Inside an event the moment does not matter, so there is no line out of the timeline: the transaction is a white bar under the
+        // title (never over it) with the category icon, the name and the amount, the amount bold so it reads first.
         HStack(spacing: 0) {
-            Color.clear.frame(width: (LeaderLayout.lineEnd - 6) * scale)
             CategoryMark(category: item.categoryID, scale: scale)
             Color.clear.frame(width: LeaderLayout.textGap * scale)
             Text(item.title ?? "거래").lineLimit(1)
             Spacer(minLength: 2)
             Text((item.flow == .refund ? "−" : "") + Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency))
-                .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                .font(.system(size: 10 * scale, weight: .bold)).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                .foregroundStyle(item.flow == .refund ? Theme.accent : Theme.textPrimary)
         }
         .font(.system(size: 10 * scale))
-        .foregroundStyle(item.flow == .refund ? Color.green : (quiet ? Color.primary.opacity(0.62) : Color.primary))
+        .foregroundStyle(item.flow == .refund ? Color.green : (quiet ? Theme.textPrimary.opacity(0.62) : Theme.textPrimary))
+        .padding(.leading, 3 * scale).padding(.trailing, 6 * scale)
         .frame(height: (InlineAllocationPlan.rowHeight - 2) * scale)
-        .overlay(alignment: .topLeading) {
-            LeaderMark(originX: -6, dy: anchorDy ?? 0, height: (InlineAllocationPlan.rowHeight - 2) * scale, scale: scale)
-        }
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: 6 * scale, style: .continuous))
     }
 }
 
@@ -355,5 +407,30 @@ struct CornerTime: View {
 
     var body: some View {
         Text(text).font(.system(size: 9 * scale)).monospacedDigit().foregroundStyle(Color.secondary.opacity(0.7)).lineLimit(1).fixedSize()
+    }
+}
+
+/// The name of an event that is only a dot: a white chip like a transaction's, outlined in the event's colour, at the dot's height. It is drawn with the titles,
+/// above every card, and is touched as the event.
+struct EventDotLabel: View {
+    let block: EventBlock
+    let label: DayRenderPlan.DotLabel
+    let presentation: EventPresentation
+    var scale: CGFloat = 1
+
+    var body: some View {
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
+        let chip = RoundedRectangle(cornerRadius: 7 * scale, style: .continuous)
+        Text(block.title)
+            .font(.system(size: 11 * scale, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            .padding(.horizontal, 6 * scale)
+            .frame(width: label.frame.width, height: label.frame.height, alignment: .leading)
+            .background(Theme.surface, in: chip)
+            .overlay(chip.strokeBorder(color.opacity(0.7), lineWidth: 1.2))
+            .shadow(color: Color.black.opacity(0.06), radius: 1.5, y: 0.5)
+            .opacity(presentation.dot * label.reveal)
+            .offset(x: label.frame.minX, y: label.frame.minY)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 }

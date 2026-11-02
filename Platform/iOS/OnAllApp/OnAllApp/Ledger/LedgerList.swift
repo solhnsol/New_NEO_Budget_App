@@ -12,6 +12,9 @@ struct LedgerListEntry: Identifiable, Equatable {
         let amount: AmountKnowledge
         let categoryID: CanonicalCategoryID?
         let eventMissing: Bool
+        /// The activity it went to, and when that activity happens; both `nil` for a portion that belongs to none.
+        var activityID: ActivityID? = nil
+        var activityTime: EventTimeRange? = nil
     }
 
     /// Money that came back for this purchase and is shown on it instead of on its own line (`docs/ledger-behavior.md`, 2 and Q2·Q3): a refund
@@ -21,6 +24,10 @@ struct LedgerListEntry: Identifiable, Equatable {
             case refund
             /// A settlement deposit, with who sent it.
             case settlement(from: String)
+            /// Asked of someone and not received yet (`docs/ledger-behavior.md`, 정산 이후 결정 2): already out of the net, shown as "정산 대기 중".
+            case pending(from: String)
+            /// Money beyond what was owed, taken off this purchase by the app setting (`SurplusTreatment.reduceSpending`).
+            case surplus(from: String)
         }
 
         let id: String
@@ -33,6 +40,12 @@ struct LedgerListEntry: Identifiable, Equatable {
     let transaction: TransactionMarker
     let portions: [Portion]
     var offsets: [Offset] = []
+    /// What the user changed for display (`TransactionOverride`); the title is already in `transaction`.
+    var override: TransactionOverride? = nil
+    /// What the user's rules made of the original name; the user's own edit wins over it field by field.
+    var rule: RuleOutcome? = nil
+    /// The name the ledger has, before any rule or edit.
+    var originalTitle: String? = nil
     var id: LedgerEntryID { transaction.id }
 
     /// What the purchase cost the user after what came back; `nil` when nothing did.
@@ -41,14 +54,31 @@ struct LedgerListEntry: Identifiable, Equatable {
         return transaction.amount.minorUnits - offsets.reduce(0) { $0 + $1.minorUnits }
     }
 
+    /// Something asked of someone for this purchase has not come in yet.
+    var isWaitingForSettlement: Bool { offsets.contains { if case .pending = $0.kind { true } else { false } } }
+
     /// Spend positive and refund negative, after offsets, so sums are net spending.
     var signedNetMinorUnits: Int64 { netMinorUnits ?? transaction.signedMinorUnits }
 
     /// The category every portion agrees on; `nil` when there are none or they differ (as on the timeline).
     var categoryID: CanonicalCategoryID? {
+        if let chosen = override?.category ?? rule?.category { return chosen }
         let categories = Set(portions.map(\.categoryID))
         guard categories.count == 1 else { return nil }
         return categories.first ?? nil
+    }
+
+    /// The category without the user's own edit: what the rules and the allocations say.
+    var categoryWithoutEdit: CanonicalCategoryID? {
+        var plain = self
+        plain.override = nil
+        return plain.categoryID
+    }
+
+    /// Tags from the rules, then the user's own, without repeats.
+    var tags: [String] {
+        var seen: Set<String> = []
+        return ((rule?.tags ?? []) + (override?.tags ?? [])).filter { seen.insert($0).inserted }
     }
 
     /// The titles of the activities it was split into, in allocation order, without repeats.
@@ -80,16 +110,24 @@ struct LedgerDaySection: Identifiable, Equatable {
 /// settlement deposits applied to what someone owed for it: the obligation's own purchase if it has one, else the activity's largest purchase.
 enum LedgerList {
     static func sections(
-        _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:]
+        _ transactions: [TransactionMarker], life: LifeState, zone: DisplayTimeZone, refundOf: [LedgerEntryID: LedgerEntryID] = [:],
+        overrides: [LedgerEntryID: TransactionOverride] = [:], rules: TransactionRuleSet = .init(),
+        persons: Set<LedgerEntryID> = [], surplus: SurplusTreatment = .income
     ) -> [LedgerDaySection] {
-        let entries = netted(transactions.map { entry($0, life: life) }, life: life, refundOf: refundOf)
+        let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules, persons: persons) }, life: life, refundOf: refundOf, surplus: surplus)
         let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
         }
     }
 
-    static func entry(_ transaction: TransactionMarker, life: LifeState) -> LedgerListEntry {
+    static func entry(
+        _ transaction: TransactionMarker, life: LifeState, override: TransactionOverride? = nil, rules: TransactionRuleSet = .init(),
+        persons: Set<LedgerEntryID> = []
+    ) -> LedgerListEntry {
+        let originalTitle = transaction.title
+        let rule = rules.outcome(forOriginalTitle: originalTitle, classifies: !persons.contains(transaction.id))
+        let transaction = renamed(transaction, to: override?.title ?? rule?.title)
         let allocations = life.allocationSet(for: transaction.id)?.allocations ?? []
         let portions = allocations.map { allocation in
             let activity = allocation.activityID.flatMap { life.activities[$0] }
@@ -98,10 +136,21 @@ enum LedgerList {
                 activityTitle: activity?.displayTitle,
                 amount: allocation.amount.knowledge,
                 categoryID: allocation.category.categoryID,
-                eventMissing: activity?.isEventMissing ?? false
+                eventMissing: activity?.isEventMissing ?? false,
+                activityID: activity?.id,
+                activityTime: activity?.time
             )
         }
-        return LedgerListEntry(transaction: transaction, portions: portions)
+        return LedgerListEntry(transaction: transaction, portions: portions, override: override, rule: rule, originalTitle: originalTitle)
+    }
+
+    /// The transaction with the name the user or a rule gave it; everything else about it is the ledger's.
+    private static func renamed(_ transaction: TransactionMarker, to title: String?) -> TransactionMarker {
+        guard let title else { return transaction }
+        return TransactionMarker(
+            id: transaction.id, occurredAtUnixMilliseconds: transaction.occurredAtUnixMilliseconds, amount: transaction.amount,
+            flow: transaction.flow, title: title, timePrecision: transaction.timePrecision
+        )
     }
 
     static func totals(_ entries: [LedgerListEntry]) -> [LedgerTotal] {
@@ -111,7 +160,9 @@ enum LedgerList {
     }
 
     /// Moves linked refunds onto their purchases and adds settlement deposits to the purchases they paid back.
-    static func netted(_ entries: [LedgerListEntry], life: LifeState, refundOf: [LedgerEntryID: LedgerEntryID]) -> [LedgerListEntry] {
+    static func netted(
+        _ entries: [LedgerListEntry], life: LifeState, refundOf: [LedgerEntryID: LedgerEntryID], surplus: SurplusTreatment = .income
+    ) -> [LedgerListEntry] {
         var byID = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
         func isPurchase(_ id: LedgerEntryID) -> Bool { byID[id]?.transaction.flow == .spend }
         func add(_ offset: LedgerListEntry.Offset, to id: LedgerEntryID) { byID[id]?.offsets.append(offset) }
@@ -134,6 +185,27 @@ enum LedgerList {
                           occurredAtUnixMilliseconds: settlement.transfer.occurredAtUnixMilliseconds), to: purchase)
             }
         }
+
+        if surplus == .reduceSpending {
+            for residual in life.residuals.values where residual.direction == .surplus && residual.classification.value != .otherObligation {
+                guard let settlement = life.settlements[residual.settlementID], settlement.transfer.direction == .incoming,
+                      let obligation = settlement.allocations.compactMap({ life.obligations[$0.obligationID] }).first,
+                      let purchase = purchase(for: obligation, life: life, isPurchase: isPurchase),
+                      byID[purchase]?.transaction.amount.currency == residual.amount.currency else { continue }
+                let name = life.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
+                add(.init(id: "surplus/\(residual.id.rawValue)", kind: .surplus(from: name), minorUnits: residual.amount.minorUnits,
+                          occurredAtUnixMilliseconds: settlement.transfer.occurredAtUnixMilliseconds), to: purchase)
+            }
+        }
+
+        for obligation in life.obligations.values where obligation.direction == .receivable && obligation.isSettleable {
+            guard let owed = obligation.amount.knowledge.knownValue, owed > life.closedMinorUnits(for: obligation.id),
+                  let purchase = purchase(for: obligation, life: life, isPurchase: isPurchase),
+                  byID[purchase]?.transaction.amount.currency == obligation.currency else { continue }
+            let name = life.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
+            add(.init(id: "pending/\(obligation.id.rawValue)", kind: .pending(from: name), minorUnits: owed - life.closedMinorUnits(for: obligation.id),
+                      occurredAtUnixMilliseconds: obligation.createdAtUnixMilliseconds), to: purchase)
+        }
         return entries.compactMap { byID[$0.id] }.map { entry in
             var sorted = entry
             sorted.offsets.sort { ($0.occurredAtUnixMilliseconds, $0.id) < ($1.occurredAtUnixMilliseconds, $1.id) }
@@ -142,7 +214,7 @@ enum LedgerList {
     }
 
     /// The purchase a receivable paid back: its own, or the largest purchase of its activity (ties: the smaller id).
-    private static func purchase(for obligation: Obligation, life: LifeState, isPurchase: (LedgerEntryID) -> Bool) -> LedgerEntryID? {
+    static func purchase(for obligation: Obligation, life: LifeState, isPurchase: (LedgerEntryID) -> Bool) -> LedgerEntryID? {
         if let origin = obligation.originTransactionID, isPurchase(origin) { return origin }
         guard let activityID = obligation.activityID else { return nil }
         let candidates = life.allocations(forActivity: activityID).map(\.transactionID).filter(isPurchase)

@@ -174,6 +174,37 @@ private let received: Int64 = 1_790_936_040_000
     }
 }
 
+@Suite struct ReportedBalanceTests {
+    private let decoder = ShortcutNotificationDecoder(timeZone: seoul)
+
+    private func note(_ app: String, title: String = "", subtitle: String = "", body: String, time: String) throws -> RawNotification {
+        let fields = ["app": app, "title": title, "subtitle": subtitle, "body": body, "timestamp": time]
+        let text = String(data: try JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), encoding: .utf8)!
+        return try decoder.decode(text, receivedAtUnixMilliseconds: received)[0]
+    }
+
+    @Test func theNewestBalanceANotificationPrintedIsKeptPerAccountIncludingNoticesThatMoveNoMoney() throws {
+        var ledger = try IntakeLedger(notifications: [], setup: IntakeSetup(), intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
+        let bankA = try note("우리WON뱅킹", body: "[Web발신]\n우리 출금 51,000원 1002-123-456*** 잔액 1,234,000원 10/02 19:13:20", time: "Oct 2, 2026 at 7:13:30 PM")
+        let bankB = try note("우리WON뱅킹", body: "[Web발신]\n우리 입금 100,000원 1002-123-456*** 잔액 1,334,000원 10/03 09:00:00", time: "Oct 3, 2026 at 9:00:00 AM")
+        let fare = try note("Wallet", title: "T-money", subtitle: "₩1,550 for Metro", body: "Your new balance is ₩8,450.", time: "Oct 2, 2026 at 8:00:00 AM")
+        let trip = try note("Wallet", title: "T-money", subtitle: "Trip in Progress", body: "Your new balance is ₩6,900.", time: "Oct 4, 2026 at 8:00:00 AM")
+        try ledger.receive([bankB, fare, bankA, trip])
+        #expect(ledger.reportedBalances.isEmpty)           // no account is registered yet
+
+        let bank = try #require(ledger.setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try ledger.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 0, currency: "KRW")), makeID: { "bank" })
+        let transit = try #require(ledger.ruleQuestion(for: fare.id))
+        try ledger.answer(transit, binding: nil, newAccount: ("교통카드", .account(.prepaid, openingBalance: Money(minorUnits: 0, currency: "KRW"))),
+                          at: received, makeID: { "transit" })
+
+        let reported = ledger.reportedBalances
+        #expect(reported[AccountID(rawValue: "bank")]?.minorUnits == 1_334_000)      // the later one, though it arrived first
+        #expect(reported[AccountID(rawValue: "transit")]?.minorUnits == 6_900)       // the trip notice has no fare and still counts
+        #expect(reported.count == 2)
+    }
+}
+
 @Suite struct IntakeRuleTests {
     private let decoder = ShortcutNotificationDecoder(timeZone: seoul)
 

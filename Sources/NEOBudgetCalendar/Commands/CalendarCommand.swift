@@ -521,6 +521,7 @@ public enum CalendarCommand: Hashable, Sendable {
 
     // People.
     case upsertPerson(Person)
+    case removePerson(PersonID, by: AssignmentProvenance)
     case addParticipant(ParticipantInput)
     case removeParticipant(ParticipantInput)
 

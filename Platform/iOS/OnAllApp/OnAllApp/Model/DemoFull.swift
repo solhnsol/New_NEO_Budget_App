@@ -37,7 +37,7 @@ enum DemoFull {
         let args = ProcessInfo.processInfo.arguments
         // Tests build the sample ledger and demo themselves and expect the usual day.
         let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-        return args.contains("-demo-full") || (!testing && !args.contains("-demo") && !args.contains("-live"))
+        return args.contains("-demo-full") || (!testing && !args.contains("-demo") && AppMode.resolve(arguments: args) == .demo)
     }
 
     static let firstOffset = -28, lastOffset = 14
@@ -150,6 +150,11 @@ enum DemoFull {
             case 25: spend("용돈", 300_000, 9, 0, nil, kind: .deposit, direction: .inflow)
             case 26: spend("저축", 150_000, 10, 0, nil, kind: .transferOut)
             default: break
+            }
+        }
+        if DemoSettlement.isOn {
+            for (index, deposit) in DemoSettlement.deposits(today: today).enumerated() {
+                result.append(Spend(raw: "full-settle-\(index)", kind: .deposit, direction: .inflow, won: deposit.won, day: deposit.day, minute: deposit.minute, merchant: deposit.name))
             }
         }
         return result.filter { zone.instant(of: $0.day, minuteOfDay: $0.minute) <= now }
