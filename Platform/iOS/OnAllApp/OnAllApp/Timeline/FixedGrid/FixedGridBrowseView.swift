@@ -1116,11 +1116,12 @@ struct FixedGridBrowseView: View {
             applyMove()
         case .began:
             BrowseProbe.mark(.dragBegan)
+            let heading = caughtTarget                       // a flight was caught: the swipe goes on from the day it was headed for, so it is not lost
             caughtTarget = nil
             flight = nil
             if move.phase != .dragging { move.beginDrag() }
             takeOverSelection()
-            swipeBase = selectedEpoch
+            swipeBase = heading ?? selectedEpoch
             dragStart = move.position
         case .changed(let translation):
             if dragStart == nil { dragStart = move.position; if move.phase != .dragging { move.beginDrag() } }
