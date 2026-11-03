@@ -44,6 +44,6 @@ struct MoreScreen: View {
     let model: AppModel
 
     var body: some View {
-        NavigationStack { SettingsView(model: model) }
+        NavigationStack { SettingsView(model: model, embedded: true) }
     }
 }

@@ -5,87 +5,83 @@ import UniformTypeIdentifiers
 /// Where the user picks the data the app shows. The choice is saved, so a launch from the home screen keeps it.
 struct SettingsView: View {
     let model: AppModel
+    /// In the 더보기 tab the screen draws its own big title; opened from the calendar menu it keeps the navigation bar (with 닫기).
+    var embedded = false
     @Environment(\.switchAppMode) private var switchAppMode
     @State private var confirming: AppMode?
     @State private var choosingFile = false
     @State private var imported: ImportSummary?
     @State private var importFailed = false
     @AppStorage(SurplusSetting.key) private var surplusRaw = SurplusTreatment.income.rawValue
-
-    private var pinned: Bool { AppMode.isPinnedByLaunchArgument(ProcessInfo.processInfo.arguments) }
+    @AppStorage(QuietHours.enabledKey) private var quietEnabled = false
+    @AppStorage(QuietHours.startKey) private var quietStart = QuietHours.defaultStart
+    @AppStorage(QuietHours.endKey) private var quietEnd = QuietHours.defaultEnd
+    @State private var openKind: NotificationKind?
+    @State private var accountCount: Int?
 
     var body: some View {
         List {
-            Section {
-                modeRow(.demo, title: "둘러보기", detail: "예시 일정과 지출로 앱을 살펴봐요", symbol: "sparkles")
-                modeRow(.live, title: "내 데이터", detail: "내 캘린더 일정과 단축어로 받은 알림을 보여줘요", symbol: "person.crop.circle")
-            } header: {
-                Text("보여줄 데이터")
-            } footer: {
-                Text(pinned
-                     ? "지금은 실행할 때 정한 모드로 열려 있어서, 여기서 바꿔도 다음 실행에는 적용되지 않아요."
-                     : "언제든 바꿀 수 있어요. 바꿔도 지금까지 받은 알림은 지워지지 않아요.")
+            if embedded {
+                Text("더보기").font(Theme.Typo.h1).foregroundStyle(Theme.textPrimary)
+                    .listRowBackground(Color.clear).listRowSeparator(.hidden)
             }
-            .onAllCardRow()
             Section {
-                NavigationLink {
-                    CalendarSettingsView(model: model)
-                } label: {
-                    HStack(spacing: Theme.Space.m) {
-                        IconTile(systemName: "calendar", tint: Theme.accent)
-                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                            Text("캘린더").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                            Text("캘린더 추가·삭제, 아이콘 정하기").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                        }
+                Picker("보여줄 데이터", selection: modeBinding) {
+                    Text("둘러보기").tag(AppMode.demo)
+                    Text("내 데이터").tag(AppMode.live)
+                }
+                .pickerStyle(.segmented)
+                HStack {
+                    Text("정산보다 더 받은 돈").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                    Spacer()
+                    Picker("정산보다 더 받은 돈", selection: $surplusRaw) {
+                        Text("수입").tag(SurplusTreatment.income.rawValue)
+                        Text("차감").tag(SurplusTreatment.reduceSpending.rawValue)
                     }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 130)
                 }
             }
             .onAllCardRow()
             Section {
-                NavigationLink {
-                    TransactionRulesView(model: model)
-                } label: {
-                    HStack(spacing: Theme.Space.m) {
-                        IconTile(systemName: "wand.and.stars", tint: Theme.accent)
-                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                            Text("자동 분류 규칙").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                            Text("\(model.transactionOverrides.rules.count)개 · 거래 이름으로 이름과 분류를 자동으로 바꿔요").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                        }
-                    }
+                NavigationLink { ShortcutsView(model: model) } label: {
+                    MoreRowLabel(symbol: "bolt.fill", tint: Theme.CalendarTint.orange.color, title: "단축어", value: model.isDemo ? nil : "연결됨")
                 }
-            } header: {
-                Text("거래 정리")
-            }
-            .onAllCardRow()
-            Section {
-                surplusRow(.income, title: "별도 수입으로 기록", detail: "더 받은 돈은 지출을 줄이지 않고 수입으로 따로 기록해요")
-                surplusRow(.reduceSpending, title: "그 지출에서 차감", detail: "수입 분류를 만들지 않고, 더 받은 만큼 그 지출의 내 몫을 줄여요")
-            } header: {
-                Text("정산보다 더 받은 돈")
-            } footer: {
-                Text("친구가 받을 돈보다 많이 보냈을 때 남는 금액을 어떻게 셀지 정해요. 통장 내역은 그대로예요.")
-            }
-            .onAllCardRow()
-            Section {
                 Button { choosingFile = true } label: {
-                    HStack(spacing: Theme.Space.m) {
-                        IconTile(systemName: "tray.and.arrow.down", tint: Theme.accent)
-                        VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                            Text("가계부 파일 가져오기").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                            Text("Actual Budget에서 내보낸 imported-history.json을 골라요").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                        }
+                    HStack {
+                        MoreRowLabel(symbol: "tray.and.arrow.down", tint: Theme.CalendarTint.green.color, title: "가져오기·내보내기")
+                        Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.disabled)
                     }
                 }
+                .buttonStyle(.onAllRow)
                 .disabled(model.isDemo)
-            } header: {
-                Text("지난 가계부")
-            } footer: {
-                Text(model.isDemo
-                     ? "'내 데이터'로 바꾼 뒤에 가져올 수 있어요."
-                     : "가져온 뒤에는 파일 앱에서 원본 파일을 지워 주세요. 다시 가져오면 같은 거래가 두 번 세어지지 않아요.")
-            }
+            } header: { MoreSectionTitle("데이터") }
+            .onAllCardRow()
+            Section {
+                ForEach(NotificationKind.allCases) { kind in
+                    NotificationToggleRow(kind: kind) { openKind = kind }
+                }
+                NavigationLink { QuietHoursView() } label: {
+                    MoreRowLabel(symbol: "bell", title: "방해 금지", value: quietEnabled ? QuietHours.summary(start: quietStart, end: quietEnd) : "꺼짐")
+                }
+            } header: { MoreSectionTitle("알림") }
+            .onAllCardRow()
+            Section {
+                NavigationLink { CalendarSettingsView(model: model) } label: {
+                    MoreRowLabel(symbol: "calendar", tint: Theme.accent, title: "캘린더", value: "\(model.calendars.count)개")
+                }
+                NavigationLink { TransactionRulesView(model: model) } label: {
+                    MoreRowLabel(symbol: "tag", tint: Theme.CalendarTint.purple.color, title: "분류 규칙", value: "\(model.transactionOverrides.rules.count)개")
+                }
+                NavigationLink { AccountsView(model: model).navigationTitle("계좌·카드").navigationBarTitleDisplayMode(.inline) } label: {
+                    MoreRowLabel(symbol: "creditcard", tint: Theme.CalendarTint.teal.color, title: "계좌·카드", value: accountCount.map { "\($0)개" })
+                }
+            } header: { MoreSectionTitle("가계부") }
             .onAllCardRow()
         }
+        .navigationDestination(item: $openKind) { NotificationKindView(kind: $0) }
+        .task(id: model.dataGeneration) { accountCount = await model.registeredAccounts().count }
         .fileImporter(isPresented: $choosingFile, allowedContentTypes: [.json]) { result in
             Task { await importFile(result) }
         }
@@ -100,16 +96,25 @@ struct SettingsView: View {
         } message: {
             Text("imported-history.json 파일이 맞는지 확인해 주세요.")
         }
-        .scrollContentBackground(.hidden)
-        .background(Theme.background)
-        .navigationTitle("설정")
-        .navigationBarTitleDisplayMode(.inline)
+        .onAllGroupedScreen()
+        .toolbar(embedded ? .hidden : .automatic, for: .navigationBar)
+        .navigationTitle("더보기")
         .alert("내 데이터로 바꿀까요?", isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })) {
             Button("바꾸기") { if let mode = confirming { switchAppMode(mode) } }
             Button("취소", role: .cancel) {}
         } message: {
             Text("캘린더 접근을 요청할 수 있어요. 예시 데이터는 따로 보관돼서 언제든 다시 볼 수 있어요.")
         }
+    }
+
+    private var modeBinding: Binding<AppMode> {
+        Binding(
+            get: { model.isDemo ? .demo : .live },
+            set: { mode in
+                guard mode != (model.isDemo ? .demo : .live) else { return }
+                if mode == .live { confirming = mode } else { switchAppMode(mode) }
+            }
+        )
     }
 
     private func summarize(_ summary: ImportSummary) -> String {
@@ -130,38 +135,28 @@ struct SettingsView: View {
         }
         imported = summary
     }
+}
 
-    private func surplusRow(_ treatment: SurplusTreatment, title: String, detail: String) -> some View {
-        let selected = surplusRaw == treatment.rawValue
-        return Button { surplusRaw = treatment.rawValue } label: {
-            HStack(spacing: Theme.Space.m) {
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                    Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer()
-                if selected { Image(systemName: "checkmark").foregroundStyle(Theme.accent).fontWeight(.semibold) }
-            }
-        }
-        .accessibilityAddTraits(selected ? .isSelected : [])
+/// A notification type on the main screen: its icon and name open the detail screen, the switch turns it on or off.
+private struct NotificationToggleRow: View {
+    let kind: NotificationKind
+    let open: () -> Void
+    @AppStorage private var isOn: Bool
+
+    init(kind: NotificationKind, open: @escaping () -> Void) {
+        self.kind = kind
+        self.open = open
+        _isOn = AppStorage(wrappedValue: kind.defaultOn, kind.storageKey)
     }
 
-    private func modeRow(_ mode: AppMode, title: String, detail: String, symbol: String) -> some View {
-        let selected = (model.isDemo ? AppMode.demo : .live) == mode
-        return Button {
-            guard !selected else { return }
-            if mode == .live { confirming = mode } else { switchAppMode(mode) }
-        } label: {
-            HStack(spacing: Theme.Space.m) {
-                IconTile(systemName: symbol, tint: selected ? Theme.accent : Theme.textSecondary)
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                    Text(detail).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                }
-                Spacer()
-                if selected { Image(systemName: "checkmark").foregroundStyle(Theme.accent).fontWeight(.semibold) }
-            }
+    var body: some View {
+        HStack(spacing: Theme.Space.s) {
+            Button(action: open) { MoreRowLabel(symbol: kind.symbol, tint: kind.tint, title: kind.title).contentShape(Rectangle()) }
+                .buttonStyle(.onAllRow)
+            Toggle(kind.title, isOn: $isOn).labelsHidden()
+            Button(action: open) { Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.disabled) }
+                .buttonStyle(.plain)
+                .accessibilityHidden(true)
         }
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
