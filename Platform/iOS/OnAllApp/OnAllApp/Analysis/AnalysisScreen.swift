@@ -16,7 +16,7 @@ struct AnalysisScreen: View {
         NavigationStack {
             Group {
                 if let snapshot {
-                    AnalysisHome(model: model, snapshot: snapshot, month: Binding(get: { month ?? AnalysisMonth(snapshot.today) }, set: { month = $0 }))
+                    AnalysisWidgetBoard(model: model, snapshot: snapshot, month: Binding(get: { month ?? AnalysisMonth(snapshot.today) }, set: { month = $0 }))
                 } else if failed {
                     ContentUnavailableView("거래를 불러오지 못했어요", systemImage: "exclamationmark.circle", description: Text("잠시 뒤에 다시 열어 주세요."))
                 } else {
@@ -35,7 +35,8 @@ struct AnalysisScreen: View {
     }
 }
 
-private struct AnalysisHome: View {
+/// 모든 분석: every analysis of the chosen month, the page the widgets open.
+struct AnalysisHome: View {
     let model: AppModel
     let snapshot: AnalysisSnapshot
     @Binding var month: AnalysisMonth
