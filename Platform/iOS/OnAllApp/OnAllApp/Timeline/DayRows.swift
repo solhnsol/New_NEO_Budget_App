@@ -213,8 +213,6 @@ private enum RailMetrics {
     static let hourLabelWidth: CGFloat = 40
     static let rowHeight = RailPlan.rowHeight
     static let vertical: CGFloat = 12
-    /// Not in the palette yet (design-v2 open decision); `Theme` should take it.
-    static let rail = Color.dynamic(light: 0xE5E8EB, dark: 0x333336)
 }
 
 /// The rail itself: hour lines and labels, the rail, past events as bars, to-come events as cards, transactions as dots with rows, the now line.
@@ -235,7 +233,7 @@ private struct RailTimeline: View {
                 Text("\(mark.hour)").font(Theme.Typo.caption.monospacedDigit()).foregroundStyle(Theme.disabled)
                     .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: CGFloat(mark.y) - 7)
             }
-            Capsule().fill(RailMetrics.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
+            Capsule().fill(Theme.rail).frame(width: Theme.railWidth, height: height).offset(x: Theme.railX)
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
@@ -262,7 +260,7 @@ private struct PastEventBar: View {
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
                 .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
-                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
+                .offset(x: Theme.railX + Theme.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
             Text(block.title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 1)
         }
@@ -308,7 +306,7 @@ private struct EventCardView: View {
         .background(color.opacity(0.14), in: shape)
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: RailMetrics.barWidth) }
         .clipShape(shape)
-        .padding(.leading, RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2)
+        .padding(.leading, Theme.railX + Theme.railWidth / 2 - RailMetrics.barWidth / 2)
         .contentShape(shape)
         .onTapGesture(perform: onTap)
         .accessibilityElement(children: .ignore)
@@ -328,7 +326,7 @@ private struct TransactionRailRow: View {
         let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
         ZStack(alignment: .topLeading) {
             Circle().fill(Theme.surface).overlay(Circle().strokeBorder(dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
-                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
+                .offset(x: Theme.railX + Theme.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
             HStack(spacing: Theme.Space.s) {
                 Image(systemName: CategoryIcon.symbol(for: row.category) ?? (row.isIncoming ? "arrow.uturn.backward" : "creditcard"))
                     .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
@@ -357,8 +355,8 @@ private struct NowLine: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Rectangle().fill(Theme.accent).frame(height: 1.5).padding(.leading, RailMetrics.railX).offset(y: y - 0.75)
-            Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - 3.5, y: y - 3.5)
+            Rectangle().fill(Theme.accent).frame(height: 1.5).padding(.leading, Theme.railX).offset(y: y - 0.75)
+            Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: Theme.railX + Theme.railWidth / 2 - 3.5, y: y - 3.5)
             Text(clockText(minute)).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent)
                 .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: y - 7)
             Color.clear.frame(width: 1, height: 1).id("railNow").offset(y: y)
