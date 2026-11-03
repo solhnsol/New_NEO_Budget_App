@@ -590,6 +590,23 @@ final class AppModel {
         saveOverrides()
     }
 
+    /// Changes the same thing on several transactions at once (selection mode), saving and reloading once.
+    func editMany(_ ids: [LedgerEntryID], _ change: (inout TransactionOverride) -> Void) {
+        for id in ids {
+            var override = transactionOverrides[id] ?? TransactionOverride()
+            change(&override)
+            transactionOverrides[id] = override
+        }
+        saveOverrides()
+    }
+
+    /// Deletes several typed-in transactions at once; ledger ones are left alone.
+    func removeManuals(_ ids: Set<LedgerEntryID>) {
+        transactionOverrides.manual.removeAll { ids.contains(LedgerEntryID(rawValue: $0.id)) }
+        for id in ids { transactionOverrides[id] = nil }
+        saveOverrides()
+    }
+
     private func saveOverrides() {
         if let url = overridesURL { transactionOverrides.save(to: url) }
         overrideRevision += 1
