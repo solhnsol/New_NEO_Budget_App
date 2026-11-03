@@ -46,6 +46,8 @@ enum Theme {
     static let divider = Color.dynamic(light: 0xEEF0F2, dark: 0x333336)
     /// A switch that is off, a disabled button, a sheet's grabber.
     static let disabled = Color.dynamic(light: 0xC6C6CB, dark: 0x48484C)
+    /// The day timeline's vertical rail.
+    static let rail = Color.dynamic(light: 0xE5E8EB, dark: 0x333336)
 
     static let textPrimary = Color.dynamic(light: 0x191F28, dark: 0xF2F4F6)
     static let textSecondary = Color.dynamic(light: 0x4E5968, dark: 0xB0B8C1)
