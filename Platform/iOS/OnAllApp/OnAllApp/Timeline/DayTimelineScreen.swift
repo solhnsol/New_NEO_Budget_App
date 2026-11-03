@@ -16,7 +16,7 @@ struct DayTimelineScreen: View {
     /// Days read for a far jump, which slide past on the way to the day picked.
     @State private var jumpDays: [StripDay] = []
     @State private var isChangingDay = false
-    @AppStorage(CalendarStyle.storageKey) private var styleRaw = CalendarStyle.grid.rawValue
+    @AppStorage(CalendarStyle.storageKey) private var styleRaw = CalendarStyle.pager.rawValue
     @State private var ledgerDestination: LedgerDestination?
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
@@ -26,7 +26,7 @@ struct DayTimelineScreen: View {
     @State private var chromeFrame: CGRect = .zero
 
     private var style: Binding<CalendarStyle> {
-        Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .grid }, set: { styleRaw = $0.rawValue })
+        Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .pager }, set: { styleRaw = $0.rawValue })
     }
 
     var body: some View {
