@@ -209,7 +209,7 @@ struct DayTimelineScreen: View {
           MonthScrim(state: unfold).zIndex(0.5)
           MonthUnfoldHeader(
             state: unfold, today: model.today,
-            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, showsRule: isList,
+            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) }, showsRule: isList,
             onSelect: { day in
                 unfold.close()
                 Task { await goTo(day) }
@@ -229,7 +229,7 @@ struct DayTimelineScreen: View {
                     Task { await goTo(day) }
                 },
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } },
-                unfold: opened
+                unfold: opened, color: { model.calendarColor($0) }
             )
           }
           // While the month is open the header is taller than the chrome the screen runs under: the screen keeps the inset it had.
@@ -258,21 +258,10 @@ struct DayTimelineScreen: View {
             })
                 .presentationDetents([.medium, .large])
         }
-        .task { if ProcessInfo.processInfo.arguments.contains("-open-analysis") { ledgerDestination = .analysis } }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
         .fullScreenCover(item: $ledgerDestination) { destination in
-            switch destination {
-            case .settings:
-                NavigationStack {
-                    SettingsView(model: model)
-                        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { ledgerDestination = nil } } }
-                }
-            case .analysis:
-                AnalysisScreen(model: model) { ledgerDestination = nil }
-            case .list, .accounts:
-                LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
-            }
+            LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }

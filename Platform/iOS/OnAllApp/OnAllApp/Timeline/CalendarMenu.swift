@@ -12,9 +12,9 @@ enum CalendarStyle: String, CaseIterable {
     var next: CalendarStyle { self == .grid ? .pager : .grid }
 }
 
-/// Where the ledger's own screens are opened from now that the ledger is not a tab.
+/// Where the ledger's own screens are opened from (analysis and settings are tabs now).
 enum LedgerDestination: String, Identifiable {
-    case list, accounts, analysis, settings
+    case list, accounts
     var id: String { rawValue }
 }
 
@@ -45,9 +45,6 @@ struct CalendarMenu: View {
             Button { onAdd() } label: { Label("내역 추가", systemImage: "plus") }
             Button { onOpen(.list) } label: { Label("가계부 목록", systemImage: "list.bullet.rectangle") }
             Button { onOpen(.accounts) } label: { Label("계좌·카드", systemImage: "creditcard") }
-            Button { onOpen(.analysis) } label: { Label("분석", systemImage: "chart.bar.xaxis") }
-            Divider()
-            Button { onOpen(.settings) } label: { Label("설정", systemImage: "gearshape") }
         } label: {
             Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44).contentShape(Rectangle())
         }
