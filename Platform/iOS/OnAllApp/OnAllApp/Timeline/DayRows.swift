@@ -2,10 +2,12 @@ import NEOBudgetCalendar
 import NEOBudgetCore
 import SwiftUI
 
-/// The rows of a day, shared by the pager: a day is its date and all-day chips, then its events and 일상 stretches as boxes on one vertical line,
-/// each with the transactions that went to it. It reads the same `DayTimeline` as the grid.
+/// One day of the calendar as a rail timeline (design cal-v5 / cal-v7): the hours run down the left, one thin rail runs through the day, and everything
+/// hangs on it. A transaction is a hollow dot on the rail at the minute it happened with its row to the right; an event that has begun is a stretch of
+/// the rail in its colour with its name left-aligned beside it; an event still to come is a card whose left edge is that same stretch. The vertical
+/// spacing is `RailAxis`'s: room where something sits, empty hours squeezed.
 
-/// One day: its date, then its boxes, with a line above it that divides it from the day before.
+/// One day: its date (and all-day chips, and a word about the day on the right), then the rail.
 struct DaySection: View {
     let day: LocalDate
     let timeline: DayTimeline?
@@ -16,11 +18,20 @@ struct DaySection: View {
     let onOpenTransaction: (LedgerEntryID) -> Void
 
     var body: some View {
+        if isToday {
+            TimelineView(.everyMinute) { context in content(nowMilliseconds: Int64(context.date.timeIntervalSince1970 * 1000)) }
+        } else if let timeline {
+            // Any other day is wholly past or wholly to come, whatever the clock says.
+            content(nowMilliseconds: timeline.dayEndUnixMilliseconds <= model.nowMilliseconds ? Int64.max / 2 : Int64.min / 2)
+        } else {
+            content(nowMilliseconds: 0)
+        }
+    }
+
+    private func content(nowMilliseconds: Int64) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s) {
-            let plan = timeline.map(DayListPlan.make)
             HStack(spacing: Theme.Space.s) {
-                Text(Formatting.dayTitle(day)).font(.system(.subheadline, weight: .semibold))
-                    .foregroundStyle(isToday ? Theme.accent : Theme.textSecondary).fixedSize()
+                Text(Formatting.dayTitle(day)).font(Theme.Typo.section).foregroundStyle(Theme.textPrimary).fixedSize()
                 // All-day events sit beside the date, as small chips.
                 let allDays = timeline?.allDay.sorted { $0.id < $1.id } ?? []
                 if allDays.count == 1, let only = allDays.first {
@@ -29,29 +40,12 @@ struct DaySection: View {
                     AllDayCount(items: allDays, onSelect: { onSelect(.allDay($0)) })
                 }
                 Spacer(minLength: 0)
+                if let timeline, let text = RailPlan.headline(timeline, nowMilliseconds: nowMilliseconds) {
+                    Text(text).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                }
             }
-            if let timeline, let plan {
-                if plan.items.isEmpty && timeline.allDay.isEmpty {
-                    Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.vertical, Theme.Space.xs)
-                }
-                // The boxes hang on one vertical line like points on a timeline; it is only how they are drawn, they are still a list.
-                let boxes = plan.items.filter { if case .allDay = $0 { false } else { true } }
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(boxes.enumerated()), id: \.element.id) { index, item in
-                        let rail = ListRail(
-                            isFirst: index == 0, isLast: index == boxes.count - 1,
-                            joinsPrevious: index > 0 && boxes[index - 1].minutes?.end == item.minutes?.start && item.minutes != nil,
-                            joinsNext: index < boxes.count - 1 && boxes[index + 1].minutes?.start == item.minutes?.end && item.minutes != nil
-                        )
-                        switch item {
-                        case .allDay: EmptyView()
-                        case let .event(block):
-                            EventCard(block: block, rail: rail, model: model, zone: zone, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
-                        case let .daily(group):
-                            DailyCard(group: group, rail: rail, model: model, zone: zone, onOpenTransaction: onOpenTransaction)
-                        }
-                    }
-                }
+            if let timeline {
+                RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction)
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 48)
             }
@@ -59,7 +53,6 @@ struct DaySection: View {
         .padding(.horizontal, Theme.Space.l)
         .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 
@@ -124,281 +117,255 @@ private struct AllDayCount: View {
     }
 }
 
-/// Where a box sits on the day's vertical line: the line starts at the first box's dot and ends at the last one's.
-private struct ListRail {
-    let isFirst: Bool
-    let isLast: Bool
-    /// The box starts where the one above ends (or ends where the one below starts): their bars meet with no gap.
-    var joinsPrevious = false
-    var joinsNext = false
-    static let gutter: CGFloat = 24
-    static let barWidth: CGFloat = 6
-    /// How far a transaction is set in from the line it hangs on (its dot sits on the line).
-    static let indent: CGFloat = 12
-    /// The column left of the line that carries each box's and transaction's time, as on a timeline.
-    static let timeWidth: CGFloat = 46
-}
+/// What the rail draws for one day, decided apart from SwiftUI: which events are bars (begun) and which are cards (to come), the transactions at
+/// their minutes, and the axis between them.
+struct RailPlan {
+    struct Row: Identifiable {
+        let id: String
+        let transactionID: LedgerEntryID
+        let minute: Int
+        let title: String
+        let category: CanonicalCategoryID?
+        let amountText: String
+        let isIncoming: Bool
+        /// The colour of the event it happened inside, or of the event it was linked to; none for an ordinary one.
+        let colorHex: String?
+    }
 
-private extension EnvironmentValues {
-    /// The colour of the box a transaction sits in, for its dot on the box's bar.
-    @Entry var railColor: Color = Theme.textTertiary
-    /// A transaction inside an event is a larger ringed dot on the event's bar; one in the gap between events is a small plain dot on the grey line.
-    @Entry var railRing = false
-}
+    let past: [EventBlock]
+    let cards: [EventBlock]
+    let rows: [Row]
+    /// Each row's y: its minute's place on the axis, or a row below the one above when two share a minute, so none sits on another.
+    let rowYs: [CGFloat]
+    /// The rail's height, grown if stacked rows ran past the axis.
+    let height: CGFloat
+    let axis: RailAxis
+    static let rowHeight: CGFloat = 26
+    /// The now line's minute, only while it falls inside this day.
+    let nowMinute: Int?
 
-/// A box of the day: a bar in its colour, a small header that is only a name and a time, and under it the transactions. A box with no transactions
-/// is one thin line.
-private struct ListBox<Lines: View>: View {
-    let rail: ListRail
-    let title: String
-    let timeText: String
-    let totalText: String?
-    let color: Color
-    let symbol: String
-    /// The empty stretch between events: no name, no time, no bar; only its transactions, always shown (never folded), on the grey line.
-    var gap = false
-    /// For a gap: how many transactions it holds. One is simply shown; several fold into a circle with their count on the line, and open on a tap.
-    var gapCount = 0
-    /// When the box starts, shown in the column left of the line.
-    var startText: String?
-    let hasLines: Bool
-    var onSelect: (() -> Void)?
-    @ViewBuilder let lines: () -> Lines
-    /// A box shows its name, time and total; its transactions open under it on a tap of the chevron.
-    @State private var expanded = false
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64) {
+        let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
+        let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
+        let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
+        let past = blocks.filter { $0.displayStartMinute < cutoff }
+        let now = cutoff >= 0 && cutoff < timeline.totalMinutes ? cutoff : nil
 
-    var body: some View {
-        HStack(alignment: .top, spacing: Theme.Space.s) {
-            Group {
-                if let startText { TimeLabel(text: startText).padding(.top, Theme.Space.m) } else { Color.clear }
-            }
-            .frame(width: ListRail.timeWidth, alignment: .trailing)
-            rail_
-            content
+        var rows: [Row] = timeline.markers.map { marker in
+            let inside = past.first { $0.displayStartMinute <= marker.positionMinute && marker.positionMinute < $0.displayEndMinute }
+            let linked = marker.allocations.first { $0.activityID != nil }.flatMap { link in blocks.first { $0.activity?.activityID == link.activityID } }
+            return Row(
+                id: "m/" + marker.transactionID.rawValue, transactionID: marker.transactionID, minute: marker.positionMinute, title: marker.title ?? "거래",
+                category: marker.categoryID, amountText: Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency),
+                isIncoming: marker.flow == .refund, colorHex: (inside ?? linked)?.calendarColorHex
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// The event is an area, so its stretch of the line is a bar in its colour as tall as the box; a thin grey line joins the bars across the gaps.
-    private var rail_: some View {
-        let inset = Theme.Space.m
-        return GeometryReader { proxy in
-            let top = rail.isFirst && !gap ? inset : 0
-            let bottom = rail.isLast && !gap ? proxy.size.height - inset : proxy.size.height
-            ZStack(alignment: .topLeading) {
-                Rectangle().fill(Theme.textTertiary.opacity(0.35)).frame(width: 2, height: max(0, bottom - top))
-                    .offset(x: (ListRail.gutter - 2) / 2, y: top)
-                if !gap {
-                let barTop = rail.joinsPrevious ? 0 : inset
-                let barBottom = rail.joinsNext ? proxy.size.height : proxy.size.height - inset
-                let round = ListRail.barWidth / 2
-                UnevenRoundedRectangle(
-                    topLeadingRadius: rail.joinsPrevious ? 0 : round, bottomLeadingRadius: rail.joinsNext ? 0 : round,
-                    bottomTrailingRadius: rail.joinsNext ? 0 : round, topTrailingRadius: rail.joinsPrevious ? 0 : round
-                )
-                .fill(color).frame(width: ListRail.barWidth, height: max(0, barBottom - barTop))
-                .offset(x: (ListRail.gutter - ListRail.barWidth) / 2, y: barTop)
-                }
-            }
-        }
-        .frame(width: ListRail.gutter)
-        .contentShape(Rectangle())
-        .onTapGesture { if gap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
-        .accessibilityHidden(true)
-    }
-
-    private var content: some View {
-        if gap {
-            return AnyView(gapContent)
-        }
-        return AnyView(boxContent)
-    }
-
-    private var gapContent: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.m) {
-            // The summary stays on top whether the stretch is folded or open; a tap on it opens or folds the stretch.
-            HStack(spacing: Theme.Space.xs) {
-                Text(["거래 \(gapCount)건", totalText].compactMap { $0 }.joined(separator: " · "))
-                    .font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                Spacer(minLength: 0)
-            }
-            .frame(maxWidth: .infinity, minHeight: 20, alignment: .leading)
-            .overlay(alignment: .leading) {
-                Circle().fill(Theme.textTertiary.opacity(0.8)).frame(width: 7, height: 7)
-                    .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - 3.5)
-                    .allowsHitTesting(false)
-            }
-            .contentShape(Rectangle())
-            .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
-            if expanded { lines() }
-        }
-        .padding(.leading, ListRail.indent).padding(.vertical, expanded ? Theme.Space.m : Theme.Space.xs)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .environment(\.railColor, color)
-    }
-
-    private var boxContent: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
-            HStack(alignment: .center, spacing: Theme.Space.s) {
-                // The bar carries the colour, so there is no icon here: the name, and the time under it.
-                VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                    Text(title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(timeText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary).lineLimit(1).minimumScaleFactor(0.75)
-                }
-                Spacer(minLength: Theme.Space.s)
-                if let totalText { Text(totalText).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary) }
-                if hasLines {
-                    Image(systemName: "chevron.down").font(.system(.footnote, weight: .semibold)).foregroundStyle(Theme.textTertiary)
-                        .rotationEffect(.degrees(expanded ? 180 : 0)).frame(width: 28, height: 28).contentShape(Rectangle())
-                        .listTap { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } }
-                }
-            }
-            .contentShape(Rectangle())
-            .listTap { if let onSelect { onSelect() } else if hasLines { withAnimation(.easeOut(duration: 0.2)) { expanded.toggle() } } }
-            if hasLines && expanded {
-                VStack(alignment: .leading, spacing: Theme.Space.m) { lines() }.padding(.leading, ListRail.indent).environment(\.railColor, color).environment(\.railRing, true)
-            }
-        }
-        .padding(.vertical, Theme.Space.m)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// An event: its name and time, and the transactions that went to it inside.
-private struct EventCard: View {
-    let block: EventBlock
-    let rail: ListRail
-    let model: AppModel
-    let zone: DisplayTimeZone
-    let onSelect: () -> Void
-    let onOpenTransaction: (LedgerEntryID) -> Void
-
-    /// How long it lasts, as a person says it: 1시간 30분.
-    private static func duration(from start: Int64, to end: Int64) -> String {
-        let minutes = max(0, Int((end - start) / 60_000))
-        let hours = minutes / 60, rest = minutes % 60
-        if hours == 0 { return "\(rest)분" }
-        return rest == 0 ? "\(hours)시간" : "\(hours)시간 \(rest)분"
-    }
-
-    var body: some View {
-        ListBox(
-            rail: rail, title: block.title, timeText: Self.duration(from: block.startUnixMilliseconds, to: block.endUnixMilliseconds),
-            totalText: block.allocatedSpend.first.map { Formatting.aggregate($0) },
-            color: Color(hex: block.calendarColorHex) ?? Theme.accent, symbol: model.calendarSymbol(id: block.eventKey.calendarID, title: block.calendarTitle),
-            startText: Formatting.time(block.startUnixMilliseconds, zoneIdentifier: zone.identifier), hasLines: !block.allocations.isEmpty, onSelect: onSelect
-        ) {
-            ForEach(block.allocations, id: \.allocationID) { item in
-                DayListTransactionLine(
-                    title: item.title ?? "거래",
-                    detail: item.occursOnSelectedDay ? Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier)
-                        : Formatting.shortDate(item.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
+        // A transaction wholly inside an event has no marker of its own; it is drawn from the event's allocations, where it happened.
+        let marked = Set(timeline.markers.map(\.transactionID))
+        for block in blocks {
+            for item in block.allocations where item.occursOnSelectedDay && !marked.contains(item.transactionID) {
+                let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+                rows.append(Row(
+                    id: "a/" + item.allocationID.rawValue, transactionID: item.transactionID, minute: minute, title: item.title ?? "거래", category: item.categoryID,
                     amountText: Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency),
-                    isRefund: item.flow == .refund,
-                    category: item.categoryID
-                ) { onOpenTransaction(item.transactionID) }
+                    isIncoming: item.flow == .refund, colorHex: block.calendarColorHex
+                ))
             }
         }
+        rows.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
+
+        let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: $0.displayEndMinute, isCard: $0.displayStartMinute >= cutoff) }
+        var covered = events.flatMap { [$0.start, $0.end] } + rows.map(\.minute)
+        if let now { covered.append(now) }
+        let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
+        let axis = RailAxis(events: events, transactions: rows.map(\.minute), now: now, firstMinute: range.first, lastMinute: range.last)
+        var ys: [CGFloat] = []
+        for row in rows { ys.append(max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)) }
+        self.past = past
+        self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
+        self.rows = rows
+        self.rowYs = ys
+        self.axis = axis
+        self.nowMinute = now
+        self.height = max(CGFloat(axis.height), (ys.last ?? 0) + Self.rowHeight)
+    }
+
+    /// A past day says what was spent; a day to come how many events it holds; today, what is going on now.
+    static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64) -> String? {
+        if nowMilliseconds >= timeline.dayEndUnixMilliseconds {
+            guard let total = timeline.summary.totals.first, total.linkedNetMinorUnits + total.unlinkedNetMinorUnits > 0 else { return nil }
+            return "쓴 돈 " + Formatting.money(total.linkedNetMinorUnits + total.unlinkedNetMinorUnits, currency: total.currency)
+        }
+        if nowMilliseconds < timeline.dayStartUnixMilliseconds { return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)개" }
+        let now = Int((nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)
+        if let current = timeline.blocks.first(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) { return "진행 중 · " + current.title }
+        return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)개"
     }
 }
 
-/// The stretch between events, drawn as the empty space between them, with the transactions no event holds.
-private struct DailyCard: View {
-    let group: DayListPlan.DailyGroup
-    let rail: ListRail
-    let model: AppModel
+private enum RailMetrics {
+    /// Where the rail runs, from the left edge of the day: the hour labels sit left of it, everything else right of it.
+    static let railX: CGFloat = 60
+    static let railWidth: CGFloat = 2
+    static let barWidth: CGFloat = 6
+    static let dotSize: CGFloat = 10
+    static let contentX: CGFloat = 78
+    static let hourLabelWidth: CGFloat = 40
+    static let rowHeight = RailPlan.rowHeight
+    static let vertical: CGFloat = 12
+    /// Not in the palette yet (design-v2 open decision); `Theme` should take it.
+    static let rail = Color.dynamic(light: 0xE5E8EB, dark: 0x333336)
+}
+
+/// The rail itself: hour lines and labels, the rail, past events as bars, to-come events as cards, transactions as dots with rows, the now line.
+private struct RailTimeline: View {
+    let timeline: DayTimeline
+    let nowMilliseconds: Int64
     let zone: DisplayTimeZone
+    let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
     var body: some View {
-        let currency = group.markers[0].amount.currency
-        let net = group.markers.filter { $0.amount.currency == currency }.reduce(Int64(0)) { $0 + ($1.flow == .refund ? -$1.amount.minorUnits : $1.amount.minorUnits) }
-        return ListBox(
-            rail: rail, title: "", timeText: "", totalText: Formatting.money(net, currency: currency), color: Theme.textTertiary, symbol: "", gap: true, gapCount: group.markers.count, hasLines: true
-        ) {
-            ForEach(group.markers, id: \.transactionID) { marker in
-                DayListTransactionLine(
-                    title: marker.title ?? "거래",
-                    detail: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zone.identifier),
-                    amount: marker.amount, isRefund: marker.flow == .refund,
-                    category: marker.categoryID
-                ) { onOpenTransaction(marker.transactionID) }
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds)
+        let axis = plan.axis
+        let height = plan.height
+        ZStack(alignment: .topLeading) {
+            ForEach(axis.hourMarks(avoiding: plan.nowMinute), id: \.hour) { mark in
+                Rectangle().fill(Theme.divider).frame(height: 1).padding(.leading, RailMetrics.contentX - 8).offset(y: CGFloat(mark.y))
+                Text("\(mark.hour)").font(Theme.Typo.caption.monospacedDigit()).foregroundStyle(Theme.disabled)
+                    .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: CGFloat(mark.y) - 7)
             }
+            Capsule().fill(RailMetrics.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
+            ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
+            ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
+            ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
+                TransactionRailRow(row: row, onTap: { onOpenTransaction(row.transactionID) }).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
+            }
+            if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
+        .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+        .padding(.vertical, RailMetrics.vertical)
     }
 }
 
-/// One transaction: its category on a tile, what and when, the amount; money coming back is blue with a plus.
-private struct DayListTransactionLine: View {
-    @Environment(\.railColor) private var railColor
-    @Environment(\.railRing) private var railRing
-    let title: String
-    let detail: String
-    let amountText: String
-    let isRefund: Bool
-    let category: CanonicalCategoryID?
+private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", minute / 60, minute % 60) }
+
+/// An event that has begun: the rail turns its colour and thickens over its stretch; the name stands beside it at its start, left-aligned.
+private struct PastEventBar: View {
+    let block: EventBlock
+    let axis: RailAxis
     let onTap: () -> Void
 
-    init(title: String, detail: String, amount: Money, isRefund: Bool, category: CanonicalCategoryID?, onTap: @escaping () -> Void) {
-        self.init(title: title, detail: detail, amountText: Formatting.money(amount.minorUnits, currency: amount.currency), isRefund: isRefund, category: category, onTap: onTap)
-    }
-
-    init(title: String, detail: String, amountText: String, isRefund: Bool, category: CanonicalCategoryID?, onTap: @escaping () -> Void) {
-        self.title = title
-        self.detail = detail
-        self.amountText = amountText
-        self.isRefund = isRefund
-        self.category = category
-        self.onTap = onTap
-    }
-
     var body: some View {
-        HStack(spacing: Theme.Space.m) {
-            Image(systemName: CategoryIcon.symbol(for: category) ?? (isRefund ? "arrow.uturn.backward" : "creditcard"))
-                .font(.system(size: 14, weight: .medium)).foregroundStyle(isRefund ? Theme.accent : Theme.textTertiary).frame(width: 20)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                Text(title).font(Theme.Typo.label).foregroundStyle(Theme.textPrimary).lineLimit(1)
-            }
-            Spacer(minLength: Theme.Space.s)
-            Text((isRefund ? "+" : "") + amountText).font(.system(.subheadline, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
+        let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(block.displayEndMinute))
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
+                .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
+                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
+            Text(block.title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 1)
         }
-        .listTap(onTap)
-        // Its time sits in the column left of the line and a small dot on the line, level with the row: each transaction reads as a moment on a timeline.
-        .overlay(alignment: .leading) {
-            TimeLabel(text: detail).frame(width: ListRail.timeWidth, alignment: .trailing)
-                .offset(x: -(ListRail.timeWidth + Theme.Space.s + ListRail.gutter + Theme.Space.s + ListRail.indent))
-                .allowsHitTesting(false)
-        }
-        .overlay(alignment: .leading) {
-            Group {
-                if railRing {
-                    Circle().fill(Color(.systemBackground)).frame(width: 12, height: 12).overlay(Circle().stroke(railColor, lineWidth: 2.5))
-                } else {
-                    Circle().fill(railColor).frame(width: 7, height: 7)
-                }
-            }
-            .offset(x: -(ListRail.gutter / 2 + Theme.Space.s + ListRail.indent) - (railRing ? 6 : 3.5))
-                .allowsHitTesting(false)
-        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(block.title), \(clockText(block.displayStartMinute))부터 \(clockText(block.displayEndMinute))까지")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(.default, onTap)
     }
 }
 
-/// A time in the column beside the line: the 오전/오후 small above the clock time; a date (a transaction of another day) is shown as it is.
-private struct TimeLabel: View {
-    let text: String
+/// An event still to come: a card whose left edge is its stretch of the rail; its title and time range, or one line of both when it is short.
+private struct EventCardView: View {
+    let block: EventBlock
+    let axis: RailAxis
+    let onTap: () -> Void
 
     var body: some View {
-        let parts = text.split(separator: " ", maxSplits: 1).map(String.init)
-        VStack(alignment: .trailing, spacing: 0) {
-            if parts.count == 2 {
-                Text(parts[0]).font(.system(size: 10)).foregroundStyle(Theme.textTertiary)
-                Text(parts[1]).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+        let color = Color(hex: block.calendarColorHex) ?? Theme.accent
+        let top = CGFloat(axis.y(block.displayStartMinute))
+        let height = max(RailMetrics.barWidth, CGFloat(axis.y(block.displayEndMinute)) - top)
+        let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 12, topTrailingRadius: 12)
+        let range = clockText(block.displayStartMinute) + " – " + clockText(block.displayEndMinute)
+        Group {
+            if height < 40 {
+                HStack(spacing: Theme.Space.s) {
+                    Text(block.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, Theme.Space.xs)
             } else {
-                Text(text).font(.system(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(block.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .padding(.vertical, 10)
             }
         }
-        .lineLimit(1).minimumScaleFactor(0.8)
+        .padding(.leading, RailMetrics.barWidth + 10).padding(.trailing, 14)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
+        .background(color.opacity(0.14), in: shape)
+        .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: RailMetrics.barWidth) }
+        .clipShape(shape)
+        .padding(.leading, RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2)
+        .contentShape(shape)
+        .onTapGesture(perform: onTap)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(block.title), \(range)")
+        .accessibilityAddTraits(.isButton)
+        .offset(y: top)
+    }
+}
+
+/// One transaction: a hollow dot on the rail at its minute (its colour is the event's it happened in, else the text colour), then its category tile,
+/// name, time and amount on one line, no card. Spent is blue, money coming in is red.
+private struct TransactionRailRow: View {
+    let row: RailPlan.Row
+    let onTap: () -> Void
+
+    var body: some View {
+        let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
+        ZStack(alignment: .topLeading) {
+            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
+                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
+            HStack(spacing: Theme.Space.s) {
+                Image(systemName: CategoryIcon.symbol(for: row.category) ?? (row.isIncoming ? "arrow.uturn.backward" : "creditcard"))
+                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    .frame(width: RailMetrics.rowHeight, height: RailMetrics.rowHeight).background(Theme.fill, in: Circle()).accessibilityHidden(true)
+                Text(row.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(clockText(row.minute)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary).fixedSize()
+                Spacer(minLength: Theme.Space.s)
+                Text((row.isIncoming ? "+" : "") + row.amountText).font(.system(size: 15, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
+            }
+            .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onTap)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
+        .accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The now line: a 1.5pt accent line across the day with a dot on the rail and the time at the left in the hour labels' column.
+private struct NowLine: View {
+    let minute: Int
+    let y: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Rectangle().fill(Theme.accent).frame(height: 1.5).padding(.leading, RailMetrics.railX).offset(y: y - 0.75)
+            Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - 3.5, y: y - 3.5)
+            Text(clockText(minute)).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent)
+                .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: y - 7)
+            Color.clear.frame(width: 1, height: 1).id("railNow").offset(y: y)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -431,13 +398,3 @@ struct LedgerEntryLoader: View {
     }
 }
 
-private extension DayListPlan.Item {
-    /// The stretch of the day an event covers, in minutes from its start; none for an all-day item or the gap between events (a gap never joins a bar).
-    var minutes: (start: Int, end: Int)? {
-        switch self {
-        case .allDay: nil
-        case let .event(block): (block.startMinute, block.endMinute)
-        case .daily: nil
-        }
-    }
-}

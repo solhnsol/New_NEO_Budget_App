@@ -43,16 +43,23 @@ struct DayPagerView: View {
                 LazyHStack(spacing: 0) {
                     ForEach((center - Self.reach)...(center + Self.reach), id: \.self) { epoch in
                         let day = LocalDate(daysSinceUnixEpoch: epoch)
-                        ScrollView {
-                            DaySection(
-                                day: day, timeline: timelines[epoch], isToday: day == model.today,
-                                model: model, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction
-                            )
-                            .padding(.bottom, Theme.Space.xl)
+                        ScrollViewReader { scroller in
+                            ScrollView {
+                                DaySection(
+                                    day: day, timeline: timelines[epoch], isToday: day == model.today,
+                                    model: model, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction
+                                )
+                                .padding(.bottom, Theme.Space.xl)
+                            }
+                            .contentMargins(.top, topInset, for: .scrollContent)
+                            .contentMargins(.top, topInset, for: .scrollIndicators)
+                            .ignoresSafeArea(edges: .top)
+                            // Today opens with the now line at 40% of the screen's height.
+                            .onChange(of: timelines[epoch] != nil) { _, loaded in
+                                guard loaded, day == model.today else { return }
+                                DispatchQueue.main.async { scroller.scrollTo("railNow", anchor: UnitPoint(x: 0.5, y: 0.4)) }
+                            }
                         }
-                        .contentMargins(.top, topInset, for: .scrollContent)
-                        .contentMargins(.top, topInset, for: .scrollIndicators)
-                        .ignoresSafeArea(edges: .top)
                         .frame(width: proxy.size.width)
                         .id(epoch)
                         .onAppear { if timelines[epoch] == nil { Task { await read(epoch) } } }
