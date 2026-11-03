@@ -6,7 +6,8 @@ import SwiftUI
 /// taken out in advance and shown as "정산 대기 중". Each group opens to the transactions behind it.
 struct AnalysisScreen: View {
     let model: AppModel
-    let onClose: () -> Void
+    /// Nil when shown as a tab (nothing to close).
+    var onClose: (() -> Void)?
     @State private var snapshot: AnalysisSnapshot?
     @State private var failed = false
     @State private var month: AnalysisMonth?
@@ -26,7 +27,7 @@ struct AnalysisScreen: View {
             .tint(Theme.accent)
             .navigationTitle("분석")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } }
+            .toolbar { if let onClose { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } } }
         }
         .task(id: [model.dataGeneration, model.overrideRevision, model.recurringRevision]) {
             if let loaded = await AnalysisSnapshot.load(model) { snapshot = loaded } else if snapshot == nil { failed = true }
