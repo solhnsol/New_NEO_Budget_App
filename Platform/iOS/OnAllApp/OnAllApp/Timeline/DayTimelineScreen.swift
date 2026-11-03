@@ -20,6 +20,7 @@ struct DayTimelineScreen: View {
     @State private var ledgerDestination: LedgerDestination?
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
+    @State private var addingEvent = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -217,7 +218,7 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) }) { day in
+            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onAddEvent: { addingEvent = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) }) { day in
                 Task { await goTo(day) }
             }
           } strip: { opened in
@@ -261,6 +262,7 @@ struct DayTimelineScreen: View {
         .task { if ProcessInfo.processInfo.arguments.contains("-open-analysis") { ledgerDestination = .analysis } }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
+        .sheet(isPresented: $addingEvent) { EventCreateSheet(model: model) }
         .fullScreenCover(item: $ledgerDestination) { destination in
             switch destination {
             case .settings:

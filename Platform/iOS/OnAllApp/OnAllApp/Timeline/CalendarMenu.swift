@@ -26,6 +26,7 @@ struct TransactionRef: Identifiable { let id: LedgerEntryID }
 struct CalendarMenu: View {
     @Binding var style: CalendarStyle
     let onAdd: () -> Void
+    var onAddEvent: () -> Void = {}
     let onOpen: (LedgerDestination) -> Void
 
     private var other: CalendarStyle { style.next }
@@ -42,6 +43,7 @@ struct CalendarMenu: View {
 
     private var menu: some View {
         Menu {
+            Button { onAddEvent() } label: { Label("일정 추가", systemImage: "calendar.badge.plus") }
             Button { onAdd() } label: { Label("내역 추가", systemImage: "plus") }
             Button { onOpen(.list) } label: { Label("가계부 목록", systemImage: "list.bullet.rectangle") }
             Button { onOpen(.accounts) } label: { Label("계좌·카드", systemImage: "creditcard") }
