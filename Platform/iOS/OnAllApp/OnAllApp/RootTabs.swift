@@ -8,34 +8,56 @@ struct RootTabs: View {
 
     enum Tab: Hashable { case calendar, analysis, more }
 
-    init(model: AppModel) {
-        self.model = model
-        // Design spec: 11px 500 labels, inactive #8B95A1, active #191F28 600 (the tint stays blue elsewhere).
-        let appearance = UITabBarAppearance()
-        appearance.configureWithDefaultBackground()
-        for item in [appearance.stackedLayoutAppearance, appearance.inlineLayoutAppearance, appearance.compactInlineLayoutAppearance] {
-            item.normal.iconColor = UIColor(Theme.textTertiary)
-            item.normal.titleTextAttributes = [.foregroundColor: UIColor(Theme.textTertiary), .font: UIFont.systemFont(ofSize: 11, weight: .medium)]
-            item.selected.iconColor = UIColor(Theme.textPrimary)
-            item.selected.titleTextAttributes = [.foregroundColor: UIColor(Theme.textPrimary), .font: UIFont.systemFont(ofSize: 11, weight: .semibold)]
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                DayTimelineScreen(model: model).tabLayer(selection == .calendar)
+                AnalysisScreen(model: model).tabLayer(selection == .analysis)
+                MoreScreen(model: model).tabLayer(selection == .more)
+            }
+            TabBar(selection: $selection)
         }
-        UITabBar.appearance().standardAppearance = appearance
-        UITabBar.appearance().scrollEdgeAppearance = appearance
+        .background(Theme.background)
+        .tint(Theme.accent)
     }
+}
+
+private extension View {
+    /// All three tabs stay alive (their scroll and state are kept); only the chosen one is seen and touched.
+    func tabLayer(_ isOn: Bool) -> some View {
+        opacity(isOn ? 1 : 0).allowsHitTesting(isOn).accessibilityHidden(!isOn)
+    }
+}
+
+/// The flat bottom bar of the design: a hairline, three line icons with 11-point labels, the chosen one in the text color.
+private struct TabBar: View {
+    @Binding var selection: RootTabs.Tab
+
+    private let items: [(tab: RootTabs.Tab, icon: String, title: String)] = [
+        (.calendar, "cal", "캘린더"), (.analysis, "bars", "분석"), (.more, "dots", "더보기"),
+    ]
 
     var body: some View {
-        TabView(selection: $selection) {
-            DayTimelineScreen(model: model)
-                .tabItem { Label("캘린더", systemImage: "calendar") }
-                .tag(Tab.calendar)
-            AnalysisScreen(model: model)
-                .tabItem { Label("분석", systemImage: "chart.pie") }
-                .tag(Tab.analysis)
-            MoreScreen(model: model)
-                .tabItem { Label("더보기", systemImage: "ellipsis") }
-                .tag(Tab.more)
+        HStack(spacing: 0) {
+            ForEach(items, id: \.tab) { item in
+                let on = selection == item.tab
+                Button { selection = item.tab } label: {
+                    VStack(spacing: 3) {
+                        LineIcon(name: item.icon)
+                        Text(item.title).font(.system(size: 11, weight: on ? .semibold : .medium))
+                    }
+                    .foregroundStyle(on ? Theme.textPrimary : Theme.textTertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10).padding(.bottom, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
         }
-        .tint(Theme.accent)
+        .frame(maxWidth: .infinity)
+        .background(Theme.surface.ignoresSafeArea(edges: .bottom))
+        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
     }
 }
 

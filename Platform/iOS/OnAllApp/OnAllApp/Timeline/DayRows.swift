@@ -29,9 +29,9 @@ struct DaySection: View {
     }
 
     private func content(nowMilliseconds: Int64) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.s) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s) {
-                Text(Formatting.dayTitle(day)).font(Theme.Typo.section).foregroundStyle(Theme.textPrimary).fixedSize()
+                Text("\(day.day)일 \(Formatting.weekdayShort(day))요일").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary).fixedSize()
                 // All-day events sit beside the date, as small chips.
                 let allDays = timeline?.allDay.sorted { $0.id < $1.id } ?? []
                 if allDays.count == 1, let only = allDays.first {
@@ -44,14 +44,14 @@ struct DaySection: View {
                     Text(text).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 }
             }
+            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 8)
             if let timeline {
                 RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction)
+                    .padding(.trailing, Theme.Space.l)
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 48)
             }
         }
-        .padding(.horizontal, Theme.Space.l)
-        .padding(.vertical, Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
@@ -156,7 +156,7 @@ struct RailPlan {
             let linked = marker.allocations.first { $0.activityID != nil }.flatMap { link in blocks.first { $0.activity?.activityID == link.activityID } }
             return Row(
                 id: "m/" + marker.transactionID.rawValue, transactionID: marker.transactionID, minute: marker.positionMinute, title: marker.title ?? "거래",
-                category: marker.categoryID, amountText: Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency),
+                category: marker.categoryID, amountText: RailPlan.railAmount(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency), incoming: marker.flow == .refund),
                 isIncoming: marker.flow == .refund, colorHex: (inside ?? linked)?.calendarColorHex
             )
         }
@@ -167,7 +167,7 @@ struct RailPlan {
                 let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
                 rows.append(Row(
                     id: "a/" + item.allocationID.rawValue, transactionID: item.transactionID, minute: minute, title: item.title ?? "거래", category: item.categoryID,
-                    amountText: Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency),
+                    amountText: RailPlan.railAmount(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency), incoming: item.flow == .refund),
                     isIncoming: item.flow == .refund, colorHex: block.calendarColorHex
                 ))
             }
@@ -189,6 +189,9 @@ struct RailPlan {
         self.nowMinute = now
         self.height = max(CGFloat(axis.height), (ys.last ?? 0) + Self.rowHeight)
     }
+
+    /// The row's amount as the design writes it: the number alone, with a minus for money spent and a plus for money coming in.
+    static func railAmount(_ text: String, incoming: Bool) -> String { (incoming ? "+" : "−") + (text.hasSuffix("원") ? String(text.dropLast()) : text) }
 
     /// A past day says what was spent; a day to come how many events it holds; today, what is going on now.
     static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64) -> String? {
@@ -304,6 +307,7 @@ private struct EventCardView: View {
         .padding(.leading, RailMetrics.barWidth + 10).padding(.trailing, 14)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
         .background(color.opacity(0.14), in: shape)
+        .background(Theme.surface, in: shape)
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: RailMetrics.barWidth) }
         .clipShape(shape)
         .padding(.leading, RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2)
@@ -328,13 +332,13 @@ private struct TransactionRailRow: View {
             Circle().fill(Theme.surface).overlay(Circle().strokeBorder(dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
             HStack(spacing: Theme.Space.s) {
-                Image(systemName: CategoryIcon.symbol(for: row.category) ?? (row.isIncoming ? "arrow.uturn.backward" : "creditcard"))
-                    .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    .frame(width: RailMetrics.rowHeight, height: RailMetrics.rowHeight).background(Theme.fill, in: Circle()).accessibilityHidden(true)
+                let tile = CategoryIcon.tile(for: row.category)
+                LineIcon(name: tile.icon, size: 14).foregroundStyle(Theme.textSecondary)
+                    .frame(width: RailMetrics.rowHeight, height: RailMetrics.rowHeight).background(tile.tint, in: Circle())
                 Text(row.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text(clockText(row.minute)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary).fixedSize()
                 Spacer(minLength: Theme.Space.s)
-                Text((row.isIncoming ? "+" : "") + row.amountText).font(.system(size: 15, weight: .medium).monospacedDigit())
+                Text(row.amountText).font(.system(size: 15, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
             .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)

@@ -84,7 +84,7 @@ struct WeekStripView: View {
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
-                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.system(.caption2)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
+                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.system(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
                 }
             }
             .frame(height: MonthUnfold.labelRow - 2, alignment: .top)
@@ -167,7 +167,7 @@ struct WeekStripView: View {
                     }
             )
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
         .padding(.bottom, MonthUnfold.stripBottomPadding * (1 - unfold))
         .onAppear { seed() }
         // The day can change inside a transaction that turns animations off (the screen moves the selected day that way, so the grid below does not

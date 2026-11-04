@@ -1,4 +1,5 @@
 import NEOBudgetCalendar
+import SwiftUI
 
 /// The small icon a classified spending category is drawn with. Categories come from the canonical taxonomy and are never guessed
 /// here: a transaction whose category is not (yet) classified has no icon and keeps its plain dot. The match is on the category's id,
@@ -37,5 +38,17 @@ enum CategoryIcon {
         let id = category.rawValue.lowercased()
         for entry in table where entry.keys.contains(where: { id.contains($0) }) { return entry.name }
         return category.rawValue
+    }
+
+    /// The design's rail-row tile: a line icon on a pale tint of the category (unclassified or unmatched: the bank).
+    static func tile(for category: CanonicalCategoryID?) -> (icon: String, tint: Color) {
+        switch symbol(for: category) {
+        case "cup.and.saucer": return ("cup", Theme.CalendarTint.orange.soft)
+        case "fork.knife": return ("bowl", Theme.CalendarTint.blue.soft)
+        case "car": return ("train", Theme.CalendarTint.green.soft)
+        case "book": return ("book", Theme.CalendarTint.purple.soft)
+        case "bag": return ("bag", Theme.CalendarTint.orange.soft)
+        default: return ("bank", Theme.incomeSoft)
+        }
     }
 }

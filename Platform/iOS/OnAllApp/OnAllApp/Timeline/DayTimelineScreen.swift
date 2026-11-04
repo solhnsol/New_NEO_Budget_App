@@ -24,6 +24,8 @@ struct DayTimelineScreen: View {
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
     @State private var chromeFrame: CGRect = .zero
+    /// The bottom of the month title row, where the white card starts (12 below it).
+    @State private var headerBottom: CGFloat = 0
 
     private var style: Binding<CalendarStyle> {
         Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .pager }, set: { styleRaw = $0.rawValue })
@@ -154,6 +156,10 @@ struct DayTimelineScreen: View {
         let chromeHeight = chromeFrame.height
         let isList = style.wrappedValue != .grid
         return ZStack(alignment: .top) {
+          Theme.background.ignoresSafeArea()
+          // The design's one white card under the week strip: the day's title and timeline sit on it.
+          RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
+              .padding(.horizontal, Theme.cardMargin).padding(.top, headerBottom + Theme.Space.m)
           VStack(spacing: 0) {
             if isList {
                 let onScrollToDay: (LocalDate) -> Void = { day in
@@ -170,6 +176,7 @@ struct DayTimelineScreen: View {
                     model: model, topInset: chromeFrame.maxY,
                     onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
                 )
+                .padding(.horizontal, Theme.cardMargin)
             } else {
                 Color.clear.frame(height: chromeHeight)
                 if BrowseAxisMode.current == .fixedGrid {
@@ -217,9 +224,8 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, singleDay: isList, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) }) { day in
-                Task { await goTo(day) }
-            }
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
           } strip: { opened in
             WeekStripView(
                 cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
@@ -297,27 +303,21 @@ private struct StatusView: View {
 
 private struct DayHeader: View {
     let model: AppModel
-    /// The list shows one day at a time at the top, so the title names that day; the grid names its two columns.
-    let singleDay: Bool
+    let unfold: MonthUnfoldState
     let menu: CalendarMenu
     var onTitle: () -> Void = {}
-    let goTo: (LocalDate) -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 0) {
             // Only the month: the days themselves are named once, over their columns.
-            Text("\(model.selectedDay.month)월").font(.system(.title2, weight: .bold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Text("\((unfold.isOpen ? unfold.month : model.selectedDay).month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
                 .onTapGesture(perform: onTitle)
             Spacer()
-            Button { goTo(model.today) } label: {
-                Text("오늘").font(.system(.body, weight: .semibold)).foregroundStyle(Theme.accent).opacity(model.isToday ? 0.4 : 1)
-            }
-            .disabled(model.isToday)
             menu
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 4)
+        .padding(.leading, 24).padding(.trailing, 14)
+        .padding(.top, 16)
     }
 }
 
