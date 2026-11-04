@@ -3,11 +3,13 @@ import SwiftUI
 
 /// The sizes and calendar arithmetic of the month that unfolds out of the header.
 enum MonthUnfold {
-    /// A week of the month: the number row and the dots (the week strip's own) and, once the month is open, what was spent under them.
+    /// A week of the month: the number row, the event bars (two lanes), the dots for the events with no bar, and what was spent. The week strip has
+    /// the same rows, without the bars until the month opens.
     static let numberRow: CGFloat = 36
-    static let dotsRow: CGFloat = 9
+    static let barsRow: CGFloat = MonthWeekBars.height
+    static let dotsRow: CGFloat = EventDots.height
     static let spendRow: CGFloat = 14
-    static let rowHeight: CGFloat = numberRow + dotsRow + spendRow
+    static let rowHeight: CGFloat = numberRow + barsRow + dotsRow + spendRow
     /// The weekday names over the weeks and the title bar (month and arrows) over those.
     static let labelRow: CGFloat = 15
     static let titleRow: CGFloat = 40
@@ -36,13 +38,13 @@ enum MonthUnfold {
 
     /// How far the header's bottom edge travels between closed and open: the finger moves the same distance, so the edge follows it.
     static func travel(rows: Int) -> CGFloat {
-        let closed = labelRow + numberRow + dotsRow + stripBottomPadding
+        let closed = labelRow + numberRow + dotsRow + spendRow + stripBottomPadding
         return titleRow + labelRow + CGFloat(rows) * rowHeight - closed
     }
 
     /// The height of the strip at `unfold` (its weekday names folded away, a line for what was spent opened).
     static func stripHeight(unfold: CGFloat) -> CGFloat {
-        labelRow * (1 - unfold) + numberRow + dotsRow + spendRow * unfold + stripBottomPadding * (1 - unfold)
+        labelRow * (1 - unfold) + numberRow + barsRow * unfold + dotsRow + spendRow + stripBottomPadding * (1 - unfold)
     }
 
     /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550). Nil when nothing was spent that day.
@@ -179,6 +181,8 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     let state: MonthUnfoldState
     let today: LocalDate
     let cells: (LocalDate) -> WeekStripDay?
+    /// A calendar's colour, for the bars and dots.
+    let color: (CalendarID) -> Color
     /// The list has a rule under the strip; the grid's column titles carry theirs.
     let showsRule: Bool
     let onSelect: (LocalDate) -> Void
@@ -264,9 +268,14 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
             ForEach(Array(rows), id: \.self) { row in
                 let distance = nearestLast ? rows.upperBound - row : row - rows.lowerBound + 1
                 let shown = max(0, min(1, (open - CGFloat(distance - 1) * MonthUnfold.rowHeight) / MonthUnfold.rowHeight))
+                let days = (0..<7).map { start.adding(days: row * 7 + $0) }
+                let read = days.compactMap(cells)
+                // A week not read yet has no bars (its days draw blank until it is).
+                let layout = read.count == 7 ? MonthWeekLayout(week: read, lanes: MonthWeekBars.lanes) : nil
                 HStack(spacing: 0) {
-                    ForEach(0..<7, id: \.self) { column in dayCell(start.adding(days: row * 7 + column), month: month) }
+                    ForEach(0..<7, id: \.self) { column in dayCell(days[column], month: month, overflow: layout?.overflow[column]) }
                 }
+                .overlay(alignment: .topLeading) { if let layout { MonthWeekBars(layout: layout, color: color).padding(.top, MonthUnfold.numberRow) } }
                 .padding(.horizontal, 8)
                 .frame(height: MonthUnfold.rowHeight)
                 .opacity(shown)
@@ -277,23 +286,22 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     }
 
     /// Made like the strip's day, so the week that is the strip and the weeks around it read as one.
-    private func dayCell(_ day: LocalDate, month: LocalDate) -> some View {
+    private func dayCell(_ day: LocalDate, month: LocalDate, overflow: [WeekStripEvent]?) -> some View {
         let info = cells(day)
         let spent = MonthUnfold.spendText(of: info)
         return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(day == today ? Theme.accent : Theme.textPrimary)
+                    .font(.callout.monospacedDigit().weight(day == today || day == selected ? .semibold : .regular))
+                    .foregroundStyle(day == today || day == selected ? Theme.accentStrong : Theme.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .background(day == today || day == selected ? Theme.accentSoft : .clear, in: Circle())
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
-                HStack(spacing: 3) {
-                    Circle().fill((info?.eventCount ?? 0) > 0 ? Theme.accent : .clear).frame(width: 5, height: 5)
-                    Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
-                }
-                .frame(height: MonthUnfold.dotsRow)
+                Color.clear.frame(height: MonthUnfold.barsRow)
+                EventDots(events: overflow ?? [], color: color)
                 Text(spent ?? " ")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.accent)
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(height: MonthUnfold.spendRow)
             }

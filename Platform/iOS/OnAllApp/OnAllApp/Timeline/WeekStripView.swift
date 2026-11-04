@@ -31,6 +31,8 @@ struct WeekStripView: View {
     /// How far the month is open under the strip (0 closed, 1 open): its weekday names fold away (the month has its own over all the weeks), a line for
     /// what was spent opens under each day, and it no longer pages sideways.
     var unfold: CGFloat = 0
+    /// A calendar's colour, for the dots and bars.
+    var color: (CalendarID) -> Color = { _ in Theme.accent }
 
     private static let numberRow: CGFloat = 36
     private static let ball: CGFloat = 32
@@ -62,6 +64,14 @@ struct WeekStripView: View {
     private struct CapsuleGhost: Identifiable { let id = UUID(); let lead: Double; let trail: Double }
 
     private static let capsuleSpring = Animation.interpolatingSpring(stiffness: 190, damping: 19)
+
+    private var stripRowHeight: CGFloat { Self.numberRow + MonthUnfold.barsRow * unfold + MonthUnfold.dotsRow + MonthUnfold.spendRow }
+    /// The open week's bars (nil while the strip is closed, or before the week's days are all read).
+    private var openWeek: MonthWeekLayout? {
+        guard unfold > 0 else { return nil }
+        let days = (0..<7).compactMap { cells[weekStart.adding(days: $0)] }
+        return days.count == 7 ? MonthWeekLayout(week: days, lanes: MonthWeekBars.lanes) : nil
+    }
 
     private var weekStart: LocalDate { selected.adding(days: -selected.weekday) }
     private var position: Int { selected.daysSinceUnixEpoch + pendingShift }
@@ -104,13 +114,19 @@ struct WeekStripView: View {
                                 dayCell(LocalDate(daysSinceUnixEpoch: number), cell: cell)
                                     .offset(x: (CGFloat(number) - CGFloat(offset)) * cell)
                             }
+                            if let layout = openWeek {
+                                MonthWeekBars(layout: layout, color: color)
+                                    .frame(width: cell * 7)
+                                    .offset(x: (CGFloat(weekStart.daysSinceUnixEpoch) - CGFloat(offset)) * cell, y: Self.numberRow)
+                                    .opacity(unfold)
+                            }
                         }
                     }
                     .animation(dragging ? nil : .snappy(duration: 0.34), value: viewOffset)
                 }
-                .frame(width: geometry.size.width, height: Self.numberRow + 9 + MonthUnfold.spendRow * unfold, alignment: .topLeading)
+                .frame(width: geometry.size.width, height: stripRowHeight, alignment: .topLeading)
             }
-            .frame(height: Self.numberRow + 9 + MonthUnfold.spendRow * unfold)
+            .frame(height: stripRowHeight)
             .clipped()
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
@@ -261,13 +277,13 @@ struct WeekStripView: View {
             ZStack {
                 // The day's own circle: in when it is the first day, out when it is not, and the number's colour with it, all from `role`. A day
                 // changed again half-way simply turns back from wherever it is.
-                Circle().fill(day == today ? Theme.accent : Theme.textPrimary).frame(width: Self.ball, height: Self.ball)
+                Circle().fill(Theme.accentSoft).frame(width: Self.ball, height: Self.ball)
                     .scaleEffect(role == .first || swipedWeek ? 1 : 0.3)
                     .opacity(role == .first ? 1 : 0)
                     .allowsHitTesting(false)
                 Button { if Date() >= tapsBlockedUntil { onSelect(day) } } label: {
                     Text("\(day.day)")
-                        .font(.callout.monospacedDigit().weight(role == .none ? .regular : .bold))
+                        .font(.callout.monospacedDigit().weight(role == .none && day != today ? .regular : .semibold))
                         .foregroundStyle(numberColor(role, day))
                         .frame(maxWidth: .infinity, minHeight: Self.numberRow)
                         .contentShape(Rectangle())
@@ -278,19 +294,18 @@ struct WeekStripView: View {
             }
             .frame(height: Self.numberRow)
             .animation(roleAnimation(role), value: role)
-            HStack(spacing: 3) {
-                Circle().fill((info?.eventCount ?? 0) > 0 ? Theme.accent : .clear).frame(width: 5, height: 5)
-                Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
+            Color.clear.frame(height: MonthUnfold.barsRow * unfold)
+            // Closed: every event of the day as a dot. Open: only those the week's bars left out, as in the month's other weeks.
+            let column = day.daysSinceUnixEpoch - weekStart.daysSinceUnixEpoch
+            ZStack {
+                EventDots(events: info?.events ?? [], color: color).opacity(1 - unfold)
+                if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
-            .frame(height: 9)
-            if unfold > 0 {
-                Text(MonthUnfold.spendText(of: info) ?? " ")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                    .frame(height: MonthUnfold.spendRow)
-                    .opacity(unfold)
-            }
+            Text(MonthUnfold.spendText(of: info) ?? " ")
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .frame(height: MonthUnfold.spendRow)
         }
         .frame(width: cell)
     }
@@ -303,9 +318,9 @@ struct WeekStripView: View {
 
     private func numberColor(_ role: Role, _ day: LocalDate) -> Color {
         switch role {
-        case .first: return day == today ? .white : Theme.surface
+        case .first: return Theme.accentStrong
         case .second: return Theme.textSecondary
-        case .none: return day == today ? Theme.accent : Theme.textPrimary
+        case .none: return day == today ? Theme.accentStrong : Theme.textPrimary
         }
     }
 }
