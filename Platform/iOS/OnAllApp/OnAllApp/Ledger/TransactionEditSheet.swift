@@ -12,6 +12,7 @@ struct TransactionEditSheet: View {
     @State private var memo: String
     @State private var tags: [String]
     @State private var applyToSameName = false
+    @State private var showsTags = false
 
     init(entry: LedgerListEntry, model: AppModel) {
         self.entry = entry
@@ -23,45 +24,58 @@ struct TransactionEditSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                Section("이름") { TextField("거래 이름", text: $title) }
-                Section("분류") {
-                    Picker("분류", selection: $category) {
-                        Text("분류 안 함").tag(CanonicalCategoryID?.none)
-                        ForEach(CategoryIcon.choices, id: \.id) { choice in
-                            Label(choice.name, systemImage: choice.symbol).tag(Optional(CanonicalCategoryID(rawValue: choice.id)))
+        VStack(alignment: .leading, spacing: 0) {
+            SheetTitleLine(canSave: true, save: save) {
+                Text("거래 수정").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
+            }
+            ScrollView {
+                VStack(spacing: 0) {
+                    SheetRow("이름") { SheetTextValue(placeholder: "추가", text: $title) }
+                    SheetRow("분류") { categoryMenu }
+                    SheetRow("메모") { SheetTextValue(placeholder: "추가", text: $memo) }
+                    SheetRow("태그", showsDivider: showsTags || canMakeRule || canRemove) {
+                        Button { withAnimation(Theme.Motion.press) { showsTags.toggle() } } label: {
+                            SheetValue(text: tags.isEmpty ? "추가" : tags.map { "#" + $0 }.joined(separator: " "), isSet: !tags.isEmpty)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .pickerStyle(.navigationLink)
-                }
-                Section {
-                    TextField("메모", text: $memo, axis: .vertical)
-                    TagField(tags: $tags, suggestions: model.knownTags)
-                } header: {
-                    Text("메모·태그")
-                } footer: {
-                    Text("금액과 카드·계좌 내역은 바뀌지 않아요. 이 화면에서 보이는 모습만 바뀌어요.")
-                }
-                if canMakeRule {
-                    Section {
-                        Toggle("같은 이름 거래에도 적용", isOn: $applyToSameName)
-                    } footer: {
-                        Text("켜면 '\(entry.originalTitle ?? "")'(이)라는 이름의 지난 거래와 앞으로 들어올 거래에 이 이름·분류를 자동으로 적용해요. 설정의 '자동 분류 규칙'에서 고치거나 지울 수 있어요.")
+                    if showsTags { TagField(tags: $tags, suggestions: model.knownTags).padding(.vertical, Theme.Space.m) }
+                    if canMakeRule {
+                        SheetRow("같은 이름 거래에도 적용", showsDivider: canRemove) { SheetToggle(isOn: $applyToSameName, label: "같은 이름 거래에도 적용") }
+                    }
+                    if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) {
+                        removeButton("이 내역 지우기") { model.removeManual(entry.id); dismiss() }
+                    } else if entry.override != nil {
+                        removeButton("원래대로 되돌리기") { model.edit(entry.id, to: nil); dismiss() }
                     }
                 }
-                if entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) {
-                    Section { Button("이 내역 지우기", role: .destructive) { model.removeManual(entry.id); dismiss() } }
-                } else if entry.override != nil {
-                    Section { Button("원래대로 되돌리기", role: .destructive) { model.edit(entry.id, to: nil); dismiss() } }
+            }
+            .scrollIndicators(.hidden).padding(.top, Theme.Space.s)
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .padding(.top, Theme.Space.l)
+        .onAllSheet(detents: [.large])
+        .tint(Theme.accent)
+    }
+
+    private var canRemove: Bool { entry.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) || entry.override != nil }
+
+    private func removeButton(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(title, action: action)
+            .font(Theme.Typo.rowTitle).foregroundStyle(Theme.dangerStrong)
+            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+    }
+
+    private var categoryMenu: some View {
+        Menu {
+            Picker("분류", selection: $category) {
+                Text("안 함").tag(CanonicalCategoryID?.none)
+                ForEach(CategoryIcon.choices, id: \.id) { choice in
+                    Label(choice.name, systemImage: choice.symbol).tag(Optional(CanonicalCategoryID(rawValue: choice.id)))
                 }
             }
-            .navigationTitle("거래 수정")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) { Button("저장") { save() } }
-            }
+        } label: {
+            SheetValue(text: CategoryIcon.name(for: category) ?? "안 함", isSet: category != nil)
         }
     }
 
