@@ -20,6 +20,7 @@ struct DayTimelineScreen: View {
     @State private var ledgerDestination: LedgerDestination?
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
+    @State private var addingEvent = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -154,7 +155,7 @@ struct DayTimelineScreen: View {
     private func ready(_ timelines: [DayTimeline]) -> some View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
-        let isList = style.wrappedValue != .grid
+        let isList = true
         return ZStack(alignment: .top) {
           Theme.background.ignoresSafeArea()
           // The design's one white card under the week strip: the day's title and timeline sit on it.
@@ -177,40 +178,6 @@ struct DayTimelineScreen: View {
                     onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
                 )
                 .padding(.horizontal, Theme.cardMargin)
-            } else {
-                Color.clear.frame(height: chromeHeight)
-                if BrowseAxisMode.current == .fixedGrid {
-                FixedGridBrowseView(
-                    model: model, today: model.today, zone: model.dayZone, chromeInset: chromeFrame.maxY,
-                    onSelect: { selection = $0 },
-                    onMoveDays: { days in
-                        // The days already read are shown in this frame; what the new window is missing (and the margin kept ahead) is read after.
-                        if model.moveTo(model.selectedDay.adding(days: days)) {
-                            let policy = DayPrefetchPolicy.browse
-                            Task { await model.loadMissing(extra: policy.readAhead, policy: policy.cachePolicy, failsScreen: false) }
-                        }
-                    },
-                    pendingDays: $pendingDays
-                )
-                } else if let editor = model.editor, timelines.count == 2 {
-                TimelineGridView(
-                    strip: stripWithJump, today: model.today, zone: model.dayZone, editor: editor,
-                    onSelect: { selection = $0 },
-                    onEditInfo: { infoEvent = $0.eventKey },
-                    onMoveDays: { days in
-                        // The days already read are shown in this frame; the one that just came into the strip is read after.
-                        if model.moveTo(model.selectedDay.adding(days: days)) { Task { await model.loadMissing() } }
-                    },
-                    swipeOffset: $swipeOffset,
-                    pendingDays: $pendingDays
-                )
-                .overlay(alignment: .topTrailing) { if editor.isEditing && editor.mode == .idle { DonePill(editor: editor) } }
-                }
-            }
-            // The day totals sit under the time grid only; the list uses the whole screen. The fixed grid shows its edit bar (cancel / done) there instead.
-            if BrowseAxisMode.current != .fixedGrid && !isList {
-                Divider()
-                SummaryBar(timelines: timelines, netted: NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone))
             }
           }
           MonthScrim(state: unfold).zIndex(0.5)
@@ -224,7 +191,7 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onAddEvent: { addingEvent = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
           } strip: { opened in
             WeekStripView(
@@ -266,6 +233,7 @@ struct DayTimelineScreen: View {
         }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
+        .sheet(isPresented: $addingEvent) { EventCreateSheet(model: model).onAllSheet() }
         .fullScreenCover(item: $ledgerDestination) { destination in
             LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
         }

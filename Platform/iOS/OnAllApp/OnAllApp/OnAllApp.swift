@@ -37,6 +37,7 @@ struct OnAllApp: App {
                 }
                 #endif
             }
+            .preferredColorScheme(.light)
             .environment(\.switchAppMode, { mode in
                 AppMode.save(mode)
                 model = nil

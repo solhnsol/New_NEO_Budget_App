@@ -178,10 +178,8 @@ extension Color {
         self.init(red: Double((hex >> 16) & 0xFF) / 255, green: Double((hex >> 8) & 0xFF) / 255, blue: Double(hex & 0xFF) / 255)
     }
 
-    /// A color with its own value in light and in dark mode, from `0xRRGGBB`.
-    static func dynamic(light: UInt32, dark: UInt32) -> Color {
-        Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(rgb: dark) : UIColor(rgb: light) })
-    }
+    /// The app is light-only for now (the design has no dark palette): the light value always, whatever the system setting. `dark` is kept for when a dark palette is designed.
+    static func dynamic(light: UInt32, dark: UInt32) -> Color { Color(rgb: light) }
 }
 
 private extension UIColor {

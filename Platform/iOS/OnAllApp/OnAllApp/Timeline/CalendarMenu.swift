@@ -26,18 +26,24 @@ struct TransactionRef: Identifiable { let id: LedgerEntryID }
 struct CalendarMenu: View {
     @Binding var style: CalendarStyle
     let onAdd: () -> Void
+    var onAddEvent: () -> Void = {}
     let onOpen: (LedgerDestination) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
                 segment("list", on: false) { onOpen(.list) }
-                segment("cal", on: true) {}.onLongPressGesture { style = style.next }
+                segment("cal", on: true) {}
             }
             .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
             .padding(.trailing, 6)
             icon("srch") {}
-            icon("plus", action: onAdd)
+            Menu {
+                Button { onAddEvent() } label: { Text("일정 추가") }
+                Button { onAdd() } label: { Text("내역 추가") }
+            } label: {
+                LineIcon(name: "plus").foregroundStyle(Theme.textPrimary).frame(width: Theme.hitTarget, height: Theme.hitTarget).contentShape(Rectangle())
+            }
         }
     }
 
