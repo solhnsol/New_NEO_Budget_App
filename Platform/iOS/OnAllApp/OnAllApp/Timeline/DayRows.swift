@@ -375,22 +375,18 @@ private struct NowLine: View {
 struct LedgerEntryLoader: View {
     let id: LedgerEntryID
     let model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @State private var entry: LedgerListEntry?
     @State private var missing = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let entry {
-                    TransactionDetailView(entry: entry, model: model)
-                } else if missing {
-                    Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary)
-                } else {
-                    ProgressView()
-                }
+        Group {
+            if let entry {
+                TransactionDetailView(entry: entry, model: model)
+            } else if missing {
+                Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
             }
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
         }
         .task(id: model.overrideRevision) {
             let sections = await model.ledgerSections() ?? []

@@ -22,6 +22,7 @@ struct LedgerScreen: View {
     @State private var selection = LedgerSelection()
     @State private var sheet: SelectionSheet?
     @State private var isPickingEvent = false
+    @State private var openEntry: LedgerListEntry?
     @State private var isConfirmingDelete = false
     @State private var selectionNotice: String?
 
@@ -135,6 +136,7 @@ struct LedgerScreen: View {
                 SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large])
             }
         }
+        .sheet(item: $openEntry) { TransactionDetailView(entry: $0, model: model) }
         .fullScreenCover(isPresented: $isPickingEvent) {
             LedgerEventPicker(model: model, entries: selectedEntries, onApplied: endSelection)
         }
@@ -235,11 +237,8 @@ struct LedgerScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(selection.contains(entry.id) ? .isSelected : [])
         } else {
-            NavigationLink {
-                TransactionDetailView(entry: entry, model: model)
-            } label: {
-                label
-            }
+            Button { openEntry = entry } label: { label.contentShape(Rectangle()) }
+            .buttonStyle(.plain)
             .simultaneousGesture(LongPressGesture(minimumDuration: Theme.Motion.longPressSeconds).onEnded { _ in
                 Haptics.enterEdit()
                 withAnimation(Theme.Motion.select) { selection.begin(with: entry.id) }
