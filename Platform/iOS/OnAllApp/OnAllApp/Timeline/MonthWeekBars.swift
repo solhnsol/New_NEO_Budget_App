@@ -8,11 +8,11 @@ struct MonthWeekBars: View {
     let layout: MonthWeekLayout
     let color: (CalendarID) -> Color
 
-    static let laneHeight: CGFloat = 16
-    static let laneGap: CGFloat = 2
-    static let lanes = 2
+    nonisolated static let laneHeight: CGFloat = 16
+    nonisolated static let laneGap: CGFloat = 2
+    nonisolated static let lanes = 2
     /// The room the bars take under the day number.
-    static let height: CGFloat = CGFloat(lanes) * (laneHeight + laneGap)
+    nonisolated static let height: CGFloat = CGFloat(lanes) * (laneHeight + laneGap)
 
     var body: some View {
         GeometryReader { proxy in
@@ -42,7 +42,7 @@ struct EventDots: View {
     let events: [WeekStripEvent]
     let color: (CalendarID) -> Color
 
-    static let height: CGFloat = 9
+    nonisolated static let height: CGFloat = 9
 
     var body: some View {
         HStack(spacing: 3) {
