@@ -499,8 +499,24 @@ public enum IDKind: String, Sendable {
     case activity, allocation, obligation, amountGroup, settlement, settlementRequest, correctionGroup, expenseComponent
 }
 
+/// An activity with no calendar event behind it: a settlement bundle for transactions picked together without an event.
+/// The result's `activityID` says which activity it made.
+public struct CreateStandaloneActivityInput: Hashable, Sendable {
+    public let title: String
+    public let time: EventTimeRange
+    public let timeZoneIdentifier: String?
+    public let provenance: AssignmentProvenance
+    public init(title: String, time: EventTimeRange, timeZoneIdentifier: String? = nil, provenance: AssignmentProvenance) {
+        self.title = title
+        self.time = time
+        self.timeZoneIdentifier = timeZoneIdentifier
+        self.provenance = provenance
+    }
+}
+
 public enum CalendarCommand: Hashable, Sendable {
     case createEvent(CreateEventInput)
+    case createStandaloneActivity(CreateStandaloneActivityInput)
     case moveEvent(MoveEventInput)
     case resizeEvent(ResizeEventInput)
     case changeAllDay(ChangeAllDayInput)

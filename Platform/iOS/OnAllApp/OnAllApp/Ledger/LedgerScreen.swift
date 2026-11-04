@@ -26,12 +26,13 @@ struct LedgerScreen: View {
     @State private var selectionNotice: String?
 
     enum SelectionSheet: Identifiable {
-        case category, tag, settle(CalendarEventKey)
+        case category, tag, settle(CalendarEventKey), settleActivity(ActivityID)
         var id: String {
             switch self {
             case .category: "category"
             case .tag: "tag"
             case let .settle(key): "settle-" + key.id
+            case let .settleActivity(id): "settle-activity-" + id.rawValue
             }
         }
     }
@@ -124,6 +125,8 @@ struct LedgerScreen: View {
                 .onAllSelectionSheet()
             case let .settle(key):
                 SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large])
+            case let .settleActivity(id):
+                SettlementSheet(model: model, activityID: id).presentationDetents([.medium, .large])
             }
         }
         .fullScreenCover(isPresented: $isPickingEvent) {
@@ -269,23 +272,45 @@ struct LedgerScreen: View {
         endSelection()
     }
 
-    /// Settling is done per event (the settlement sheet splits an event's linked spending), so it opens for the one event every picked
-    /// transaction is in. Mixed or unlinked picks are asked to be put in an event first.
+    /// Settling splits what one activity cost, so it opens for the activity every picked transaction is already in (an event's, or a bundle's).
+    /// Transactions in no activity are put into a new standalone one (a bundle that is not on the calendar) first. A mix of the two is refused.
     private func settleSelected() async {
-        let activities = Set(selectedEntries.flatMap { $0.portions.compactMap(\.activityID) })
-        let everyOneLinked = selectedEntries.allSatisfy { entry in entry.portions.contains { $0.activityID != nil } }
-        guard everyOneLinked, activities.count == 1, let activity = activities.first, let first = selectedEntries.first else {
-            selectionNotice = "같은 일정에 들어 있는 거래만 정산할 수 있어요. 먼저 '일정'에서 한 일정으로 모아 주세요."
+        let picked = selectedEntries
+        guard let first = picked.first else { return }
+        let activities = Set(picked.flatMap { $0.portions.compactMap(\.activityID) })
+        let linked = picked.filter { entry in entry.portions.contains { $0.activityID != nil } }
+        if linked.isEmpty {
+            await settleAsBundle(picked)
+        } else if linked.count == picked.count, activities.count == 1, let activity = activities.first {
+            let day = model.dayZone.localDate(of: first.transaction.occurredAtUnixMilliseconds)
+            let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
+            if let block = timelines.flatMap(\.blocks).first(where: { $0.activity?.activityID == activity }) {
+                sheet = .settle(block.eventKey)
+            } else {
+                sheet = .settleActivity(activity)
+            }
+        } else {
+            selectionNotice = "일정이나 묶음에 들어 있는 거래는 같은 곳에 있는 것끼리만 정산할 수 있어요. '일정'에서 먼저 모아 주세요."
+        }
+    }
+
+    private func settleAsBundle(_ picked: [LedgerListEntry]) async {
+        let times = picked.map(\.transaction.occurredAtUnixMilliseconds)
+        guard let start = times.min(), let end = times.max(), let range = try? TimedRange(startUnixMilliseconds: start, endUnixMilliseconds: end + 60_000) else { return }
+        let name = picked.first?.transaction.title ?? "거래"
+        let title = picked.count > 1 ? "\(name) 외 \(picked.count - 1)건" : name
+        let provenance = ActivityEditing.provenance(now: model.nowMilliseconds)
+        let created = await model.perform(.createStandaloneActivity(CreateStandaloneActivityInput(
+            title: title, time: .timed(range), timeZoneIdentifier: model.dayZone.identifier, provenance: provenance
+        )))
+        guard case let .applied(applied)? = created, let id = applied.activityID else { selectionNotice = "정산을 만들지 못했어요. 다시 시도해 주세요."; return }
+        for entry in picked {
+            let linked = await model.perform(.linkTransaction(LinkTransactionInput(transactionID: entry.id, target: .activity(id), provenance: provenance)))
+            if case .applied? = linked { continue }
+            selectionNotice = "일부 거래를 묶지 못했어요. 다시 시도해 주세요."
             return
         }
-        let day = model.dayZone.localDate(of: first.transaction.occurredAtUnixMilliseconds)
-        let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
-        let block = timelines.flatMap(\.blocks).first { $0.activity?.activityID == activity }
-        guard let block else {
-            selectionNotice = "이 일정을 찾지 못했어요. 일정에서 정산해 주세요."
-            return
-        }
-        sheet = .settle(block.eventKey)
+        sheet = .settleActivity(id)
     }
 
     private var nettedByDay: [LocalDate: [String: Int64]] { NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone) }

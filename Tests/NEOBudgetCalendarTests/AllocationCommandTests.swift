@@ -165,3 +165,19 @@ private func applied(_ outcome: CalendarCommandOutcome) -> AppliedCommand? {
     #expect((await h.life()).allocations(forActivity: id).count == 2)
     #expect(await h.service.perform(set("tx10", [AllocationPartInput(target: .activity(.activity(ActivityID(rawValue: "ghost"))), amount: .exact(1))])) == .rejected(.activityNotFound))
 }
+
+@Test func transactionsCanBeLinkedToAStandaloneActivityWithoutAnEvent() async throws {
+    let h = harness()
+    let range = try TimedRange(startUnixMilliseconds: at(today, 12), endUnixMilliseconds: at(today, 13))
+    let created = await h.service.perform(.createStandaloneActivity(
+        CreateStandaloneActivityInput(title: "점심 모임", time: .timed(range), provenance: userProvenance())
+    ))
+    let id = try #require(applied(created)?.activityID)
+    _ = await h.service.perform(.linkTransaction(LinkTransactionInput(transactionID: txID("tx80"), target: .activity(id), provenance: userProvenance())))
+    let life = await h.life()
+    #expect(life.activities[id]?.displayTitle == "점심 모임")
+    #expect(life.allocations(forActivity: id).count == 1)
+    // An empty name is refused.
+    let empty = await h.service.perform(.createStandaloneActivity(CreateStandaloneActivityInput(title: "  ", time: .timed(range), provenance: userProvenance())))
+    #expect(applied(empty) == nil)
+}

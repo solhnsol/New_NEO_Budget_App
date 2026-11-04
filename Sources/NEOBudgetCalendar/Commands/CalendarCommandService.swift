@@ -200,6 +200,7 @@ public actor CalendarCommandService {
     public func perform(_ command: CalendarCommand) async -> CalendarCommandOutcome {
         switch command {
         case let .createEvent(input): return await createEvent(input)
+        case let .createStandaloneActivity(input): return createStandaloneActivity(input)
         case let .moveEvent(input): return await moveEvent(input)
         case let .resizeEvent(input): return await resizeEvent(input)
         case let .changeAllDay(input): return await changeAllDay(input)
@@ -266,6 +267,13 @@ public actor CalendarCommandService {
         case let .failure(rejection):
             return .partiallyApplied(AppliedCommand(event: event), localFailure: rejection)
         }
+    }
+
+    private func createStandaloneActivity(_ input: CreateStandaloneActivityInput) -> CalendarCommandOutcome {
+        guard configuration.assignmentPolicy.accepts(input.provenance) else { return .rejected(.provenanceRejected) }
+        let info = StandaloneActivityInfo(title: input.title, time: input.time, timeZoneIdentifier: input.timeZoneIdentifier)
+        let activity = Activity(id: ActivityID(rawValue: makeID(.activity)), origin: .standalone(info), createdAtUnixMilliseconds: now())
+        return applyLocal([.createActivity(activity)], activityID: activity.id)
     }
 
     private func moveEvent(_ input: MoveEventInput) async -> CalendarCommandOutcome {

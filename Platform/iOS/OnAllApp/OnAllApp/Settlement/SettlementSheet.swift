@@ -7,7 +7,8 @@ import SwiftUI
 /// only a preview (`EventSettlementPlan`) until "정산 요청 만들기" saves them as obligations, which is also when a deposit can settle them.
 struct SettlementSheet: View {
     let model: AppModel
-    let eventKey: CalendarEventKey
+    /// An event's activity, or a standalone one (transactions settled together without an event).
+    let target: ActivityTarget
     @Environment(\.dismiss) private var dismiss
     @State private var life: LifeState?
     /// Hand-set shares, by person, as typed (whole won).
@@ -18,16 +19,26 @@ struct SettlementSheet: View {
     /// The share being typed; the number pad has no return key, so the keyboard bar's 완료 clears it.
     @FocusState private var typingShare: PersonID?
 
+    init(model: AppModel, eventKey: CalendarEventKey) {
+        self.model = model
+        target = .event(eventKey)
+    }
+
+    init(model: AppModel, activityID: ActivityID) {
+        self.model = model
+        target = .activity(activityID)
+    }
+
     var body: some View {
         NavigationStack {
             Group {
-                if let block {
-                    form(block)
+                if let subject {
+                    form(subject)
                 } else {
-                    ContentUnavailableView("일정을 찾을 수 없어요", systemImage: "calendar.badge.exclamationmark")
+                    ContentUnavailableView("정산할 거래를 찾을 수 없어요", systemImage: "calendar.badge.exclamationmark")
                 }
             }
-            .navigationTitle((block?.title).map { $0 + " 정산" } ?? "정산")
+            .navigationTitle((subject?.title).map { $0 + " 정산" } ?? "정산")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } }
@@ -42,9 +53,30 @@ struct SettlementSheet: View {
 
     // MARK: What is stored
 
-    private var block: EventBlock? { model.locate(eventKey)?.block }
+    /// What the sheet is about: the event or the standalone bundle, its name, and what the user paid for it.
+    private struct Subject {
+        let title: String
+        let hasSpend: Bool
+        let total: (minorUnits: Int64, currency: String)?
+    }
 
-    private var activity: Activity? { life?.activity(forEvent: eventKey) }
+    private var subject: Subject? {
+        switch target {
+        case let .event(key):
+            guard let block = model.locate(key)?.block else { return nil }
+            return Subject(title: block.title, hasSpend: !block.allocatedSpend.isEmpty, total: total(block))
+        case let .activity(id):
+            guard let life, let found = life.activities[id] else { return nil }
+            return Subject(title: found.displayTitle, hasSpend: !life.allocations(forActivity: id).isEmpty, total: total(of: id, in: life))
+        }
+    }
+
+    private var activity: Activity? {
+        switch target {
+        case let .event(key): return life?.activity(forEvent: key)
+        case let .activity(id): return life?.activities[id]
+        }
+    }
     private var me: Person? { life?.persons.values.first(where: \.isSelf) }
 
     private var others: [(id: PersonID, name: String)] {
@@ -62,6 +94,19 @@ struct SettlementSheet: View {
         return (spend.knownMinorUnits - (refunds?.knownMinorUnits ?? 0), spend.currency)
     }
 
+    /// The same for a standalone activity, from its allocations: spending less refunds. `nil` while any portion is not exact.
+    private func total(of id: ActivityID, in life: LifeState) -> (minorUnits: Int64, currency: String)? {
+        var sum: Int64 = 0
+        var currency: String?
+        for allocation in life.allocations(forActivity: id) {
+            guard case let .exact(value) = allocation.amount.knowledge, let set = life.allocationSet(for: allocation.transactionID) else { return nil }
+            guard currency == nil || currency == set.transactionTotal.currency else { return nil }
+            currency = set.transactionTotal.currency
+            sum += set.flow == .refund ? -value : value
+        }
+        return currency.map { (sum, $0) }
+    }
+
     private var obligations: [Obligation] {
         guard let life, let activity else { return [] }
         return life.obligations(forActivity: activity.id).filter { $0.status != .cancelled }
@@ -76,17 +121,17 @@ struct SettlementSheet: View {
 
     // MARK: The form
 
-    private func makePlan(_ block: EventBlock, fixed: [PersonID: Int64]) -> EventSettlementPlan? {
-        total(block).flatMap { try? EventSettlementPlan.make(
+    private func makePlan(_ subject: Subject, fixed: [PersonID: Int64]) -> EventSettlementPlan? {
+        subject.total.flatMap { try? EventSettlementPlan.make(
             totalMinorUnits: $0.minorUnits, currency: $0.currency, me: me?.id ?? PersonID(rawValue: "~me"), others: others,
             headcount: activity?.headcount?.value, fixed: fixed
         ) }
     }
 
     /// Why there is nothing to split yet, under the amount; `nil` when there is.
-    private func paidNote(_ block: EventBlock, _ paid: (minorUnits: Int64, currency: String)?) -> String? {
-        if block.allocatedSpend.isEmpty { return "이 일정에 연결된 거래가 없어요. 일정에 거래를 연결하면 나눌 수 있어요." }
-        guard let paid else { return "일정에 연결된 거래 금액이 모두 확정되면 나눌 수 있어요." }
+    private func paidNote(_ subject: Subject, _ paid: (minorUnits: Int64, currency: String)?) -> String? {
+        if !subject.hasSpend { return "연결된 거래가 없어요. 거래를 연결하면 나눌 수 있어요." }
+        guard let paid else { return "연결된 거래 금액이 모두 확정되면 나눌 수 있어요." }
         return paid.minorUnits > 0 ? nil : "환불을 빼면 나눌 금액이 없어요."
     }
 
@@ -96,19 +141,19 @@ struct SettlementSheet: View {
         return (max(activity?.headcount?.value ?? 0, least), least)
     }
 
-    private func form(_ block: EventBlock) -> some View {
-        let paid = total(block)
+    private func form(_ subject: Subject) -> some View {
+        let paid = subject.total
         // Hand-set amounts over the total keep the rows (and the field being typed in) on screen with equal shares, and say what is wrong.
-        let planAsTyped = makePlan(block, fixed: fixed)
-        let isOverTotal = planAsTyped == nil && !fixed.isEmpty && makePlan(block, fixed: [:]) != nil
-        let plan = planAsTyped ?? (isOverTotal ? makePlan(block, fixed: [:]) : nil)
+        let planAsTyped = makePlan(subject, fixed: fixed)
+        let isOverTotal = planAsTyped == nil && !fixed.isEmpty && makePlan(subject, fixed: [:]) != nil
+        let plan = planAsTyped ?? (isOverTotal ? makePlan(subject, fixed: [:]) : nil)
         let isLocked = !obligations.isEmpty
         return Form {
             Section {
                 AmountHero(
                     label: "결제한 금액",
-                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? (block.allocatedSpend.isEmpty ? "아직 없어요" : "아직 몰라요"),
-                    note: paidNote(block, paid)
+                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? (!subject.hasSpend ? "아직 없어요" : "아직 몰라요"),
+                    note: paidNote(subject, paid)
                 )
             }
             .onAllCardRow()
@@ -116,11 +161,11 @@ struct SettlementSheet: View {
             Section {
                 PeoplePicker(
                     people: model.catalog.people, chosen: Set(others.map(\.id)), isLocked: isLocked,
-                    toggle: { id in run(ActivityEditing.setParticipant(id, on: !others.contains { $0.id == id }, event: eventKey, now: model.nowMilliseconds)) },
+                    toggle: { id in run(ActivityEditing.setParticipant(id, on: !others.contains { $0.id == id }, target: target, now: model.nowMilliseconds)) },
                     add: addPerson
                 )
                 HeadcountRow(value: headcount.value, least: headcount.least, isLocked: isLocked) {
-                    run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
+                    run(.setHeadcount(SetHeadcountInput(target: target, headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
                 }
             } header: {
                 Text("함께한 사람")
@@ -247,7 +292,7 @@ struct SettlementSheet: View {
         Task {
             let person = Person(id: PersonID(rawValue: ActivityEditing.newID(prefix: "person")), displayName: name)
             _ = await model.perform(.upsertPerson(person))
-            run(ActivityEditing.setParticipant(person.id, on: true, event: eventKey, now: model.nowMilliseconds))
+            run(ActivityEditing.setParticipant(person.id, on: true, target: target, now: model.nowMilliseconds))
         }
     }
 
@@ -264,7 +309,7 @@ struct SettlementSheet: View {
         }
         guard let meID else { return fail() }
         // The plan was made before the user was a person; the shares do not depend on who the user is.
-        let input = plan.component(for: eventKey, me: meID, existing: existingComponent, provenance: provenance)
+        let input = plan.component(for: target, me: meID, existing: existingComponent, provenance: provenance)
         guard case let .applied(applied)? = await model.perform(.upsertExpenseComponent(input)), let componentID = applied.componentID ?? existingComponent else { return fail() }
         guard case .applied? = await model.perform(.generateObligations(GenerateObligationsInput(componentID: componentID, provenance: provenance))) else { return fail() }
         fixedText = [:]

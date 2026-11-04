@@ -64,9 +64,13 @@ struct EventSettlementPlan: Equatable {
 
     /// The expense component that asks each named person for exactly their share (the user is the payer and keeps the rest).
     func component(for event: CalendarEventKey, me: PersonID, existing: ExpenseComponentID?, provenance: AssignmentProvenance) -> UpsertExpenseComponentInput {
+        component(for: .event(event), me: me, existing: existing, provenance: provenance)
+    }
+
+    func component(for target: ActivityTarget, me: PersonID, existing: ExpenseComponentID?, provenance: AssignmentProvenance) -> UpsertExpenseComponentInput {
         let asked = others.filter { $0.minorUnits > 0 }
         return UpsertExpenseComponentInput(
-            componentID: existing, activity: .event(event), label: "정산", currency: currency, amount: .exact(totalMinorUnits), payerID: me,
+            componentID: existing, activity: target, label: "정산", currency: currency, amount: .exact(totalMinorUnits), payerID: me,
             participants: [me] + asked.map(\.personID),
             policy: asked.isEmpty ? nil : SettlementPolicyOverride(splitRule: .fixedAmounts(Dictionary(uniqueKeysWithValues: asked.map { ($0.personID, $0.minorUnits) }))),
             provenance: provenance

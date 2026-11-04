@@ -54,7 +54,7 @@ public struct CalendarEventAssociation: Codable, Hashable, Sendable {
 }
 
 /// An Activity that has no calendar event behind it (for example one observed some other way in future).
-/// Nothing creates these yet; the type exists so Activity is not hard-wired to a calendar.
+/// Made by `CalendarCommand.createStandaloneActivity` (a settlement bundle for transactions picked without an event); the type keeps Activity from being hard-wired to a calendar.
 public struct StandaloneActivityInfo: Codable, Hashable, Sendable {
     public let title: String
     public let time: EventTimeRange

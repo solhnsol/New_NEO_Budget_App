@@ -49,7 +49,11 @@ enum ActivityEditing {
     }
 
     static func setParticipant(_ person: PersonID, on: Bool, event: CalendarEventKey, now: Int64) -> CalendarCommand {
-        let input = ParticipantInput(activity: .event(event), personID: person, provenance: provenance(now: now))
+        setParticipant(person, on: on, target: .event(event), now: now)
+    }
+
+    static func setParticipant(_ person: PersonID, on: Bool, target: ActivityTarget, now: Int64) -> CalendarCommand {
+        let input = ParticipantInput(activity: target, personID: person, provenance: provenance(now: now))
         return on ? .addParticipant(input) : .removeParticipant(input)
     }
 
