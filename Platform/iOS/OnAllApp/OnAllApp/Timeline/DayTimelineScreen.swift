@@ -17,7 +17,11 @@ struct DayTimelineScreen: View {
     @State private var jumpDays: [StripDay] = []
     @State private var isChangingDay = false
     @AppStorage(CalendarStyle.storageKey) private var styleRaw = CalendarStyle.pager.rawValue
-    @State private var ledgerDestination: LedgerDestination?
+    /// The calendar's list / calendar switch: the day as a list (events and transactions in order) or as the rail.
+    @AppStorage("calendarList") private var showsList = false
+    /// What others still owe the user, in KRW; the 정산 chip under the month in the list.
+    @State private var receivable: Int64 = 0
+    @State private var showsSettlement = false
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
@@ -172,11 +176,16 @@ struct DayTimelineScreen: View {
                         await model.loadMissing()
                     }
                 }
-                DayPagerView(
-                    model: model, topInset: chromeFrame.maxY,
-                    onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                )
-                .padding(.horizontal, Theme.cardMargin)
+                if showsList {
+                    DayListView(model: model, topInset: chromeFrame.maxY, onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) })
+                        .padding(.horizontal, Theme.cardMargin)
+                } else {
+                    DayPagerView(
+                        model: model, topInset: chromeFrame.maxY,
+                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+                    )
+                    .padding(.horizontal, Theme.cardMargin)
+                }
             }
           }
           MonthScrim(state: unfold).zIndex(0.5)
@@ -190,7 +199,7 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) })
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
           } strip: { opened in
             WeekStripView(
@@ -231,8 +240,12 @@ struct DayTimelineScreen: View {
         }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
-        .fullScreenCover(item: $ledgerDestination) { destination in
-            LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
+        .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
+        .task(id: model.dataGeneration) {
+            if let life = await model.lifeState() {
+                let summaries = life.settlementSummaries(nowUnixMilliseconds: model.nowMilliseconds + model.displayClockOffsetMilliseconds, overdueAfterDays: 14)
+                receivable = summaries.filter { $0.currency == "KRW" }.reduce(0) { $0 + $1.receivableMinorUnits }
+            }
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
         .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key) }
@@ -270,9 +283,12 @@ private struct DayHeader: View {
     let model: AppModel
     let unfold: MonthUnfoldState
     let menu: CalendarMenu
+    var receivable: Int64 = 0
+    var onSettlement: () -> Void = {}
     var onTitle: () -> Void = {}
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 0) {
             // Only the month: the days themselves are named once, over their columns.
             Text("\((unfold.isOpen ? unfold.month : model.selectedDay).month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -283,6 +299,16 @@ private struct DayHeader: View {
         }
         .padding(.leading, 24).padding(.trailing, 14)
         .padding(.top, 16)
+        if receivable > 0 {
+            Button(action: onSettlement) {
+                Text("정산 받을 돈 \(Formatting.money(receivable, currency: "KRW")) ›").font(Theme.Typo.chip).foregroundStyle(Theme.accentStrong)
+                    .padding(.horizontal, Theme.Space.m + 2).frame(height: Theme.chipHeight)
+                    .background(Theme.accentSoft, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.leading, 24).padding(.top, Theme.Space.s)
+        }
+        }
     }
 }
 
