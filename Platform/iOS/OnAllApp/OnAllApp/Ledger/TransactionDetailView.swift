@@ -38,8 +38,7 @@ struct TransactionDetailView: View {
             if !entry.offsets.isEmpty, let net = entry.netMinorUnits { offsets(entry, net: net, currency: currency) }
             if transaction.flow == .spend { eventSection(entry, linked: linked, linkedIDs: linkedIDs) }
             SheetSectionLabel("상세")
-            SheetRow(label: "결제 시각", value: Formatting.shortDate(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
-                + " " + Formatting.time(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
+            SheetRow(label: "결제 시각", value: dayText(transaction.occurredAtUnixMilliseconds) + " " + Formatting.clock24(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier)
                 + (transaction.timePrecision == .approximate ? " (알림 기준)" : ""))
             SheetRow(label: "분류", value: CategoryIcon.name(for: entry.categoryID), showsChevron: true) { editing = true }
             SheetRow(label: "메모", value: entry.override?.memo.flatMap { $0.isEmpty ? nil : $0 }) { editing = true }
@@ -47,7 +46,7 @@ struct TransactionDetailView: View {
         } button: {
             Button("확인") { dismiss() }.buttonStyle(.onAllPrimary)
         }
-        .onAllSheet()
+        .onAllSheet(detents: [.large])
         .sheet(isPresented: $editing) { TransactionEditSheet(entry: current, model: model) }
         .sheet(isPresented: $choosingEvent) {
             TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs)
@@ -58,6 +57,11 @@ struct TransactionDetailView: View {
             let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
             nearby = ActivityEditing.eventChoices(near: entry.transaction.occurredAtUnixMilliseconds, in: timelines)
         }
+    }
+
+    private func dayText(_ unixMilliseconds: Int64) -> String {
+        let day = model.dayZone.localDate(of: unixMilliseconds)
+        return "\(day.month)월 \(day.day)일"
     }
 
     // MARK: Event
@@ -94,7 +98,7 @@ struct TransactionDetailView: View {
             RoundedRectangle(cornerRadius: 2).fill(Color(hex: choice.colorHex) ?? Theme.CalendarTint.blue.color).frame(width: 4, height: 40)
             VStack(alignment: .leading, spacing: Theme.Space.xxs) {
                 Text(choice.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(Formatting.timeRange(choice.startUnixMilliseconds, choice.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
+                Text(Formatting.range24(choice.startUnixMilliseconds, choice.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
                     .font(Theme.Typo.label).foregroundStyle(Theme.textTertiary)
             }
             Spacer(minLength: Theme.Space.s)

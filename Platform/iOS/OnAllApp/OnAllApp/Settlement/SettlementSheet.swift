@@ -27,7 +27,7 @@ struct SettlementSheet: View {
             }
         }
         .background(Theme.surface)
-        .onAllSheet()
+        .onAllSheet(detents: [.large])
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -131,6 +131,7 @@ struct SettlementSheet: View {
             HeadcountRow(value: headcount.value, least: headcount.least, isLocked: isLocked) {
                 run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
             }
+            .padding(.top, Theme.Space.m)
         } button: {
             if isLocked {
                 Button("확인") { dismiss() }.buttonStyle(.onAllPrimary)

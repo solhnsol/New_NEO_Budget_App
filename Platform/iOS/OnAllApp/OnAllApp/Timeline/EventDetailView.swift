@@ -28,14 +28,14 @@ struct EventDetailView: View {
                 Button("확인") { dismiss() }.buttonStyle(.onAllPrimary)
             }
         }
-        .onAllSheet()
+        .onAllSheet(detents: [.large])
     }
 
     // MARK: Event
 
     @ViewBuilder
     private func event(_ block: EventBlock) -> some View {
-        let time = Formatting.timeRange(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier)
+        let time = Formatting.range24(block.startUnixMilliseconds, block.endUnixMilliseconds, zoneIdentifier: zoneIdentifier)
         let place = ExpandedBlockPlan.metaRows(for: block).first { $0.label == "장소" }?.value
         SheetTitleBlock(
             title: block.title,
@@ -116,7 +116,7 @@ struct EventDetailView: View {
         SheetTitleBlock(title: marker.title ?? "지출", lines: [])
         Text((isRefund ? "+" : "−") + Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency))
             .font(Theme.Typo.hero).foregroundStyle(Theme.amountColor(isIncoming: isRefund)).padding(.vertical, Theme.Space.xl)
-        SheetRow(label: "시각", value: Formatting.time(marker.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (marker.timePrecision == .approximate ? " (알림 기준)" : ""))
+        SheetRow(label: "시각", value: Formatting.clock24(marker.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (marker.timePrecision == .approximate ? " (알림 기준)" : ""))
         SheetRow(label: "일정", value: marker.allocations.isEmpty ? nil : "\(marker.allocations.count)개에 나눔")
     }
 
@@ -126,7 +126,7 @@ struct EventDetailView: View {
         SheetTitleBlock(title: item.title ?? "거래", lines: [])
         Text((isRefund ? "+" : "−") + Formatting.money(item.transactionAmount.minorUnits, currency: item.transactionAmount.currency))
             .font(Theme.Typo.hero).foregroundStyle(Theme.amountColor(isIncoming: isRefund)).padding(.vertical, Theme.Space.xl)
-        SheetRow(label: "시각", value: Formatting.time(item.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (item.timePrecision == .approximate ? " (알림 기준)" : ""))
+        SheetRow(label: "시각", value: Formatting.clock24(item.occurredAtUnixMilliseconds, zoneIdentifier: zoneIdentifier) + (item.timePrecision == .approximate ? " (알림 기준)" : ""))
         if let eventTitle { SheetRow(label: "연결된 일정", value: eventTitle) }
     }
 

@@ -133,7 +133,7 @@ struct LedgerScreen: View {
                 }
                 .onAllSelectionSheet()
             case let .settle(key):
-                SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large])
+                SettlementSheet(model: model, eventKey: key)
             }
         }
         .sheet(item: $openEntry) { TransactionDetailView(entry: $0, model: model) }

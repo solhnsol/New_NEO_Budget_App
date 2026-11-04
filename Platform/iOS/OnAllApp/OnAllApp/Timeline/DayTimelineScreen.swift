@@ -229,7 +229,6 @@ struct DayTimelineScreen: View {
                     settleEvent = block.eventKey
                 }
             })
-                .presentationDetents([.medium, .large])
         }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
@@ -238,7 +237,7 @@ struct DayTimelineScreen: View {
             LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
         }
         .sheet(item: $infoEvent) { key in EventActivitySheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
-        .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large]) }
+        .sheet(item: $settleEvent) { key in SettlementSheet(model: model, eventKey: key) }
         // A rename on the fixed grid brings the keyboard up over the grid; the screen keeps its layout (the grid's partition is planned for its room).
         .ignoresSafeArea(.keyboard)
         .modifier(EditingPresentations(editor: model.editor, calendars: model.calendars, zoneIdentifier: zoneIdentifier))

@@ -104,6 +104,19 @@ struct SheetTitleBlock: View {
 }
 
 extension Formatting {
+    /// `14:30`, 24-hour like the timeline and the mockups (`Formatting.time` writes `오후 2:30`).
+    static func clock24(_ unixMilliseconds: Int64, zoneIdentifier: String) -> String {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: zoneIdentifier) ?? .current
+        let parts = calendar.dateComponents([.hour, .minute], from: Date(timeIntervalSince1970: Double(unixMilliseconds) / 1_000))
+        return String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+    }
+
+    /// `12:15 – 13:30`.
+    static func range24(_ start: Int64, _ end: Int64, zoneIdentifier: String) -> String {
+        clock24(start, zoneIdentifier: zoneIdentifier) + " – " + clock24(end, zoneIdentifier: zoneIdentifier)
+    }
+
     /// Money spent as the sheets write it: `−9,500` (a true minus sign, no unit).
     static func spent(_ minorUnits: Int64) -> String { "−" + grouped(minorUnits) }
 }
