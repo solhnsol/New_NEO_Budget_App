@@ -42,7 +42,59 @@ struct LedgerScreen: View {
         _mode = State(initialValue: mode)
     }
 
-    var body: some View {
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        if selection.isActive {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
+                    Text("\(selection.ids.count)건 선택").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
+                    Text("합계 \(Formatting.money(selectedTotal, currency: "KRW"))").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) { Button("취소") { endSelection() } }
+        } else {
+            ToolbarItem(placement: .principal) {
+                Picker("보기", selection: $mode) {
+                    Text("목록").tag(Mode.spending)
+                    Text("계좌·카드").tag(Mode.accounts)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+            }
+            ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    SettlementHubView(model: model)
+                } label: {
+                    Label("정산", systemImage: "arrow.left.arrow.right.circle")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    PeopleListView(model: model)
+                } label: {
+                    Label("사람", systemImage: "person.2")
+                }
+            }
+            if !model.isDemo {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        IntakeInboxView(model: model)
+                    } label: {
+                        Label("받은 알림", systemImage: "tray")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var selectionBar: some View {
+        if selection.isActive {
+            let slide: AnyTransition = .move(edge: .bottom).combined(with: .opacity)
+            LedgerSelectionBar(perform: perform).transition(slide)
+        }
+    }
+
+    private var stack: some View {
         NavigationStack {
             Group {
                 switch mode {
@@ -53,59 +105,16 @@ struct LedgerScreen: View {
             .tint(Theme.accent)
             .navigationTitle("가계부")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if selection.isActive {
-                    ToolbarItem(placement: .principal) {
-                        VStack(spacing: 2) {
-                            Text("\(selection.ids.count)건 선택").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
-                            Text("합계 " + Formatting.money(selectedTotal, currency: "KRW")).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) { Button("취소") { endSelection() } }
-                } else {
-                    ToolbarItem(placement: .principal) {
-                        Picker("보기", selection: $mode) {
-                            Text("목록").tag(Mode.spending)
-                            Text("계좌·카드").tag(Mode.accounts)
-                        }
-                        .pickerStyle(.segmented)
-                        .frame(maxWidth: 220)
-                    }
-                    ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            SettlementHubView(model: model)
-                        } label: {
-                            Label("정산", systemImage: "arrow.left.arrow.right.circle")
-                        }
-                    }
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            PeopleListView(model: model)
-                        } label: {
-                            Label("사람", systemImage: "person.2")
-                        }
-                    }
-                    if !model.isDemo {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            NavigationLink {
-                                IntakeInboxView(model: model)
-                            } label: {
-                                Label("받은 알림", systemImage: "tray")
-                            }
-                        }
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if selection.isActive {
-                    LedgerSelectionBar(perform: perform).transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
+            .toolbar { toolbarContent }
+            .safeAreaInset(edge: .bottom, spacing: 0) { selectionBar }
             .animation(Theme.Motion.actionBar, value: selection.isActive)
         }
-        .sheet(item: $sheet) { sheet in
-            switch sheet {
+    }
+
+    private var sheeted: some View {
+        stack
+        .sheet(item: $sheet) { item in
+            switch item {
             case .category:
                 LedgerCategorySheet(count: selectedEntries.count) { category in
                     model.editMany(selectedEntries.map(\.id)) { $0.category = category }
@@ -140,21 +149,29 @@ struct LedgerScreen: View {
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
         .task(id: [model.dataGeneration, model.overrideRevision]) { await load() }
+    }
+
+    var body: some View {
+        sheeted
         .alert("정산으로 합칠까요?", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })) {
             TextField("보낸 사람", text: $senderName)
             Button("합치기") { if let merging { Task { await merge(merging.deposit, onto: merging.purchase) } } }
             Button("취소", role: .cancel) {}
         } message: {
-            if let merging {
-                Text("\(Formatting.money(merging.deposit.amount.minorUnits, currency: merging.deposit.amount.currency))을 "
-                     + "\(merging.purchase.transaction.title ?? "이 지출")에서 돌려받은 돈으로 기록해요. 통장 내역은 그대로예요.")
-            }
+            Text(mergeQuestion)
         }
         .alert("합치지 못했어요", isPresented: Binding(get: { mergeMessage != nil }, set: { if !$0 { mergeMessage = nil } })) {
             Button("확인", role: .cancel) {}
         } message: {
             Text(mergeMessage ?? "")
         }
+    }
+
+    private var mergeQuestion: String {
+        guard let merging else { return "" }
+        let money = Formatting.money(merging.deposit.amount.minorUnits, currency: merging.deposit.amount.currency)
+        let title = merging.purchase.transaction.title ?? "이 지출"
+        return "\(money)을 \(title)에서 돌려받은 돈으로 기록해요. 통장 내역은 그대로예요."
     }
 
     @ViewBuilder
