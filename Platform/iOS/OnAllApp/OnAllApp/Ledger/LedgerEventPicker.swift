@@ -73,7 +73,7 @@ struct LedgerEventPicker: View {
             timelines = Dictionary(read.compactMap { stripDay in stripDay.timeline.map { (stripDay.day, $0) } }, uniquingKeysWith: { $1 })
         }
         .sheet(isPresented: $isCreating) {
-            NewEventSheet(model: model, day: day, suggestedStart: suggestedStart) { key, created in
+            LedgerNewEventSheet(model: model, day: day, suggestedStart: suggestedStart) { key, created in
                 day = model.dayZone.localDate(of: created)
                 choice = .event(key)
                 tick += 1
@@ -292,7 +292,7 @@ struct LedgerEventPicker: View {
 }
 
 /// 새 일정 만들기: a small sheet with a title, a start time and a calendar. Saving makes the event and hands it back chosen.
-private struct NewEventSheet: View {
+private struct LedgerNewEventSheet: View {
     let model: AppModel
     let day: LocalDate
     let suggestedStart: Int64
