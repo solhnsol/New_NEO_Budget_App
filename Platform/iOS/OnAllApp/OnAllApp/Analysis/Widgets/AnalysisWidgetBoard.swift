@@ -77,7 +77,7 @@ struct AnalysisWidgetBoard: View {
                 }
                 if panel != .closed {
                     Theme.textPrimary.opacity(panelShown ? 0.42 : 0).ignoresSafeArea().onTapGesture { closePanel() }.allowsHitTesting(drag == nil)
-                    panelView(width: proxy.size.width - Theme.cardMargin * 2, height: proxy.size.height * 0.9)
+                    panelView(width: proxy.size.width - Theme.cardMargin * 2, height: proxy.size.height)
                         .offset(y: panelShown ? 0 : proxy.size.height)
                 }
                 if let drag {
@@ -336,6 +336,7 @@ struct AnalysisWidgetBoard: View {
                         .padding(.horizontal, 24).frame(minHeight: 64).contentShape(Rectangle())
                     }
                     .buttonStyle(.onAllRow)
+                    if topic != WidgetTopic.allCases.last { Divider().overlay(Theme.divider).padding(.horizontal, 24) }
                 }
             }
         }
@@ -363,9 +364,9 @@ struct AnalysisWidgetBoard: View {
             }
             .padding(.horizontal, Theme.cardMargin)
             ScrollView {
-                VStack(spacing: Theme.Space.l) {
+                VStack(spacing: Theme.Space.m) {
                     ForEach(variants) { spec in
-                        VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        VStack(alignment: .leading, spacing: Theme.Space.m) {
                             HStack {
                                 Text(spec.style.title).font(Theme.Typo.label).foregroundStyle(Theme.textPrimary)
                                 Spacer()
@@ -393,19 +394,59 @@ struct AnalysisWidgetBoard: View {
     }
 }
 
-/// The small picture beside a topic in the add list: a few bars, taller where the topic is about size over time.
+/// The small picture beside a topic in the add list: a miniature of how that topic is drawn.
 private struct Thumbnail: View {
     let topic: WidgetTopic
 
     var body: some View {
-        let heights: [CGFloat] = [0.4, 0.7, 0.5, 0.9, 0.6]
-        let shift = WidgetTopic.allCases.firstIndex(of: topic) ?? 0
-        HStack(alignment: .bottom, spacing: 4) {
-            ForEach(0..<5, id: \.self) { index in
-                RoundedRectangle(cornerRadius: 2, style: .continuous).fill(index == 3 ? Theme.accent : Theme.accentLine)
-                    .frame(width: 7, height: 28 * heights[(index + shift) % 5])
+        Group {
+            switch topic {
+            case .week, .monthTrend: bars
+            case .category, .activity, .pending: rows
+            case .calendar: split
+            default: number
             }
         }
-        .frame(width: 76, height: 40).background(Theme.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .frame(width: 76, height: 48).background(Theme.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var bars: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(Array([0.45, 0.3, 0.8, 0.5, 0.65, 1.0, 0.4].enumerated()), id: \.offset) { index, h in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(index == 5 ? Theme.accent : Theme.accentLine).frame(width: 6, height: 26 * h)
+            }
+        }
+    }
+
+    private var rows: some View {
+        VStack(spacing: 5) {
+            ForEach(Array([1.0, 0.6, 0.35].enumerated()), id: \.offset) { index, w in
+                HStack(spacing: 4) {
+                    Circle().fill(Theme.accentLine).frame(width: 7, height: 7)
+                    Capsule().fill(index == 0 ? Theme.accent : Theme.accentLine).frame(width: 36 * w, height: 4)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var split: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 1.5) {
+                ForEach(Array([27.0, 52, 9, 12].enumerated()), id: \.offset) { index, w in
+                    Rectangle().fill([Theme.CalendarTint.blue.color, Theme.CalendarTint.orange.color, Theme.CalendarTint.green.color, Theme.disabled][index]).frame(width: w * 0.5)
+                }
+            }
+            .clipShape(Capsule()).frame(height: 6)
+            Capsule().fill(Theme.accentLine).frame(width: 30, height: 4)
+        }
+    }
+
+    private var number: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Capsule().fill(Theme.disabled.opacity(0.6)).frame(width: 22, height: 3)
+            Capsule().fill(Theme.accent).frame(width: 44, height: 8)
+        }
     }
 }
