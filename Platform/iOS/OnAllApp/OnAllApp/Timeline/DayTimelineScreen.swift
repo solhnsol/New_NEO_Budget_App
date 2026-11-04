@@ -20,7 +20,6 @@ struct DayTimelineScreen: View {
     @State private var ledgerDestination: LedgerDestination?
     @State private var openTransaction: TransactionRef?
     @State private var addingTransaction = false
-    @State private var addingEvent = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -191,7 +190,7 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onAddEvent: { addingEvent = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(style: style, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }, onOpen: { ledgerDestination = $0 }), onTitle: { unfold.toggle(selected: model.selectedDay) })
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
           } strip: { opened in
             WeekStripView(
@@ -232,7 +231,6 @@ struct DayTimelineScreen: View {
         }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
-        .sheet(isPresented: $addingEvent) { EventCreateSheet(model: model).onAllSheet() }
         .fullScreenCover(item: $ledgerDestination) { destination in
             LedgerScreen(model: model, mode: destination == .accounts ? .accounts : .spending) { ledgerDestination = nil }
         }
@@ -370,14 +368,13 @@ private struct EditingPresentations: ViewModifier {
                 } message: {
                     Text("이 변경을 어디까지 적용할까요?")
                 }
-                .sheet(isPresented: nameBinding) {
-                    if let preview = editor.preview {
+                .overlay {
+                    if nameBinding.wrappedValue, let preview = editor.preview {
                         NewEventSheet(
                             range: preview.range, zoneIdentifier: zoneIdentifier, calendars: calendars,
                             onSave: { title, calendarID in editor.confirmCreate(title: title, calendarID: calendarID) },
                             onCancel: { editor.cancel() }
                         )
-                        .presentationDetents([.medium])
                     }
                 }
         )

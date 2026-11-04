@@ -27,6 +27,8 @@ final class AppModel {
     }
 
     private(set) var phase: Phase = .loading
+    /// The new-event panel is open. Drawn by `RootTabs`, over the tab bar, so it can rest on the keyboard.
+    var creatingEvent = false
     private(set) var selectedDay: LocalDate
     /// The first of the two days on screen. `selectedDay` is its date.
     var timeline: DayTimeline? { cache[selectedDay] }
@@ -574,13 +576,21 @@ final class AppModel {
     }
 
     /// Creates the event the new-event sheet describes (all-day, open end or timed; `NewEventInput.plan`). `nil` on success, else what to tell the person.
-    func createEvent(_ input: NewEventInput) async -> String? {
+    func createEvent(_ input: NewEventInput, location: String? = nil, notes: String? = nil, people: [PersonID] = []) async -> String? {
         guard let plan = try? input.plan(in: dayZone) else { return "종료 시각이 시작보다 늦어야 해요." }
-        switch await perform(.createEvent(CreateEventInput(draft: plan.draft))) {
+        let draft = CalendarEventDraft(
+            calendarID: plan.draft.calendarID, title: plan.draft.title, time: plan.draft.time, timeZoneIdentifier: plan.draft.timeZoneIdentifier,
+            location: location, notes: notes
+        )
+        switch await perform(.createEvent(CreateEventInput(draft: draft))) {
         case let .applied(applied)?, let .partiallyApplied(applied, _)?:
             if plan.isOpenEnd, let event = applied.event {
                 openEndMarks.mark(event.key)
                 if let url = openEndURL, let data = try? JSONEncoder().encode(openEndMarks) { try? data.write(to: url, options: .atomic) }
+            }
+            if let event = applied.event {
+                // One after another: each edit reloads the days, and two at once would read each other's half-written state.
+                for person in people { _ = await perform(ActivityEditing.setParticipant(person, on: true, event: event.key, now: nowMilliseconds)) }
             }
             return nil
         default: return "일정을 만들지 못했어요. 잠시 뒤에 다시 해 주세요."
