@@ -10,7 +10,7 @@ struct WidgetPlacement: Codable, Identifiable, Equatable {
 enum WidgetLayoutStore {
     static let key = "analysis.widgets.v1"
     static let standard: [WidgetSpec] = [
-        WidgetSpec.all[12], WidgetSpec.all[14], WidgetSpec.all[0], WidgetSpec.all[8], WidgetSpec.all[10],
+        .spec(.balance, .meter, .medium), .spec(.spent, .number, .small), .spec(.pending, .number, .small), .spec(.category, .list, .medium),
     ]
 
     static func load(_ defaults: UserDefaults = .standard) -> [WidgetPlacement] {
@@ -33,6 +33,7 @@ struct AnalysisWidgetBoard: View {
     @Binding var month: AnalysisMonth
 
     private static let space = "analysisBoard"
+    private static let sideMargin: CGFloat = 26
     private static let placeholderID = UUID()
 
     private enum Panel: Equatable { case closed, list, gallery(WidgetTopic) }
@@ -61,20 +62,22 @@ struct AnalysisWidgetBoard: View {
 
     var body: some View {
         GeometryReader { proxy in
-            let width = proxy.size.width - Theme.cardMargin * 2
+            let width = proxy.size.width - Self.sideMargin * 2
             ZStack(alignment: .bottom) {
-                ScrollView {
-                    VStack(spacing: Theme.Space.l) {
-                        grid(width: width)
-                        if editing { sizePicker; addButton }
-                        allAnalysisRow
+                VStack(spacing: 0) {
+                    header
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            grid(width: width).padding(.horizontal, Self.sideMargin).padding(.top, 14)
+                            if editing { sizePicker; addButton }
+                        }
+                        .padding(.bottom, Theme.Space.xxl)
                     }
-                    .padding(.horizontal, Theme.cardMargin).padding(.bottom, Theme.Space.xxl)
+                    .scrollIndicators(.hidden)
                 }
-                .scrollIndicators(.hidden)
                 if panel != .closed {
-                    Color.black.opacity(panelShown ? 0.3 : 0).ignoresSafeArea().onTapGesture { closePanel() }.allowsHitTesting(drag == nil)
-                    panelView(width: width, height: proxy.size.height * 0.78)
+                    Theme.textPrimary.opacity(panelShown ? 0.42 : 0).ignoresSafeArea().onTapGesture { closePanel() }.allowsHitTesting(drag == nil)
+                    panelView(width: proxy.size.width - Theme.cardMargin * 2, height: proxy.size.height)
                         .offset(y: panelShown ? 0 : proxy.size.height)
                 }
                 if let drag {
@@ -88,20 +91,35 @@ struct AnalysisWidgetBoard: View {
         }
         .background(Theme.background)
         .navigationDestination(isPresented: $showAll) { AnalysisHome(model: model, snapshot: snapshot, month: $month) }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    ForEach(0..<6, id: \.self) { back in
-                        let option = AnalysisMonth(snapshot.today).moved(by: -back)
-                        Button(option.title) { month = option }
-                    }
-                } label: { Label("\(month.month)월", systemImage: "chevron.down").labelStyle(.titleAndIcon) }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button(editing ? "완료" : "편집") { withAnimation(motion) { editing.toggle(); selected = nil; if !editing { closePanel() } } }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .onChange(of: placements) { _, new in WidgetLayoutStore.save(new) }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(verbatim: "\(month.year)년").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).frame(height: 18)
+                Text("분석").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).frame(height: 34)
+            }
+            Spacer()
+            Menu {
+                ForEach(0..<6, id: \.self) { back in
+                    let option = AnalysisMonth(snapshot.today).moved(by: -back)
+                    Button(option.title) { month = option }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("\(month.month)월")
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .semibold))
+                }
+                .font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textSecondary).frame(minHeight: Theme.hitTarget)
+            }
+            Button(editing ? "완료" : "편집") { withAnimation(motion) { editing.toggle(); selected = nil; if !editing { closePanel() } } }
+                .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accent).frame(minWidth: 36, minHeight: Theme.hitTarget).padding(.leading, 6)
+        }
+        .padding(.horizontal, 24).padding(.top, 16)
     }
 
     // MARK: Grid
@@ -141,24 +159,27 @@ struct AnalysisWidgetBoard: View {
 
     private func widget(_ placement: WidgetPlacement, unit: CGFloat) -> some View {
         let box = WidgetPacker.size(placement.spec.size, unit: unit)
+        let lifted = editing && selected == placement.id
         return AnalysisWidgetView(spec: placement.spec, data: data, size: box)
             .overlay {
                 if editing {
-                    RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
-                        .strokeBorder(selected == placement.id ? Theme.accent : Theme.accentLine, style: StrokeStyle(lineWidth: selected == placement.id ? 2 : 1, dash: selected == placement.id ? [] : [5, 4]))
+                    RoundedRectangle(cornerRadius: 25, style: .continuous).strokeBorder(Theme.accentLine, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .padding(-3).opacity(lifted ? 0 : 1)
                 }
             }
+            .background { RoundedRectangle(cornerRadius: 22, style: .continuous).fill(Theme.surface).shadow(color: .black.opacity(lifted ? 0.2 : 0), radius: 14, y: 10) }
             .overlay(alignment: .topLeading) {
                 if editing {
                     Button { remove(placement.id) } label: {
-                        Image(systemName: "minus").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
-                            .frame(width: 24, height: 24).background(Theme.actionBar, in: Circle())
+                        Text("−").font(.system(size: 18, weight: .medium)).foregroundStyle(.white).frame(width: 26, height: 26)
+                            .background(Theme.actionBar, in: Circle()).overlay(Circle().strokeBorder(Theme.background, lineWidth: 2))
                             .frame(width: Theme.hitTarget, height: Theme.hitTarget)
                     }
-                    .offset(x: -10, y: -10).accessibilityLabel("\(placement.spec.topic.title) 지우기")
+                    .offset(x: -18, y: -18).accessibilityLabel("\(placement.spec.topic.title) 지우기")
+                    .transition(.opacity)
                 }
             }
-            .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .onTapGesture {
                 if editing { withAnimation(motion) { selected = selected == placement.id ? nil : placement.id } } else { showAll = true }
             }
@@ -169,33 +190,34 @@ struct AnalysisWidgetBoard: View {
         let current = placements.first { $0.id == selected }
         return Group {
             if let current, current.spec.sizes().count > 1 {
-                Picker("크기", selection: Binding(get: { current.spec.size }, set: { resize(current.id, to: $0) })) {
-                    ForEach(current.spec.sizes(), id: \.size) { Text($0.size.title).tag($0.size) }
+                HStack(spacing: 4) {
+                    ForEach(current.spec.sizes(), id: \.size) { option in
+                        let on = option.size == current.spec.size
+                        Button { resize(current.id, to: option.size) } label: {
+                            Text(option.size.title).font(.onAll(size: 13, weight: on ? .semibold : .regular))
+                                .foregroundStyle(on ? Theme.accentStrong : Theme.textTertiary)
+                                .padding(.horizontal, 18).frame(height: Theme.segmentHeight)
+                                .background(on ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .pickerStyle(.segmented).frame(maxWidth: 260)
+                .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
+                .padding(.top, 12)
             }
         }
     }
 
     private var addButton: some View {
         Button { openPanel(.list) } label: {
-            Label("위젯 추가", systemImage: "plus").font(Theme.Typo.button).foregroundStyle(Theme.accent)
-                .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
-                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(Theme.accentLine, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
-        }
-    }
-
-    private var allAnalysisRow: some View {
-        Button { showAll = true } label: {
-            HStack {
-                Text("모든 분석").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
+            HStack(spacing: 6) {
+                Image(systemName: "plus").font(.system(size: 14, weight: .semibold))
+                Text("위젯 추가").font(.onAll(size: 15, weight: .semibold))
             }
-            .padding(Theme.Space.l).frame(maxWidth: .infinity)
-            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+            .foregroundStyle(Theme.accent).frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous).strokeBorder(Theme.accentLine, style: StrokeStyle(lineWidth: 1.5, dash: [5, 4])))
         }
-        .buttonStyle(.onAllRow)
+        .padding(.horizontal, Theme.cardMargin).padding(.top, 16)
     }
 
     // MARK: Changes
@@ -284,7 +306,7 @@ struct AnalysisWidgetBoard: View {
 
     private func panelView(width: CGFloat, height: CGFloat) -> some View {
         VStack(spacing: 0) {
-            Capsule().fill(Theme.disabled).frame(width: 36, height: 5).padding(.vertical, Theme.Space.s)
+            Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 14)
             switch panel {
             case .gallery(let topic): gallery(topic, width: width)
             default: topicList
@@ -298,12 +320,12 @@ struct AnalysisWidgetBoard: View {
     private var topicList: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("위젯 추가").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, Theme.cardMargin).padding(.vertical, Theme.Space.m)
+                .padding(.horizontal, 24).padding(.vertical, Theme.Space.m)
             ScrollView {
                 ForEach(WidgetTopic.allCases, id: \.self) { topic in
                     Button { sizeFilter = nil; panel = .gallery(topic) } label: {
                         HStack(spacing: Theme.Space.m) {
-                            IconTile(systemName: topic.symbol)
+                            Thumbnail(topic: topic)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(topic.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
                                 Text(styleSummary(topic)).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary)
@@ -311,9 +333,10 @@ struct AnalysisWidgetBoard: View {
                             Spacer()
                             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(Theme.textTertiary)
                         }
-                        .padding(.horizontal, Theme.cardMargin).frame(minHeight: Theme.rowHeight + 8).contentShape(Rectangle())
+                        .padding(.horizontal, 24).frame(minHeight: 64).contentShape(Rectangle())
                     }
                     .buttonStyle(.onAllRow)
+                    if topic != WidgetTopic.allCases.last { Divider().overlay(Theme.divider).padding(.horizontal, 24) }
                 }
             }
         }
@@ -330,7 +353,7 @@ struct AnalysisWidgetBoard: View {
         let variants = WidgetSpec.variants(of: topic).filter { sizeFilter == nil || $0.size == sizeFilter }
         return VStack(alignment: .leading, spacing: Theme.Space.m) {
             HStack(spacing: Theme.Space.s) {
-                Button { panel = .list } label: { Image(systemName: "chevron.left").font(.body.weight(.semibold)).frame(width: Theme.hitTarget, height: Theme.hitTarget) }
+                Button { panel = .list } label: { Image(systemName: "chevron.left").font(.body.weight(.semibold)).foregroundStyle(Theme.textPrimary).frame(width: Theme.hitTarget, height: Theme.hitTarget) }
                     .accessibilityLabel("뒤로")
                 Text(topic.title).font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
             }
@@ -341,9 +364,9 @@ struct AnalysisWidgetBoard: View {
             }
             .padding(.horizontal, Theme.cardMargin)
             ScrollView {
-                VStack(spacing: Theme.Space.l) {
+                VStack(spacing: Theme.Space.m) {
                     ForEach(variants) { spec in
-                        VStack(alignment: .leading, spacing: Theme.Space.s) {
+                        VStack(alignment: .leading, spacing: Theme.Space.m) {
                             HStack {
                                 Text(spec.style.title).font(Theme.Typo.label).foregroundStyle(Theme.textPrimary)
                                 Spacer()
@@ -367,6 +390,63 @@ struct AnalysisWidgetBoard: View {
             Text(title).font(Theme.Typo.chip).foregroundStyle(isOn ? Theme.accentStrong : Theme.textSecondary)
                 .padding(.horizontal, Theme.Space.m).frame(height: Theme.chipHeight)
                 .background(isOn ? Theme.accentSoft : Theme.fill, in: Capsule())
+        }
+    }
+}
+
+/// The small picture beside a topic in the add list: a miniature of how that topic is drawn.
+private struct Thumbnail: View {
+    let topic: WidgetTopic
+
+    var body: some View {
+        Group {
+            switch topic {
+            case .week, .monthTrend: bars
+            case .category, .activity, .pending: rows
+            case .calendar: split
+            default: number
+            }
+        }
+        .frame(width: 76, height: 48).background(Theme.fill, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var bars: some View {
+        HStack(alignment: .bottom, spacing: 3) {
+            ForEach(Array([0.45, 0.3, 0.8, 0.5, 0.65, 1.0, 0.4].enumerated()), id: \.offset) { index, h in
+                RoundedRectangle(cornerRadius: 1.5, style: .continuous).fill(index == 5 ? Theme.accent : Theme.accentLine).frame(width: 6, height: 26 * h)
+            }
+        }
+    }
+
+    private var rows: some View {
+        VStack(spacing: 5) {
+            ForEach(Array([1.0, 0.6, 0.35].enumerated()), id: \.offset) { index, w in
+                HStack(spacing: 4) {
+                    Circle().fill(Theme.accentLine).frame(width: 7, height: 7)
+                    Capsule().fill(index == 0 ? Theme.accent : Theme.accentLine).frame(width: 36 * w, height: 4)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    private var split: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 1.5) {
+                ForEach(Array([27.0, 52, 9, 12].enumerated()), id: \.offset) { index, w in
+                    Rectangle().fill([Theme.CalendarTint.blue.color, Theme.CalendarTint.orange.color, Theme.CalendarTint.green.color, Theme.disabled][index]).frame(width: w * 0.5)
+                }
+            }
+            .clipShape(Capsule()).frame(height: 6)
+            Capsule().fill(Theme.accentLine).frame(width: 30, height: 4)
+        }
+    }
+
+    private var number: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Capsule().fill(Theme.disabled.opacity(0.6)).frame(width: 22, height: 3)
+            Capsule().fill(Theme.accent).frame(width: 44, height: 8)
         }
     }
 }

@@ -44,3 +44,10 @@ import Testing
     #expect(WidgetSpec.all.first { $0.topic == .category && $0.style == .list }?.sizes().map(\.size) == [.medium, .large])
     #expect(Set(WidgetSpec.all.map(\.id)).count == WidgetSpec.all.count)
 }
+
+@Test func aLargeWidgetIsTallerThanTwoSmallsAndPushesTheRowsAfterIt() {
+    let packed = WidgetPacker.frames([.large, .medium], width: 338)
+    let unit = WidgetPacker.unit(width: 338)
+    #expect(packed.frames[0].height == 2 * unit + WidgetPacker.gap + WidgetPacker.largeExtra)
+    #expect(packed.frames[1].minY == packed.frames[0].maxY + WidgetPacker.gap)
+}

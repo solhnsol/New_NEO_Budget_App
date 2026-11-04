@@ -16,46 +16,41 @@ enum WidgetSize: Int, Codable, CaseIterable, Comparable {
     var spec: String { ["2×2", "4×2", "4×4"][rawValue] }
 }
 
-/// What a widget is about (the first level of the add sheet).
+/// What a widget is about (the first level of the add sheet), in the order the sheet lists them.
 enum WidgetTopic: String, Codable, CaseIterable {
-    case week, monthTrend, category, activity, spent, fixed, pending
+    case balance, spent, income, flow, week, category, activity, monthTrend, calendar, fixed, pending
 
     var title: String {
         switch self {
-        case .week: return "이번 주"
-        case .monthTrend: return "월별 추이"
-        case .category: return "분류별"
-        case .activity: return "일정별"
+        case .balance: return "오늘 쓸 수 있는 돈"
         case .spent: return "쓴 돈"
+        case .income: return "들어온 돈"
+        case .flow: return "쓴 돈 · 들어온 돈"
+        case .week: return "이번 주"
+        case .category: return "분류별"
+        case .activity: return "쓴 돈이 큰 일정"
+        case .monthTrend: return "월별 추이"
+        case .calendar: return "일정별"
         case .fixed: return "고정 지출"
         case .pending: return "정산 받을 돈"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .week, .monthTrend: return "chart.bar"
-        case .category: return "square.grid.2x2"
-        case .activity: return "calendar"
-        case .spent: return "wonsign"
-        case .fixed: return "repeat"
-        case .pending: return "person.2"
         }
     }
 }
 
 /// How a topic is drawn (the second level: one topic has several).
 enum WidgetStyle: String, Codable {
-    case bars, barsList, line, number, list, top
+    case bars, barsList, line, number, list, top, meter, pair, split
 
     var title: String {
         switch self {
         case .bars: return "막대"
         case .barsList: return "막대 + 목록"
         case .line: return "꺾은선"
-        case .number: return "숫자"
+        case .number, .pair: return "숫자"
         case .list: return "목록"
         case .top: return "가장 많이 쓴 곳"
+        case .meter: return "막대 게이지"
+        case .split: return "띠"
         }
     }
 }
@@ -71,14 +66,18 @@ struct WidgetSpec: Codable, Hashable, Identifiable {
 
     /// Every widget the app offers. Order is the order the gallery shows.
     static let all: [WidgetSpec] = [
+        .init(.balance, .meter, .small), .init(.balance, .meter, .medium),
+        .init(.spent, .number, .small), .init(.income, .number, .small), .init(.flow, .pair, .medium),
         .init(.week, .bars, .medium), .init(.week, .line, .medium), .init(.week, .number, .small), .init(.week, .barsList, .large),
-        .init(.monthTrend, .bars, .medium), .init(.monthTrend, .line, .medium), .init(.monthTrend, .bars, .large),
         .init(.category, .top, .small), .init(.category, .list, .medium), .init(.category, .list, .large),
         .init(.activity, .list, .medium), .init(.activity, .list, .large),
-        .init(.spent, .number, .small),
+        .init(.monthTrend, .bars, .medium), .init(.monthTrend, .line, .medium), .init(.monthTrend, .bars, .large),
+        .init(.calendar, .split, .medium), .init(.calendar, .split, .large),
         .init(.fixed, .number, .small),
         .init(.pending, .number, .small), .init(.pending, .list, .medium),
     ]
+
+    static func spec(_ topic: WidgetTopic, _ style: WidgetStyle, _ size: WidgetSize) -> WidgetSpec { all.first { $0.topic == topic && $0.style == style && $0.size == size }! }
 
     static func variants(of topic: WidgetTopic) -> [WidgetSpec] { all.filter { $0.topic == topic } }
 
@@ -166,19 +165,23 @@ struct AnalysisWidgetData: Equatable {
 /// Lays widgets out on a two-cell-wide grid, in order like the iPhone home screen: each widget takes the next free place at or after the
 /// previous one, so the order of the list is the reading order.
 enum WidgetPacker {
-    static let gap: CGFloat = 12
+    /// iPhone widget metrics: 22 between widgets, and a large one is 16 taller than two smalls and the gap.
+    static let gap: CGFloat = 22
+    static let largeExtra: CGFloat = 16
 
     static func unit(width: CGFloat) -> CGFloat { max(0, (width - gap) / 2) }
 
     static func size(_ size: WidgetSize, unit: CGFloat) -> CGSize {
-        CGSize(width: CGFloat(size.columns) * unit + CGFloat(size.columns - 1) * gap, height: CGFloat(size.rows) * unit + CGFloat(size.rows - 1) * gap)
+        CGSize(width: CGFloat(size.columns) * unit + CGFloat(size.columns - 1) * gap,
+               height: CGFloat(size.rows) * unit + CGFloat(size.rows - 1) * (gap + largeExtra))
     }
 
     static func frames(_ sizes: [WidgetSize], width: CGFloat) -> (frames: [CGRect], height: CGFloat) {
         let unit = unit(width: width)
         var taken: [[Bool]] = []
+        var largeStarts: [Int] = []
         var cursor = 0
-        var frames: [CGRect] = []
+        var placed: [(row: Int, column: Int, size: WidgetSize)] = []
         for size in sizes {
             var position = cursor
             while true {
@@ -187,13 +190,19 @@ enum WidgetPacker {
                 let fits = column + size.columns <= 2 && (0..<size.rows).allSatisfy { r in (0..<size.columns).allSatisfy { !taken[row + r][column + $0] } }
                 if fits {
                     for r in 0..<size.rows { for c in 0..<size.columns { taken[row + r][column + c] = true } }
-                    let box = Self.size(size, unit: unit)
-                    frames.append(CGRect(x: CGFloat(column) * (unit + gap), y: CGFloat(row) * (unit + gap), width: box.width, height: box.height))
+                    if size == .large { largeStarts.append(row) }
+                    placed.append((row, column, size))
                     cursor = position
                     break
                 }
                 position += 1
             }
+        }
+        // A large widget pushes every row after its own two down by its extra height.
+        let frames = placed.map { item -> CGRect in
+            let pushed = CGFloat(largeStarts.filter { $0 + 2 <= item.row }.count) * largeExtra
+            let box = Self.size(item.size, unit: unit)
+            return CGRect(x: CGFloat(item.column) * (unit + gap), y: CGFloat(item.row) * (unit + gap) + pushed, width: box.width, height: box.height)
         }
         return (frames, frames.map(\.maxY).max() ?? 0)
     }
