@@ -25,8 +25,6 @@ struct AnalysisScreen: View {
             }
             .background(Theme.background)
             .tint(Theme.accent)
-            .navigationTitle("분석")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar { if let onClose { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } } }
         }
         .task(id: [model.dataGeneration, model.overrideRevision, model.recurringRevision]) {
@@ -69,6 +67,7 @@ struct AnalysisHome: View {
         }
         .scrollIndicators(.hidden)
         .animation(.snappy(duration: 0.28), value: month)
+        .navigationTitle("모든 분석").navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: Month
