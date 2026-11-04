@@ -119,6 +119,8 @@ extension Formatting {
 
     /// Money spent as the sheets write it: `−9,500` (a true minus sign, no unit).
     static func spent(_ minorUnits: Int64) -> String { "−" + grouped(minorUnits) }
+}
+
 
 // The parts of the create sheets (design-v2/polish/create-v11 and ledger/openend-v1): a title line with its save button, calendar chips, a gray summary
 // line, and the rows of the opened-up sheet. The event sheets and the transaction sheet are built from these.
