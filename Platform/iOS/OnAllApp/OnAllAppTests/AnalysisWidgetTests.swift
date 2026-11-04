@@ -1,3 +1,4 @@
+import CoreGraphics
 import NEOBudgetCalendar
 import Testing
 @testable import OnAllApp
