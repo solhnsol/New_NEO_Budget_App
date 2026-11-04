@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CoreText
 
 /// OnAll's design tokens: the one place colors, spacing, corner radii, type and motion are decided, so every screen reads as the same app.
 ///
@@ -113,26 +114,26 @@ enum Theme {
 
     enum Typo {
         /// A screen title (26/34 bold).
-        static let h1 = Font.system(size: 26, weight: .bold)
+        static let h1 = Font.onAll(size: 26, weight: .bold)
         /// A pushed screen's title next to the back button (20/28 bold).
-        static let navTitle = Font.system(size: 20, weight: .bold)
+        static let navTitle = Font.onAll(size: 20, weight: .bold)
         /// A section's title, a date (18/24 semibold).
-        static let section = Font.system(size: 18, weight: .semibold)
+        static let section = Font.onAll(size: 18, weight: .semibold)
         /// A sheet's title (20/28 semibold).
-        static let sheetTitle = Font.system(size: 20, weight: .semibold)
+        static let sheetTitle = Font.onAll(size: 20, weight: .semibold)
         /// The one number a screen is about (32/40 bold).
-        static let hero = Font.system(size: 32, weight: .bold).monospacedDigit()
+        static let hero = Font.onAll(size: 32, weight: .bold).monospacedDigit()
         /// A row's title (16/22 medium).
-        static let rowTitle = Font.system(size: 16, weight: .medium)
+        static let rowTitle = Font.onAll(size: 16, weight: .medium)
         /// A row's second line (13/18).
-        static let label = Font.system(size: 13)
-        static let amount = Font.system(size: 16, weight: .medium).monospacedDigit()
+        static let label = Font.onAll(size: 13)
+        static let amount = Font.onAll(size: 16, weight: .medium).monospacedDigit()
         /// The smallest text there is (11).
-        static let caption = Font.system(size: 11)
-        static let badge = Font.system(size: 11, weight: .semibold)
-        static let button = Font.system(size: 16, weight: .semibold)
-        static let smallButton = Font.system(size: 15, weight: .semibold)
-        static let chip = Font.system(size: 13, weight: .medium)
+        static let caption = Font.onAll(size: 11)
+        static let badge = Font.onAll(size: 11, weight: .semibold)
+        static let button = Font.onAll(size: 16, weight: .semibold)
+        static let smallButton = Font.onAll(size: 15, weight: .semibold)
+        static let chip = Font.onAll(size: 13, weight: .medium)
         /// A card's title.
         static let title = section
     }
@@ -201,5 +202,29 @@ extension View {
     func onAllCardRow() -> some View {
         listRowBackground(Theme.surface)
             .listRowSeparatorTint(Theme.divider)
+    }
+}
+
+extension Font {
+    /// Pretendard (bundled in `Fonts/`, registered at launch by `PretendardFonts`) at a fixed size; the weight picks the nearest of the four cuts.
+    static func onAll(size: CGFloat, weight: Font.Weight = .regular) -> Font {
+        let cut: String
+        switch weight {
+        case .bold, .heavy, .black: cut = "Bold"
+        case .semibold: cut = "SemiBold"
+        case .medium: cut = "Medium"
+        default: cut = "Regular"
+        }
+        return .custom("Pretendard-\(cut)", fixedSize: size)
+    }
+}
+
+/// Registers the bundled Pretendard files with the system, once at launch, so `Font.onAll` finds them without an Info.plist font list.
+enum PretendardFonts {
+    static func register() {
+        for cut in ["Regular", "Medium", "SemiBold", "Bold"] {
+            guard let url = Bundle.main.url(forResource: "Pretendard-\(cut)", withExtension: "otf") else { continue }
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
     }
 }

@@ -44,7 +44,7 @@ private struct TabBar: View {
                 Button { selection = item.tab } label: {
                     VStack(spacing: 3) {
                         LineIcon(name: item.icon)
-                        Text(item.title).font(.system(size: 11, weight: on ? .semibold : .medium))
+                        Text(item.title).font(.onAll(size: 11, weight: on ? .semibold : .medium))
                     }
                     .foregroundStyle(on ? Theme.textPrimary : Theme.textTertiary)
                     .frame(maxWidth: .infinity)

@@ -84,7 +84,7 @@ struct WeekStripView: View {
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
-                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.system(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
+                    Text(Formatting.weekdayShort(weekStart.adding(days: column))).font(.onAll(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
                 }
             }
             .frame(height: MonthUnfold.labelRow - 2, alignment: .top)
@@ -283,7 +283,7 @@ struct WeekStripView: View {
                     .allowsHitTesting(false)
                 Button { if Date() >= tapsBlockedUntil { onSelect(day) } } label: {
                     Text("\(day.day)")
-                        .font(.callout.monospacedDigit().weight(role == .none && day != today ? .regular : .semibold))
+                        .font(.onAll(size: 16, weight: role == .none && day != today ? .regular : .semibold).monospacedDigit())
                         .foregroundStyle(numberColor(role, day))
                         .frame(maxWidth: .infinity, minHeight: Self.numberRow)
                         .contentShape(Rectangle())
@@ -302,7 +302,7 @@ struct WeekStripView: View {
                 if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
             Text(MonthUnfold.spendText(of: info) ?? " ")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .font(.onAll(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.accent)
                 .lineLimit(1).minimumScaleFactor(0.6)
                 .frame(height: MonthUnfold.spendRow)

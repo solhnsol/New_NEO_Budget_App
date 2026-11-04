@@ -264,7 +264,7 @@ private struct PastEventBar: View {
             RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
                 .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
-            Text(block.title).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+            Text(block.title).font(.onAll(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 1)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -290,14 +290,14 @@ private struct EventCardView: View {
         Group {
             if height < 40 {
                 HStack(spacing: Theme.Space.s) {
-                    Text(block.title).font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(block.title).font(.onAll(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
                 .padding(.vertical, Theme.Space.xs)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(block.title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(block.title).font(.onAll(size: 16, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -335,10 +335,10 @@ private struct TransactionRailRow: View {
                 let tile = CategoryIcon.tile(for: row.category)
                 LineIcon(name: tile.icon, size: 14).foregroundStyle(Theme.textSecondary)
                     .frame(width: RailMetrics.rowHeight, height: RailMetrics.rowHeight).background(tile.tint, in: Circle())
-                Text(row.title).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(clockText(row.minute)).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary).fixedSize()
+                Text(row.title).font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary).fixedSize()
                 Spacer(minLength: Theme.Space.s)
-                Text(row.amountText).font(.system(size: 15, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
+                Text(row.amountText).font(.onAll(size: 15, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
             .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)
@@ -361,7 +361,7 @@ private struct NowLine: View {
         ZStack(alignment: .topLeading) {
             Rectangle().fill(Theme.accent).frame(height: 1.5).padding(.leading, RailMetrics.railX).offset(y: y - 0.75)
             Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - 3.5, y: y - 3.5)
-            Text(clockText(minute)).font(.system(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent)
+            Text(clockText(minute)).font(.onAll(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent)
                 .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: y - 7)
             Color.clear.frame(width: 1, height: 1).id("railNow").offset(y: y)
         }

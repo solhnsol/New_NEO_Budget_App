@@ -291,7 +291,7 @@ private struct StatusView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: symbol).font(.system(size: 44)).foregroundStyle(Theme.textTertiary)
+            Image(systemName: symbol).font(.onAll(size: 44)).foregroundStyle(Theme.textTertiary)
             Text(title).font(Theme.Typo.title).foregroundStyle(Theme.textPrimary).multilineTextAlignment(.center)
             Text(message).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).multilineTextAlignment(.center)
             Button(actionTitle) { Task { await action() } }.buttonStyle(.onAllPrimary).padding(.top, Theme.Space.s)

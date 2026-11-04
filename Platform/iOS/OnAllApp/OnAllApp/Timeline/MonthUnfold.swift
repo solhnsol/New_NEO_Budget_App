@@ -258,7 +258,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
         let start = MonthUnfold.gridStart(of: month)
         return HStack(spacing: 0) {
             ForEach(0..<7, id: \.self) { column in
-                Text(Formatting.weekdayShort(start.adding(days: column))).font(.system(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
+                Text(Formatting.weekdayShort(start.adding(days: column))).font(.onAll(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
             }
         }
         .padding(.horizontal, 4)
@@ -302,7 +302,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
         return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
-                    .font(.callout.monospacedDigit().weight(day == today || day == selected ? .semibold : .regular))
+                    .font(.onAll(size: 16, weight: day == today || day == selected ? .semibold : .regular).monospacedDigit())
                     .foregroundStyle(day == today || day == selected ? Theme.accentStrong : Theme.textPrimary)
                     .frame(width: 32, height: 32)
                     .background(day == today || day == selected ? Theme.accentSoft : .clear, in: Circle())
@@ -310,7 +310,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                 Color.clear.frame(height: MonthUnfold.barsRow)
                 EventDots(events: overflow ?? [], color: color)
                 Text(spent ?? " ")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .font(.onAll(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.accent)
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(height: MonthUnfold.spendRow)

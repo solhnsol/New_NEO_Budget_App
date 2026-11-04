@@ -8,6 +8,8 @@ struct OnAllApp: App {
     /// Bumped to rebuild the model after the user switched modes.
     @State private var generation = 0
 
+    init() { PretendardFonts.register() }
+
     var body: some Scene {
         WindowGroup {
             Group {

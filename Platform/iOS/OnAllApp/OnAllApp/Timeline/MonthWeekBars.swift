@@ -22,7 +22,7 @@ struct MonthWeekBars: View {
                 let tint = color(bar.event.key.calendarID)
                 let over = bar.event.endUnixMilliseconds <= now
                 Text(bar.event.title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.onAll(size: 11, weight: .medium))
                     .foregroundStyle(over ? Theme.textSecondary : Color.white)
                     .lineLimit(1)
                     .padding(.horizontal, 4)
