@@ -21,7 +21,12 @@ struct OnAllApp: App {
                 } else if ProcessInfo.processInfo.arguments.contains("-render-grid") || ProcessInfo.processInfo.arguments.contains("-render-continuous") {
                     RenderGridScreen()
                 } else if let model {
-                    RootTabs(model: model)
+                    if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-more-screen"),
+                       let screen = MoreGallery.screen(ProcessInfo.processInfo.arguments[index + 1], model: model) {
+                        screen
+                    } else {
+                        RootTabs(model: model)
+                    }
                 } else if let startFailure {
                     LaunchFailureView(detail: startFailure)
                 } else {

@@ -4,7 +4,7 @@ import UIKit
 /// The app's three bottom tabs: 캘린더 (the ledger list lives inside it as a toggle), 분석, 더보기.
 struct RootTabs: View {
     let model: AppModel
-    @State private var selection = Tab.calendar
+    @State private var selection = ProcessInfo.processInfo.arguments.contains("-tab-more") ? Tab.more : Tab.calendar
 
     enum Tab: Hashable { case calendar, analysis, more }
 
@@ -58,14 +58,5 @@ private struct TabBar: View {
         .frame(maxWidth: .infinity)
         .background(Theme.surface.ignoresSafeArea(edges: .bottom))
         .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
-    }
-}
-
-/// 더보기: settings for now; the rest of the screen comes from its own area.
-struct MoreScreen: View {
-    let model: AppModel
-
-    var body: some View {
-        NavigationStack { SettingsView(model: model, embedded: true) }
     }
 }
