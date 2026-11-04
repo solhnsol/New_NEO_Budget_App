@@ -19,6 +19,22 @@ struct LedgerScreen: View {
     @State private var merging: (deposit: LedgerDeposit, purchase: LedgerListEntry)?
     @State private var senderName = ""
     @State private var mergeMessage: String?
+    @State private var selection = LedgerSelection()
+    @State private var sheet: SelectionSheet?
+    @State private var isPickingEvent = false
+    @State private var isConfirmingDelete = false
+    @State private var selectionNotice: String?
+
+    enum SelectionSheet: Identifiable {
+        case category, tag, settle(CalendarEventKey)
+        var id: String {
+            switch self {
+            case .category: "category"
+            case .tag: "tag"
+            case let .settle(key): "settle-" + key.id
+            }
+        }
+    }
 
     init(model: AppModel, mode: Mode = .spending, onClose: @escaping () -> Void) {
         self.model = model
@@ -26,7 +42,59 @@ struct LedgerScreen: View {
         _mode = State(initialValue: mode)
     }
 
-    var body: some View {
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        if selection.isActive {
+            ToolbarItem(placement: .principal) {
+                VStack(spacing: 2) {
+                    Text("\(selection.ids.count)건 선택").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
+                    Text("합계 \(Formatting.money(selectedTotal, currency: "KRW"))").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) { Button("취소") { endSelection() } }
+        } else {
+            ToolbarItem(placement: .principal) {
+                Picker("보기", selection: $mode) {
+                    Text("목록").tag(Mode.spending)
+                    Text("계좌·카드").tag(Mode.accounts)
+                }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
+            }
+            ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    SettlementHubView(model: model)
+                } label: {
+                    Label("정산", systemImage: "arrow.left.arrow.right.circle")
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink {
+                    PeopleListView(model: model)
+                } label: {
+                    Label("사람", systemImage: "person.2")
+                }
+            }
+            if !model.isDemo {
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        IntakeInboxView(model: model)
+                    } label: {
+                        Label("받은 알림", systemImage: "tray")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private var selectionBar: some View {
+        if selection.isActive {
+            let slide: AnyTransition = .move(edge: .bottom).combined(with: .opacity)
+            LedgerSelectionBar(perform: perform).transition(slide)
+        }
+    }
+
+    private var stack: some View {
         NavigationStack {
             Group {
                 switch mode {
@@ -37,58 +105,73 @@ struct LedgerScreen: View {
             .tint(Theme.accent)
             .navigationTitle("가계부")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("보기", selection: $mode) {
-                        Text("목록").tag(Mode.spending)
-                        Text("계좌·카드").tag(Mode.accounts)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 220)
+            .toolbar { toolbarContent }
+            .safeAreaInset(edge: .bottom, spacing: 0) { selectionBar }
+            .animation(Theme.Motion.actionBar, value: selection.isActive)
+        }
+    }
+
+    private var sheeted: some View {
+        stack
+        .sheet(item: $sheet) { item in
+            switch item {
+            case .category:
+                LedgerCategorySheet(count: selectedEntries.count) { category in
+                    model.editMany(selectedEntries.map(\.id)) { $0.category = category }
+                    sheet = nil
+                    endSelection()
                 }
-                ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        SettlementHubView(model: model)
-                    } label: {
-                        Label("정산", systemImage: "arrow.left.arrow.right.circle")
+                .onAllSelectionSheet()
+            case .tag:
+                LedgerTagSheet(count: selectedEntries.count, known: model.knownTags) { tags in
+                    model.editMany(selectedEntries.map(\.id)) { override in
+                        for tag in tags where !override.tags.contains(tag) { override.tags.append(tag) }
                     }
+                    sheet = nil
+                    endSelection()
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink {
-                        PeopleListView(model: model)
-                    } label: {
-                        Label("사람", systemImage: "person.2")
-                    }
-                }
-                if !model.isDemo {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        NavigationLink {
-                            IntakeInboxView(model: model)
-                        } label: {
-                            Label("받은 알림", systemImage: "tray")
-                        }
-                    }
-                }
+                .onAllSelectionSheet()
+            case let .settle(key):
+                SettlementSheet(model: model, eventKey: key).presentationDetents([.medium, .large])
             }
+        }
+        .fullScreenCover(isPresented: $isPickingEvent) {
+            LedgerEventPicker(model: model, entries: selectedEntries, onApplied: endSelection)
+        }
+        .alert("\(selection.ids.count)건을 삭제할까요?", isPresented: $isConfirmingDelete) {
+            Button("취소", role: .cancel) {}
+            Button("삭제", role: .destructive) { deleteSelected() }
+        } message: {
+            Text("삭제하면 되돌릴 수 없어요.")
+        }
+        .alert(selectionNotice ?? "", isPresented: Binding(get: { selectionNotice != nil }, set: { if !$0 { selectionNotice = nil } })) {
+            Button("확인", role: .cancel) {}
         }
         // A calendar-side edit (linking a transaction to an activity) reloads the data, and the list follows it.
         .task(id: [model.dataGeneration, model.overrideRevision]) { await load() }
+    }
+
+    var body: some View {
+        sheeted
         .alert("정산으로 합칠까요?", isPresented: Binding(get: { merging != nil }, set: { if !$0 { merging = nil } })) {
             TextField("보낸 사람", text: $senderName)
             Button("합치기") { if let merging { Task { await merge(merging.deposit, onto: merging.purchase) } } }
             Button("취소", role: .cancel) {}
         } message: {
-            if let merging {
-                Text("\(Formatting.money(merging.deposit.amount.minorUnits, currency: merging.deposit.amount.currency))을 "
-                     + "\(merging.purchase.transaction.title ?? "이 지출")에서 돌려받은 돈으로 기록해요. 통장 내역은 그대로예요.")
-            }
+            Text(mergeQuestion)
         }
         .alert("합치지 못했어요", isPresented: Binding(get: { mergeMessage != nil }, set: { if !$0 { mergeMessage = nil } })) {
             Button("확인", role: .cancel) {}
         } message: {
             Text(mergeMessage ?? "")
         }
+    }
+
+    private var mergeQuestion: String {
+        guard let merging else { return "" }
+        let money = Formatting.money(merging.deposit.amount.minorUnits, currency: merging.deposit.amount.currency)
+        let title = merging.purchase.transaction.title ?? "이 지출"
+        return "\(money)을 \(title)에서 돌려받은 돈으로 기록해요. 통장 내역은 그대로예요."
     }
 
     @ViewBuilder
@@ -119,21 +202,17 @@ struct LedgerScreen: View {
                 }
                 ForEach(sections) { section in
                     Section {
-                        ForEach(section.entries) { entry in
-                            NavigationLink {
-                                TransactionDetailView(entry: entry, model: model)
-                            } label: {
-                                LedgerRow(entry: entry, zoneIdentifier: model.dayZone.identifier)
-                            }
-                            .dropDestination(for: String.self) { items, _ in
-                                guard let id = items.first, let deposit = deposits.first(where: { $0.id.rawValue == id }) else { return false }
-                                senderName = deposit.title ?? ""
-                                merging = (deposit, entry)
-                                return true
-                            }
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Theme.surface)
-                            .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.xl, bottom: Theme.Space.s, trailing: Theme.Space.l))
+                        ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
+                            let joins = selection.joins(in: section.entries, at: index)
+                            row(entry)
+                                .padding(.horizontal, Theme.Space.s)
+                                .listRowSeparator(.hidden)
+                                .listRowBackground(
+                                    SelectableRowBackground(isSelected: selection.contains(entry.id), joinsAbove: joins.above, joinsBelow: joins.below)
+                                        .padding(.horizontal, Theme.Space.m)
+                                        .background(Theme.surface)
+                                )
+                                .listRowInsets(EdgeInsets(top: Theme.Space.s, leading: Theme.Space.l, bottom: Theme.Space.s, trailing: Theme.Space.l))
                         }
                     } header: {
                         LedgerDayHeader(section: section, isToday: section.day == today, netted: nettedByDay[section.day] ?? [:])
@@ -145,6 +224,85 @@ struct LedgerScreen: View {
             .scrollContentBackground(.hidden)
             .background(Theme.surface)
         }
+    }
+
+    /// A transaction row: opens its details, or in selection mode adds/removes it. A long press starts selection with it picked.
+    @ViewBuilder
+    private func row(_ entry: LedgerListEntry) -> some View {
+        let label = LedgerRow(entry: entry, zoneIdentifier: model.dayZone.identifier)
+        if selection.isActive {
+            Button { withAnimation(Theme.Motion.select) { selection.toggle(entry.id) } } label: { label.contentShape(Rectangle()) }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(selection.contains(entry.id) ? .isSelected : [])
+        } else {
+            NavigationLink {
+                TransactionDetailView(entry: entry, model: model)
+            } label: {
+                label
+            }
+            .simultaneousGesture(LongPressGesture(minimumDuration: Theme.Motion.longPressSeconds).onEnded { _ in
+                Haptics.enterEdit()
+                withAnimation(Theme.Motion.select) { selection.begin(with: entry.id) }
+            })
+            .dropDestination(for: String.self) { items, _ in
+                guard let id = items.first, let deposit = deposits.first(where: { $0.id.rawValue == id }) else { return false }
+                senderName = deposit.title ?? ""
+                merging = (deposit, entry)
+                return true
+            }
+        }
+    }
+
+    private var selectedEntries: [LedgerListEntry] { (sections ?? []).flatMap(\.entries).filter { selection.contains($0.id) } }
+
+    private var selectedTotal: Int64 { selectedEntries.reduce(0) { $0 + $1.signedNetMinorUnits } }
+
+    private func endSelection() { withAnimation(Theme.Motion.select) { selection.end() } }
+
+    private func perform(_ action: LedgerSelectionBar.Action) {
+        switch action {
+        case .category: sheet = .category
+        case .tag: sheet = .tag
+        case .event: isPickingEvent = true
+        case .delete: confirmDelete()
+        case .settle: Task { await settleSelected() }
+        }
+    }
+
+    /// Only typed-in transactions can be deleted; what the bank or card reported stays (`TransactionEditSheet` says the same for one row).
+    private func confirmDelete() {
+        let manual = selectedEntries.filter { $0.transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) }
+        if manual.isEmpty {
+            selectionNotice = "카드·통장에서 온 거래는 지울 수 없어요."
+        } else if manual.count < selectedEntries.count {
+            selectionNotice = "카드·통장에서 온 거래는 지울 수 없어요. 직접 입력한 거래만 골라서 지워 주세요."
+        } else {
+            isConfirmingDelete = true
+        }
+    }
+
+    private func deleteSelected() {
+        model.removeManuals(Set(selectedEntries.map(\.id)))
+        endSelection()
+    }
+
+    /// Settling is done per event (the settlement sheet splits an event's linked spending), so it opens for the one event every picked
+    /// transaction is in. Mixed or unlinked picks are asked to be put in an event first.
+    private func settleSelected() async {
+        let activities = Set(selectedEntries.flatMap { $0.portions.compactMap(\.activityID) })
+        let everyOneLinked = selectedEntries.allSatisfy { entry in entry.portions.contains { $0.activityID != nil } }
+        guard everyOneLinked, activities.count == 1, let activity = activities.first, let first = selectedEntries.first else {
+            selectionNotice = "같은 일정에 들어 있는 거래만 정산할 수 있어요. 먼저 '일정'에서 한 일정으로 모아 주세요."
+            return
+        }
+        let day = model.dayZone.localDate(of: first.transaction.occurredAtUnixMilliseconds)
+        let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
+        let block = timelines.flatMap(\.blocks).first { $0.activity?.activityID == activity }
+        guard let block else {
+            selectionNotice = "이 일정을 찾지 못했어요. 일정에서 정산해 주세요."
+            return
+        }
+        sheet = .settle(block.eventKey)
     }
 
     private var nettedByDay: [LocalDate: [String: Int64]] { NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone) }
