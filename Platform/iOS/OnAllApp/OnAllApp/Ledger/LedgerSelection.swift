@@ -28,10 +28,11 @@ struct LedgerSelection: Equatable {
 struct SelectionBoxBorder: Shape {
     var roundTop: Bool
     var roundBottom: Bool
-    var radius: CGFloat = Theme.Radius.small + 4
+    var radius: CGFloat = 12
 
     func path(in rect: CGRect) -> Path {
-        let r = rect.insetBy(dx: 0.75, dy: 0.75)
+        // The outline sits inside the box by half its width; on a joined side it runs to the edge so neighbours' lines meet.
+        let r = CGRect(x: rect.minX + 0.75, y: rect.minY + (roundTop ? 0.75 : 0), width: rect.width - 1.5, height: rect.height - (roundTop ? 0.75 : 0) - (roundBottom ? 0.75 : 0))
         let top = roundTop ? radius : 0, bottom = roundBottom ? radius : 0
         var p = Path()
         p.move(to: CGPoint(x: r.minX, y: r.maxY - bottom))
@@ -53,20 +54,22 @@ struct SelectionBoxBorder: Shape {
     }
 }
 
-/// A row in selection mode: light blue fill and a blue outline when picked (consecutive picks share one box).
+/// A picked row's box: light blue with a 1.5 blue outline, radius 12; consecutive picks share one box. `inset` is how far the box sits in from the row's sides.
 struct SelectableRowBackground: View {
     let isSelected: Bool
     let joinsAbove: Bool
     let joinsBelow: Bool
+    var inset: CGFloat = 16
 
     var body: some View {
         if isSelected {
             let shape = UnevenRoundedRectangle(
-                topLeadingRadius: joinsAbove ? 0 : 16, bottomLeadingRadius: joinsBelow ? 0 : 16,
-                bottomTrailingRadius: joinsBelow ? 0 : 16, topTrailingRadius: joinsAbove ? 0 : 16, style: .continuous
+                topLeadingRadius: joinsAbove ? 0 : 12, bottomLeadingRadius: joinsBelow ? 0 : 12,
+                bottomTrailingRadius: joinsBelow ? 0 : 12, topTrailingRadius: joinsAbove ? 0 : 12, style: .continuous
             )
             shape.fill(Theme.accentSoft)
-                .overlay(SelectionBoxBorder(roundTop: !joinsAbove, roundBottom: !joinsBelow, radius: 16).stroke(Theme.accentLine, lineWidth: 1.5))
+                .overlay(SelectionBoxBorder(roundTop: !joinsAbove, roundBottom: !joinsBelow).stroke(Theme.accent, lineWidth: 1.5))
+                .padding(.horizontal, inset)
         }
     }
 }
@@ -86,12 +89,12 @@ struct LedgerSelectionBar: View {
             }
         }
 
-        var symbol: String {
+        var icon: String {
             switch self {
-            case .category: "square.grid.2x2"
-            case .event: "calendar"
+            case .category: "cat"
+            case .event: "cal"
             case .tag: "tag"
-            case .settle: "building.columns"
+            case .settle: "bank"
             case .delete: "trash"
             }
         }
@@ -104,19 +107,56 @@ struct LedgerSelectionBar: View {
             ForEach(Action.allCases, id: \.self) { action in
                 Button { perform(action) } label: {
                     VStack(spacing: 4) {
-                        Image(systemName: action.symbol).font(.system(size: 20))
-                        Text(action.label).font(Theme.Typo.caption)
+                        LineIcon(name: action.icon, size: 22)
+                        Text(action.label).font(Font.onAll(size: 11, weight: .medium))
                     }
                     .foregroundStyle(action == .delete ? Theme.actionBarDelete : Color.white)
-                    .frame(maxWidth: .infinity, minHeight: Theme.hitTarget + 8)
+                    .frame(maxWidth: .infinity, minHeight: 56)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, Theme.Space.s)
-        .background(Theme.actionBar, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.horizontal, 4)
+        .background(Theme.actionBar, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: Theme.actionBar.opacity(0.25), radius: 9, y: 6)
         .padding(.horizontal, Theme.cardMargin)
-        .padding(.bottom, Theme.Space.s)
+        .padding(.bottom, 14)
+    }
+}
+
+/// The delete confirmation of selection mode: a white card over a 42% scrim, 취소 on gray and 삭제 in warning red.
+struct LedgerDeleteAlert: View {
+    let count: Int
+    let cancel: () -> Void
+    let confirm: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().onTapGesture(perform: cancel)
+            VStack(spacing: 0) {
+                Text("\(count)건을 삭제할까요?").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary)
+                Text("삭제하면 되돌릴 수 없어요").font(.onAll(size: 14)).foregroundStyle(Theme.textSecondary).padding(.top, 8)
+                HStack(spacing: 8) {
+                    button("취소", fill: Theme.fill, text: Theme.textSecondary, action: cancel)
+                    button("삭제", fill: Theme.danger, text: .white, action: confirm)
+                }
+                .padding(.top, 20)
+            }
+            .multilineTextAlignment(.center)
+            .padding(.top, 24).padding(.horizontal, 20).padding(.bottom, 16)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.sheet, style: .continuous))
+            .padding(.horizontal, 40)
+        }
+        .accessibilityAddTraits(.isModal)
+    }
+
+    private func button(_ title: String, fill: Color, text: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(Theme.Typo.smallButton).foregroundStyle(text)
+                .frame(maxWidth: .infinity, minHeight: 48)
+                .background(fill, in: RoundedRectangle(cornerRadius: Theme.Radius.smallButton, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }
