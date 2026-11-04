@@ -156,6 +156,7 @@ final class AppModel {
     func start() async {
         if let prepare { await prepare() }
         loadOverrides()
+        loadOpenEndMarks()
         loadRecurring()
         observeLedger()
         if eventKit != nil {
@@ -560,6 +561,29 @@ final class AppModel {
         case .calendarMissing: return "이미 없는 캘린더예요."
         case .unsupported: return "이 기기에서는 캘린더를 추가하거나 지울 수 없어요."
         case .eventMissing, .saveFailed: return "저장하지 못했어요. 잠시 뒤에 다시 해 주세요."
+        }
+    }
+
+    /// Events saved without an end (종료 미정): the calendar holds a short placeholder end, this holds the fact. A file, except in the demo.
+    private(set) var openEndMarks = OpenEndMarks()
+    private var openEndURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "open-end-marks.json") }
+
+    func loadOpenEndMarks() {
+        guard let url = openEndURL, let data = try? Data(contentsOf: url), let marks = try? JSONDecoder().decode(OpenEndMarks.self, from: data) else { return }
+        openEndMarks = marks
+    }
+
+    /// Creates the event the new-event sheet describes (all-day, open end or timed; `NewEventInput.plan`). `nil` on success, else what to tell the person.
+    func createEvent(_ input: NewEventInput) async -> String? {
+        guard let plan = try? input.plan(in: dayZone) else { return "종료 시각이 시작보다 늦어야 해요." }
+        switch await perform(.createEvent(CreateEventInput(draft: plan.draft))) {
+        case let .applied(applied)?, let .partiallyApplied(applied, _)?:
+            if plan.isOpenEnd, let event = applied.event {
+                openEndMarks.mark(event.key)
+                if let url = openEndURL, let data = try? JSONEncoder().encode(openEndMarks) { try? data.write(to: url, options: .atomic) }
+            }
+            return nil
+        default: return "일정을 만들지 못했어요. 잠시 뒤에 다시 해 주세요."
         }
     }
 
