@@ -137,6 +137,23 @@ struct RailPlan {
         let colorHex: String?
         /// A deposit (not spending): drawn with a red down-arrow tile, opens nothing.
         var isIncome = false
+        /// What it came to (a positive magnitude), for the sum of a bundle.
+        var amountMinor: Int64 = 0
+        /// The bundle it is in (`u:` a group the user made, `a:` a transit trip found by `TransitTripMerge`); nil for a plain row.
+        var bundleKey: String?
+    }
+
+    /// Transactions drawn as one row (the design's 묶음): a collapsed bundle is one row at its first leg with a spine through the legs' times; opened, the
+    /// legs are listed along the spine.
+    struct Bundle: Identifiable {
+        let key: String
+        /// Indices into `rows`, in time order.
+        let indices: [Int]
+        let title: String
+        let isAuto: Bool
+        var id: String { key }
+        var first: Int { indices[0] }
+        var last: Int { indices[indices.count - 1] }
     }
 
     let past: [EventBlock]
@@ -144,6 +161,9 @@ struct RailPlan {
     let rows: [Row]
     /// Each row's y: its minute's place on the axis, or a row below the one above when two share a minute, so none sits on another.
     let rowYs: [CGFloat]
+    let bundles: [Bundle]
+    /// For each row, the index of its bundle in `bundles`.
+    let rowBundle: [Int?]
     /// The rail's height, grown if stacked rows ran past the axis.
     let height: CGFloat
     let axis: RailAxis
@@ -168,7 +188,7 @@ struct RailPlan {
         return bands
     }
 
-    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
@@ -181,7 +201,7 @@ struct RailPlan {
             return Row(
                 id: "m/" + marker.transactionID.rawValue, transactionID: marker.transactionID, minute: marker.positionMinute, title: marker.title ?? "거래",
                 category: marker.categoryID, amountText: RailPlan.railAmount(Formatting.money(marker.amount.minorUnits, currency: marker.amount.currency), incoming: marker.flow == .refund),
-                isIncoming: marker.flow == .refund, colorHex: (inside ?? linked)?.calendarColorHex
+                isIncoming: marker.flow == .refund, colorHex: (inside ?? linked)?.calendarColorHex, amountMinor: marker.amount.minorUnits
             )
         }
         // A transaction wholly inside an event has no marker of its own; it is drawn from the event's allocations, where it happened.
@@ -192,7 +212,7 @@ struct RailPlan {
                 rows.append(Row(
                     id: "a/" + item.allocationID.rawValue, transactionID: item.transactionID, minute: minute, title: item.title ?? "거래", category: item.categoryID,
                     amountText: RailPlan.railAmount(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency), incoming: item.flow == .refund),
-                    isIncoming: item.flow == .refund, colorHex: block.calendarColorHex
+                    isIncoming: item.flow == .refund, colorHex: block.calendarColorHex, amountMinor: item.transactionAmount.minorUnits
                 ))
             }
         }
@@ -204,6 +224,22 @@ struct RailPlan {
             ))
         }
         rows.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
+
+        // Bundles: a group the user made, else a transit trip (a boarding and the charges that followed).
+        let keys = TransactionBundling.keys(
+            rows.map { TransactionBundling.Candidate(id: $0.transactionID, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncome && !$0.isIncoming) },
+            dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf
+        )
+        for index in rows.indices { rows[index].bundleKey = keys[index] }
+        var bundles: [Bundle] = []
+        var rowBundle = [Int?](repeating: nil, count: rows.count)
+        for (key, indices) in Dictionary(grouping: rows.indices.filter { rows[$0].bundleKey != nil }, by: { rows[$0].bundleKey! }).sorted(by: { $0.value[0] < $1.value[0] }) {
+            guard indices.count > 1 else { rows[indices[0]].bundleKey = nil; continue }
+            let ordered = indices.sorted()
+            let title = key.hasPrefix("a:") ? rows[ordered[0]].title : rows[ordered[0]].title + " 외 \(ordered.count - 1)건"
+            for index in ordered { rowBundle[index] = bundles.count }
+            bundles.append(Bundle(key: key, indices: ordered, title: title, isAuto: key.hasPrefix("a:")))
+        }
 
         let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: $0.displayEndMinute, isCard: $0.displayStartMinute >= cutoff) }
         var covered = events.flatMap { [$0.start, $0.end] } + rows.map(\.minute)
@@ -217,6 +253,8 @@ struct RailPlan {
         self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
         self.rows = rows
         self.rowYs = ys
+        self.bundles = bundles
+        self.rowBundle = rowBundle
         self.axis = axis
         self.nowMinute = now
         self.height = max(CGFloat(axis.height), (ys.last ?? 0) + Self.rowHeight)
@@ -265,7 +303,7 @@ private struct RailTimeline: View {
     var model: AppModel?
 
     var body: some View {
-        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes)
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) })
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
@@ -276,15 +314,44 @@ private struct RailTimeline: View {
             Capsule().fill(Theme.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
+            // The spine of each bundle, under its rows: from its first leg to its last.
+            ForEach(plan.bundles) { bundle in
+                BundleSpine(
+                    top: plan.rowYs[bundle.first], bottom: max(plan.rowYs[bundle.first], CGFloat(axis.y(plan.rows[bundle.last].minute))),
+                    capped: !(model?.openBundles.contains(bundle.key) ?? false)
+                )
+            }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
-                TransactionRailRow(
-                    row: row, selected: model?.selection.contains(row.transactionID) ?? false, selecting: model?.selection.isActive ?? false,
-                    onTap: {
-                        guard !row.isIncome, !HapticHold.justHeld(row.id) else { return }
-                        if let model, model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.transactionID) } } else { onOpenTransaction(row.transactionID) }
-                    },
-                    onLongPress: { if !row.isIncome, let model { withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
-                ).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
+                let bundle = plan.rowBundle[index].map { plan.bundles[$0] }
+                let isOpen = bundle.map { model?.openBundles.contains($0.key) ?? false } ?? false
+                if let bundle, !isOpen, index != bundle.first {
+                    EmptyView()
+                } else {
+                    TransactionRailRow(
+                        row: bundle != nil && !isOpen ? bundleRow(row, bundle!, plan) : row,
+                        kind: bundle == nil ? .plain : (isOpen ? .kid(isFirst: index == bundle!.first) : .bundle(count: bundle!.indices.count, range: bundleRange(bundle!, plan))),
+                        selected: pickedState(index, bundle, plan),
+                        selecting: model?.selection.isActive ?? false,
+                        onTap: {
+                            guard !row.isIncome, !HapticHold.justHeld(row.id) else { return }
+                            guard let model else { return onOpenTransaction(row.transactionID) }
+                            if let bundle, !isOpen {
+                                if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggleAll(ids(of: bundle, plan)) } } else { toggleOpen(bundle) }
+                            } else if model.selection.isActive {
+                                withAnimation(Theme.Motion.selectSlide) { model.selection.toggle(row.transactionID) }
+                            } else {
+                                onOpenTransaction(row.transactionID)
+                            }
+                        },
+                        onCollapse: { if let bundle { toggleOpen(bundle) } },
+                        onLongPress: {
+                            guard !row.isIncome, let model else { return }
+                            withAnimation(Theme.Motion.selectSlide) {
+                                if let bundle, !isOpen { model.selection.begin(withAll: ids(of: bundle, plan)) } else { model.selection.begin(with: row.transactionID) }
+                            }
+                        }
+                    ).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
+                }
             }
             if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
@@ -298,6 +365,36 @@ private struct RailTimeline: View {
                 onCreate(max(0, snapped))
             })
         .padding(.vertical, RailMetrics.vertical)
+    }
+
+    private func ids(of bundle: RailPlan.Bundle, _ plan: RailPlan) -> [LedgerEntryID] { bundle.indices.map { plan.rows[$0].transactionID } }
+
+    private func toggleOpen(_ bundle: RailPlan.Bundle) {
+        guard let model else { return }
+        withAnimation(.snappy(duration: 0.28)) {
+            if model.openBundles.contains(bundle.key) { model.openBundles.remove(bundle.key) } else { model.openBundles.insert(bundle.key) }
+        }
+    }
+
+    /// A bundle's row is picked when all of its transactions are; a plain row when it is.
+    private func pickedState(_ index: Int, _ bundle: RailPlan.Bundle?, _ plan: RailPlan) -> Bool {
+        guard let model else { return false }
+        if let bundle, !(model.openBundles.contains(bundle.key)) { return model.selection.containsAll(ids(of: bundle, plan)) }
+        return model.selection.contains(plan.rows[index].transactionID)
+    }
+
+    /// "09:14–09:48"
+    private func bundleRange(_ bundle: RailPlan.Bundle, _ plan: RailPlan) -> String {
+        clockText(plan.rows[bundle.first].minute) + "–" + clockText(plan.rows[bundle.last].minute)
+    }
+
+    /// The collapsed bundle's row: its name, the sum of its legs, at its first leg.
+    private func bundleRow(_ row: RailPlan.Row, _ bundle: RailPlan.Bundle, _ plan: RailPlan) -> RailPlan.Row {
+        let total = bundle.indices.reduce(Int64(0)) { $0 + plan.rows[$1].amountMinor }
+        return RailPlan.Row(
+            id: row.id, transactionID: row.transactionID, minute: row.minute, title: bundle.title, category: row.category,
+            amountText: RailPlan.railAmount(Formatting.grouped(total), incoming: false), isIncoming: false, colorHex: nil, amountMinor: total
+        )
     }
 }
 
@@ -372,35 +469,59 @@ private struct EventCardView: View {
     }
 }
 
+/// How a transaction row is drawn: a plain one, a collapsed bundle (one row for its legs), or one leg of an opened bundle.
+enum RailRowKind {
+    case plain
+    case bundle(count: Int, range: String)
+    case kid(isFirst: Bool)
+}
+
+/// The line through a bundle's legs (the design's slate spine); a collapsed bundle ends in a dot.
+private struct BundleSpine: View {
+    let top: CGFloat
+    let bottom: CGFloat
+    let capped: Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Theme.actionBar.frame(width: 2, height: max(2, bottom - top))
+                .offset(x: RailMetrics.railX, y: top)
+            if capped {
+                Circle().fill(Theme.actionBar).frame(width: 8, height: 8).offset(x: RailMetrics.railX + 1 - 4, y: bottom - 4)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .allowsHitTesting(false)
+    }
+}
+
 /// One transaction: a hollow dot on the rail at its minute (its colour is the event's it happened in, else the text colour), then its category tile,
 /// name, time and amount on one line, no card. Spent is blue, money coming in is red.
 private struct TransactionRailRow: View {
     let row: RailPlan.Row
+    var kind: RailRowKind = .plain
     var selected = false
     /// Selection mode is on (every row shows its box).
     var selecting = false
     let onTap: () -> Void
+    /// The chevron on the first leg of an opened bundle.
+    var onCollapse: () -> Void = {}
     var onLongPress: () -> Void = {}
 
     var body: some View {
         let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
         ZStack(alignment: .topLeading) {
-            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(row.colorHex == nil ? Theme.textTertiary : dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
-                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
+            dotView(dot)
             HStack(spacing: 0) {
                 SelectCheckSlot(selecting: selecting && !row.isIncome, picked: selected)
-                let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
-                LineIcon(name: tile.icon, size: 16).foregroundStyle(Theme.textSecondary)
-                    .frame(width: 30, height: 30).background(tile.tint, in: Circle())
-                (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                    + Text(" ").font(.onAll(size: 16))
-                    + Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
-                    .lineLimit(1).padding(.leading, 8)
+                tile
+                nameView.padding(.leading, 8)
                 Spacer(minLength: Theme.Space.s)
                 Text(row.amountText).font(.onAll(size: 16, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
-            .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)
+            .padding(.leading, leading).frame(height: RailMetrics.rowHeight)
+            .animation(Theme.Motion.selectSlide, value: selecting)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(alignment: .topLeading) {
@@ -415,6 +536,81 @@ private struct TransactionRailRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)
+    }
+
+    /// Where the row's content starts: a leg of an opened bundle sits 2pt further in (its tile is the smaller one).
+    private var leading: CGFloat {
+        if case .kid = kind { return RailMetrics.contentX + 2 }
+        return RailMetrics.contentX
+    }
+
+    @ViewBuilder
+    private func dotView(_ color: Color) -> some View {
+        switch kind {
+        case .plain:
+            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(row.colorHex == nil ? Theme.textTertiary : color, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
+                .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
+        case .bundle:
+            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(Theme.actionBar, lineWidth: 3)).frame(width: 14, height: 14)
+                .offset(x: RailMetrics.railX + 1 - 7, y: (RailMetrics.rowHeight - 14) / 2)
+        case .kid:
+            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(Theme.actionBar, lineWidth: 2)).frame(width: 10, height: 10)
+                .offset(x: RailMetrics.railX + 1 - 5, y: (RailMetrics.rowHeight - 10) / 2)
+        }
+    }
+
+    @ViewBuilder
+    private var tile: some View {
+        let t = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
+        switch kind {
+        case let .bundle(count, _):
+            LineIcon(name: t.icon, size: 16).foregroundStyle(Theme.textSecondary)
+                .frame(width: 30, height: 30).background(t.tint, in: Circle())
+                .overlay(alignment: .bottomTrailing) {
+                    Text("\(count)").font(.onAll(size: 10, weight: .semibold)).foregroundStyle(.white)
+                        .frame(minWidth: 16, minHeight: 16).padding(.horizontal, 3).background(Theme.actionBar, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.surface, lineWidth: 2)).offset(x: 4, y: 4)
+                }
+        case .kid:
+            LineIcon(name: t.icon, size: 13).foregroundStyle(Theme.textSecondary)
+                .frame(width: 24, height: 24).background(t.tint, in: Circle())
+        case .plain:
+            LineIcon(name: t.icon, size: 16).foregroundStyle(Theme.textSecondary)
+                .frame(width: 30, height: 30).background(t.tint, in: Circle())
+        }
+    }
+
+    @ViewBuilder
+    private var nameView: some View {
+        switch kind {
+        case let .bundle(_, range):
+            HStack(spacing: 4) {
+                (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    + Text(" ").font(.onAll(size: 16))
+                    + Text(range).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+            }
+        case let .kid(isFirst):
+            HStack(spacing: 4) {
+                (Text(row.title).font(.onAll(size: 14, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    + Text(" ").font(.onAll(size: 14))
+                    + Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
+                    .lineLimit(1)
+                if isFirst {
+                    Button(action: onCollapse) {
+                        Image(systemName: "chevron.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                            .frame(width: 28, height: 28).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        case .plain:
+            (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                + Text(" ").font(.onAll(size: 16))
+                + Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
+                .lineLimit(1)
+        }
     }
 }
 
@@ -462,3 +658,34 @@ struct LedgerEntryLoader: View {
     }
 }
 
+
+/// Which transactions of a day are shown as one bundle: the ones the user put in a group (`묶기`), else a transit trip. Pure.
+enum TransactionBundling {
+    struct Candidate {
+        let id: LedgerEntryID
+        let minute: Int
+        let title: String
+        let category: CanonicalCategoryID?
+        let amountMinor: Int64
+        /// Spending (not a deposit or a refund).
+        let eligible: Bool
+    }
+
+    /// A key per candidate (`u:` a user's group, `a:` a transit trip), nil when it is in no bundle of two or more.
+    static func keys(_ items: [Candidate], dayStart: Int64, groupOf: (LedgerEntryID) -> String?) -> [String?] {
+        var keys = items.map { $0.eligible ? groupOf($0.id).map { "u:" + $0 } : nil }
+        let loose = items.indices.filter { keys[$0] == nil && items[$0].eligible }
+        let markers = loose.compactMap { index -> TransactionMarker? in
+            guard let money = try? Money(minorUnits: items[index].amountMinor, currency: "KRW") else { return nil }
+            return TransactionMarker(
+                id: items[index].id, occurredAtUnixMilliseconds: dayStart + Int64(items[index].minute) * 60_000, amount: money, flow: .spend, title: items[index].title
+            )
+        }
+        let transit = Dictionary(loose.map { (items[$0].id, CategoryIcon.symbol(for: items[$0].category) == "car") }, uniquingKeysWith: { first, _ in first })
+        for trip in TransitTripMerge.trips(in: markers, accountOf: { _ in "day" }, isTransit: { transit[$0.id] ?? false }) {
+            for index in loose where trip.legs.contains(items[index].id) { keys[index] = "a:" + trip.boarding.rawValue }
+        }
+        let counts = Dictionary(keys.compactMap { $0 }.map { ($0, 1) }, uniquingKeysWith: +)
+        return keys.map { key in key.flatMap { counts[$0, default: 0] > 1 ? $0 : nil } }
+    }
+}

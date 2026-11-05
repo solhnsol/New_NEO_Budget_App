@@ -149,6 +149,8 @@ enum Theme {
         static let pressedButtonOpacity = 0.85
         /// A selection box appearing.
         static let select = Animation.easeOut(duration: 0.15)
+        /// The rows making room for a selection box, and the box opening: a spring, so they slide along (the design: the box opens, it does not fade).
+        static let selectSlide = Animation.spring(response: 0.36, dampingFraction: 0.88)
         /// The selection action bar rising.
         static let actionBar = Animation.spring(duration: 0.24, bounce: 0.15)
         /// The day body sliding to another day.

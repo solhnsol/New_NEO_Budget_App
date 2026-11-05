@@ -14,6 +14,16 @@ struct LedgerSelection: Equatable {
         if ids.isEmpty { isActive = false }
     }
 
+    /// A bundle is picked as a whole: all of its transactions at once.
+    mutating func begin(withAll picked: [LedgerEntryID]) { ids = Set(picked); isActive = !ids.isEmpty }
+
+    mutating func toggleAll(_ picked: [LedgerEntryID]) {
+        if picked.allSatisfy(ids.contains) { ids.subtract(picked) } else { ids.formUnion(picked) }
+        if ids.isEmpty { isActive = false }
+    }
+
+    func containsAll(_ picked: [LedgerEntryID]) -> Bool { !picked.isEmpty && picked.allSatisfy(ids.contains) }
+
     mutating func end() { ids = []; isActive = false }
 
     func contains(_ id: LedgerEntryID) -> Bool { ids.contains(id) }
@@ -77,13 +87,14 @@ struct SelectableRowBackground: View {
 /// The slate bar that rises at the bottom while rows are picked: 분류 · 일정 · 태그 · 정산 · 삭제.
 struct LedgerSelectionBar: View {
     enum Action: CaseIterable {
-        case category, event, tag, settle, delete
+        case category, event, tag, group, settle, delete
 
         var label: String {
             switch self {
             case .category: "분류"
             case .event: "일정"
             case .tag: "태그"
+            case .group: "묶기"
             case .settle: "정산"
             case .delete: "삭제"
             }
@@ -94,6 +105,7 @@ struct LedgerSelectionBar: View {
             case .category: "cat"
             case .event: "cal"
             case .tag: "tag"
+            case .group: "split"
             case .settle: "bank"
             case .delete: "trash"
             }
@@ -101,14 +113,17 @@ struct LedgerSelectionBar: View {
     }
 
     let perform: (Action) -> Void
+    /// What the bar offers: the ledger tab has no bundles; the calendar has 묶기 (or 풀기 when the picks are one bundle).
+    var actions: [Action] = [.category, .event, .tag, .settle, .delete]
+    var ungroups = false
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(Action.allCases, id: \.self) { action in
+            ForEach(actions, id: \.self) { action in
                 Button { perform(action) } label: {
                     VStack(spacing: 4) {
                         LineIcon(name: action.icon, size: 22)
-                        Text(action.label).font(Font.onAll(size: 11, weight: .medium))
+                        Text(action == .group && ungroups ? "풀기" : action.label).font(Font.onAll(size: 11, weight: .medium))
                     }
                     .foregroundStyle(action == .delete ? Theme.actionBarDelete : Color.white)
                     .frame(maxWidth: .infinity, minHeight: 56)

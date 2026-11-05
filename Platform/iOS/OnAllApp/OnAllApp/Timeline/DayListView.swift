@@ -15,7 +15,7 @@ struct DayListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             let incomes = model.incomeByDay[day] ?? []
-            let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds, incomes: incomes) }
+            let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds, incomes: incomes, groupOf: { model.bundleGroup(of: $0) }) }
             HStack(alignment: .firstTextBaseline) {
                 Text("\(day.day)일 \(Formatting.weekdayShort(day))요일").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 0)
@@ -28,6 +28,7 @@ struct DayListView: View {
                 ForEach(plan.items) { item in
                     switch item.kind {
                     case let .row(row): pickable(row, inEvent: false)
+                    case let .bundle(bundle): bundleView(bundle)
                     case let .event(block, rows, isFuture):
                         EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
                     }
@@ -47,11 +48,33 @@ struct DayListView: View {
         TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id), selecting: model.selection.isActive && !row.isIncome)
             .listTap {
                 guard !row.isIncome, !HapticHold.justHeld(row.id.rawValue) else { return }
-                if model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
+                if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
             }
             .hapticLongPress(id: row.id.rawValue, enabled: !model.selection.isActive && !row.isIncome) {
-                withAnimation(Theme.Motion.select) { model.selection.begin(with: row.id) }
+                withAnimation(Theme.Motion.selectSlide) { model.selection.begin(with: row.id) }
             }
+    }
+
+    /// A bundle: one row (its tile with the count, its name, the sum); a tap opens it to list its transactions, or in selection mode picks all of them.
+    private func bundleView(_ bundle: Plan.Bundle) -> some View {
+        let open = model.openBundles.contains(bundle.key)
+        let ids = bundle.rows.map(\.id)
+        let picked = model.selection.containsAll(ids)
+        return VStack(alignment: .leading, spacing: 0) {
+            BundleListRow(bundle: bundle, open: open, selecting: model.selection.isActive, picked: picked)
+                .listTap {
+                    guard !HapticHold.justHeld(bundle.key) else { return }
+                    if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggleAll(ids) } } else {
+                        withAnimation(.snappy(duration: 0.28)) { if open { model.openBundles.remove(bundle.key) } else { model.openBundles.insert(bundle.key) } }
+                    }
+                }
+                .hapticLongPress(id: bundle.key, enabled: !model.selection.isActive) {
+                    withAnimation(Theme.Motion.selectSlide) { model.selection.begin(withAll: ids) }
+                }
+            if open {
+                ForEach(bundle.rows) { row in pickable(row, inEvent: false).padding(.leading, 40) }
+            }
+        }
     }
 
     /// What the list draws for one day, in time order.
@@ -65,10 +88,20 @@ struct DayListView: View {
             let isIncoming: Bool
             /// A deposit: its own tile, opens nothing.
             var isIncome = false
+            var amountMinor: Int64 = 0
+        }
+
+        /// Transactions shown as one row (the design's 묶음): the name, how many, and what they came to; opened, the transactions are listed under it.
+        struct Bundle: Identifiable {
+            let key: String
+            let title: String
+            let rows: [Row]
+            var id: String { key }
+            var total: Int64 { rows.reduce(0) { $0 + $1.amountMinor } }
         }
 
         struct Item: Identifiable {
-            enum Kind { case row(Row), event(EventBlock, [Row], isFuture: Bool) }
+            enum Kind { case row(Row), event(EventBlock, [Row], isFuture: Bool), bundle(Bundle) }
             let id: String
             let minute: Int
             let kind: Kind
@@ -80,11 +113,11 @@ struct DayListView: View {
         /// Nothing of the day has happened yet.
         let futureOnly: Bool
 
-        init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
+        init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }) {
             let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
             let now = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
             func row(_ id: LedgerEntryID, _ minute: Int, _ title: String?, _ category: CanonicalCategoryID?, _ money: Money, incoming: Bool) -> Row {
-                Row(id: id, minute: minute, title: title ?? "거래", category: category, amountText: RailPlan.railAmount(Formatting.money(money.minorUnits, currency: money.currency), incoming: incoming), isIncoming: incoming)
+                Row(id: id, minute: minute, title: title ?? "거래", category: category, amountText: RailPlan.railAmount(Formatting.money(money.minorUnits, currency: money.currency), incoming: incoming), isIncoming: incoming, amountMinor: money.minorUnits)
             }
             let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
             let marked = Set(timeline.markers.map(\.transactionID))
@@ -98,6 +131,22 @@ struct DayListView: View {
                 items.append(Item(id: "i/" + income.id.rawValue, minute: minute, kind: .row(deposit)))
             }
             var rowCount = items.count
+            // Loose transactions that belong together become one bundle row at the first of them.
+            let looseRows: [Row] = items.compactMap { if case let .row(row) = $0.kind, !row.isIncome { return row } else { return nil } }
+            let keys = TransactionBundling.keys(
+                looseRows.map { TransactionBundling.Candidate(id: $0.id, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncoming) },
+                dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf
+            )
+            var byKey: [String: [Row]] = [:]
+            for (row, key) in zip(looseRows, keys) { if let key { byKey[key, default: []].append(row) } }
+            var placed = Set<String>()
+            items = items.compactMap { item in
+                guard case let .row(row) = item.kind, let at = looseRows.firstIndex(where: { $0.id == row.id }), let key = keys[at], let members = byKey[key] else { return item }
+                guard placed.insert(key).inserted else { return nil }
+                let ordered = members.sorted { ($0.minute, $0.id.rawValue) < ($1.minute, $1.id.rawValue) }
+                let title = key.hasPrefix("a:") ? ordered[0].title : ordered[0].title + " 외 \(ordered.count - 1)건"
+                return Item(id: "b/" + key, minute: ordered[0].minute, kind: .bundle(Bundle(key: key, title: title, rows: ordered)))
+            }
             for block in blocks {
                 // A transaction wholly inside an event has no marker of its own; it is drawn from the event's allocations.
                 let inside: [Row] = block.allocations.filter { $0.occursOnSelectedDay && !marked.contains($0.transactionID) }.map { item in
@@ -188,5 +237,43 @@ extension DayListView {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         }
+    }
+}
+
+/// A bundle's row in the list: the category tile with the count on it, the name with a chevron, what the legs were, and the sum.
+private struct BundleListRow: View {
+    let bundle: DayListView.Plan.Bundle
+    let open: Bool
+    let selecting: Bool
+    let picked: Bool
+
+    var body: some View {
+        let tile = CategoryIcon.tile(for: bundle.rows[0].category)
+        HStack(spacing: 0) {
+            SelectCheckSlot(selecting: selecting, picked: picked, gap: Theme.Space.m)
+            LineIcon(name: tile.icon, size: 20).foregroundStyle(Theme.textSecondary)
+                .frame(width: 40, height: 40).background(tile.tint, in: Circle())
+                .overlay(alignment: .bottomTrailing) {
+                    Text("\(bundle.rows.count)").font(.onAll(size: 10, weight: .semibold)).foregroundStyle(.white)
+                        .frame(minWidth: 16, minHeight: 16).padding(.horizontal, 3).background(Theme.actionBar, in: Capsule())
+                        .overlay(Capsule().strokeBorder(Theme.surface, lineWidth: 2)).offset(x: 4, y: 4)
+                }
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 4) {
+                    Text(bundle.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(open ? 180 : 0))
+                }
+                Text(bundle.rows.map { "\($0.title) \(clockText($0.minute))" }.joined(separator: " · "))
+                    .font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).lineLimit(1)
+            }
+            .padding(.leading, Theme.Space.m)
+            Spacer(minLength: Theme.Space.s)
+            Text(RailPlan.railAmount(Formatting.grouped(bundle.total), incoming: false)).font(Theme.Typo.amount)
+                .foregroundStyle(Theme.amountColor(isIncoming: false)).lineLimit(1).fixedSize()
+        }
+        .padding(.horizontal, 28).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(picked ? Theme.accentSoft : Color.clear)
     }
 }

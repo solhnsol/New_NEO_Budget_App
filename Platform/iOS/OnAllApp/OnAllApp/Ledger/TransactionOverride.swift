@@ -9,8 +9,10 @@ struct TransactionOverride: Codable, Equatable {
     var category: CanonicalCategoryID?
     var memo: String?
     var tags: [String] = []
+    /// The bundle the user put it in (`묶기`): transactions with the same id are shown as one row on the calendar.
+    var group: String?
 
-    var isEmpty: Bool { title == nil && category == nil && memo == nil && tags.isEmpty }
+    var isEmpty: Bool { title == nil && category == nil && memo == nil && tags.isEmpty && group == nil }
 
     /// A name or memo as typed, trimmed; `nil` when nothing is left.
     static func clean(_ text: String) -> String? {

@@ -16,7 +16,7 @@ struct CalendarSelectionLayer: ViewModifier {
         content
             .overlay(alignment: .bottom) {
                 if model.selection.isActive {
-                    LedgerSelectionBar(perform: perform).transition(.move(edge: .bottom).combined(with: .opacity))
+                    LedgerSelectionBar(perform: perform, actions: [.category, .event, .tag, .group, .settle, .delete], ungroups: picksAreOneBundle).transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .overlay {
@@ -57,7 +57,7 @@ struct CalendarSelectionLayer: ViewModifier {
             }
     }
 
-    private func end() { withAnimation(Theme.Motion.select) { model.selection.end() } }
+    private func end() { withAnimation(Theme.Motion.selectSlide) { model.selection.end() } }
 
     /// The picked ones as the ledger lists them (read when an action needs more than their ids).
     private func pickedEntries() async -> [LedgerListEntry] {
@@ -71,7 +71,28 @@ struct CalendarSelectionLayer: ViewModifier {
         case .event: Task { pickEntries = await pickedEntries(); isPickingEvent = true }
         case .delete: confirmDelete()
         case .settle: Task { await settleSelected() }
+        case .group: groupOrUngroup()
         }
+    }
+
+    /// 풀기 when the picks are exactly one bundle the user made; otherwise 묶기.
+    private var picksAreOneBundle: Bool {
+        let groups = Set(model.selection.ids.map { model.bundleGroup(of: $0) })
+        guard groups.count == 1, let group = groups.first ?? nil else { return false }
+        return model.transactionOverrides.byTransaction.filter { $0.value.group == group }.count == model.selection.ids.count
+    }
+
+    private func groupOrUngroup() {
+        let ids = Array(model.selection.ids)
+        if picksAreOneBundle {
+            model.ungroupTransactions(ids)
+        } else if ids.count < 2 {
+            notice = "묶으려면 거래를 두 건 이상 골라 주세요."
+            return
+        } else {
+            model.groupTransactions(ids)
+        }
+        end()
     }
 
     /// Only typed-in transactions can be deleted; what the bank or card reported stays.
@@ -132,10 +153,9 @@ struct SelectCheckSlot: View {
     var body: some View {
         SelectCheck(picked: picked)
             .frame(width: selecting ? 22 : 0, height: 22)
-            .opacity(selecting ? 1 : 0)
             .padding(.trailing, selecting ? gap : 0)
             .clipped()
-            .animation(Theme.Motion.select, value: selecting)
+            .animation(Theme.Motion.selectSlide, value: selecting)
             .animation(Theme.Motion.select, value: picked)
     }
 }

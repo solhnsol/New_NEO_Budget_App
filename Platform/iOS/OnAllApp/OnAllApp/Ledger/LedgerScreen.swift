@@ -295,6 +295,7 @@ struct LedgerScreen: View {
         case .event: isPickingEvent = true
         case .delete: confirmDelete()
         case .settle: Task { await settleSelected() }
+        case .group: break
         }
     }
 

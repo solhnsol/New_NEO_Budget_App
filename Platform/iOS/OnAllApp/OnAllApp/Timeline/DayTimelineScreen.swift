@@ -309,7 +309,7 @@ private struct DayHeader: View {
                     Text("\(model.selection.ids.count)건 선택").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
                 Spacer()
-                Button("취소") { withAnimation(Theme.Motion.select) { model.selection.end() } }
+                Button("취소") { withAnimation(Theme.Motion.selectSlide) { model.selection.end() } }
                     .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accentStrong)
                     .frame(minHeight: Theme.hitTarget).contentShape(Rectangle())
             } else {

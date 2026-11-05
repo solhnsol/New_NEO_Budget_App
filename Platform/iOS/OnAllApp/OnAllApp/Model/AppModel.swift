@@ -31,6 +31,18 @@ final class AppModel {
     var creatingEvent = false
     /// The transactions picked in selection mode on the calendar (a long press on a row starts it).
     var selection = LedgerSelection()
+    /// The bundles shown open (their transactions listed), by bundle key.
+    var openBundles: Set<String> = []
+    /// The bundle the user put a transaction in, if any.
+    func bundleGroup(of id: LedgerEntryID) -> String? { transactionOverrides[id]?.group }
+
+    /// Puts the picked transactions in one new bundle (`묶기`), or takes them out of theirs (`풀기`).
+    func groupTransactions(_ ids: [LedgerEntryID]) {
+        let group = "g" + UUID().uuidString
+        editMany(ids) { $0.group = group }
+    }
+
+    func ungroupTransactions(_ ids: [LedgerEntryID]) { editMany(ids) { $0.group = nil } }
     /// Where a long press on the day started a new event (day and minute); the create sheet opens with that start.
     var newEventSeed: (day: LocalDate, minute: Int)?
     /// The manual-transaction sheet, opened from the create sheet's 거래 switch.
