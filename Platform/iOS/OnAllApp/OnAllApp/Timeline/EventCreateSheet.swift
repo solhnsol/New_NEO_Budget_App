@@ -40,7 +40,7 @@ struct EventCreateSheet: View {
     private var canSave: Bool { !title.trimmingCharacters(in: .whitespaces).isEmpty && (calendarID ?? writable.first?.id) != nil && !isSaving }
 
     var body: some View {
-        PanelSheet(isOpen: $isOpen, close: close) {
+        PanelSheet(isOpen: $isOpen, close: close, content: {
             VStack(alignment: .leading, spacing: 0) {
                 if let switchToTransaction {
                     SheetSegments(options: ["일정", "거래"], selection: Binding(get: { 0 }, set: { if $0 == 1 { switchToTransaction() } }))
@@ -50,15 +50,10 @@ struct EventCreateSheet: View {
                     SheetTitleField(text: $title, highlight: suggestion.flatMap { SheetFormat.timeRun(in: title, stripped: $0.strippedTitle) }, focus: $titleFocused, submit: { if canSave { save() } })
                 }
                 if writable.count > 1 { SheetCalendarChips(calendars: writable, selection: $calendarID).padding(.top, Theme.Space.m) }
-                if isOpen {
-                    ScrollView { rows }.scrollIndicators(.hidden).padding(.top, Theme.Space.s)
-                } else {
-                    summary.padding(.top, Theme.Space.m)
-                }
+                summary.padding(.top, Theme.Space.m)
                 if let failure { Text(failure).font(Theme.Typo.caption).foregroundStyle(Theme.danger).padding(.top, Theme.Space.s) }
             }
-            .padding(.bottom, isOpen ? 0 : Theme.Space.l)
-        }
+        }, more: { rows.padding(.top, Theme.Space.s) })
         .onAppear {
             titleFocused = true
             calendarID = calendarID ?? writable.first?.id

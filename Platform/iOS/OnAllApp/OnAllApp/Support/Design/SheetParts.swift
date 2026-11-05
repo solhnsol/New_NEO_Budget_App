@@ -404,54 +404,98 @@ extension SheetFormat {
 
 /// The create sheet as the design draws it: a white panel resting on the keyboard, the screen dimmed above it. It is drawn over the screen
 /// (an overlay, not a system sheet: a short system sheet jumps to full height when the keyboard comes up and hides the screen behind it).
-/// Pulled up (`isOpen`) the panel grows to nearly the whole screen; pulled down or tapped outside it closes.
-struct PanelSheet<Content: View>: View {
+/// `small` is what shows at rest; `more` is under it and is uncovered as the panel is pulled up: the panel's height follows the finger the whole way
+/// (`progress` 0 to 1) and settles by a spring when let go. Pulled down from rest, or a tap outside, it goes away.
+struct PanelSheet<Small: View, More: View>: View {
     @Binding var isOpen: Bool
     var canOpen = true
     let close: () -> Void
-    @ViewBuilder let content: () -> Content
+    @ViewBuilder let small: () -> Small
+    @ViewBuilder let more: () -> More
     @State private var shown = false
-    /// How far a finger has carried the panel (down is positive); it follows the finger and settles by a spring when let go (the design's sheet).
+    /// How far the panel is open: 0 at rest, 1 nearly the whole screen. It follows the finger.
+    @State private var progress: CGFloat = 0
+    /// How far a finger has carried the panel down past rest (down is positive).
     @State private var dragY: CGFloat = 0
+    @State private var dragStart: CGFloat?
+    @State private var smallHeight: CGFloat = 0
     private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
+        _isOpen = isOpen
+        self.canOpen = canOpen
+        self.close = close
+        small = content
+        self.more = more
+    }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
-                .contentShape(Rectangle()).onTapGesture(perform: dismiss)
-            VStack(spacing: 0) {
-                Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
-                content()
-                if isOpen { Spacer(minLength: 0) }
-            }
-            .padding(.horizontal, Theme.Space.xl)
-            .frame(maxWidth: .infinity, maxHeight: isOpen ? .infinity : nil, alignment: .top)
-            .background(
-                UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.sheet, topTrailingRadius: Theme.Radius.sheet, style: .continuous)
-                    .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
-            )
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 10, coordinateSpace: .global)
-                    .onChanged { drag in
-                        let t = drag.translation.height
-                        // Down: the panel goes with the finger. Up: a little give while it is small (it opens when let go).
-                        dragY = t > 0 ? t : (isOpen || !canOpen ? 0 : t * 0.25)
+        GeometryReader { screen in
+            let openHeight = max(smallHeight, screen.size.height - 70)
+            let range = max(1, openHeight - smallHeight)
+            let height = smallHeight + range * max(0, min(1, progress))
+            ZStack(alignment: .bottom) {
+                Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
+                    .contentShape(Rectangle()).onTapGesture(perform: dismiss)
+                VStack(spacing: 0) {
+                    VStack(spacing: 0) {
+                        Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
+                        small()
                     }
-                    .onEnded { drag in
-                        let t = drag.translation.height, v = drag.velocity.height
-                        withAnimation(spring) {
-                            dragY = 0
-                            if t < -40 || v < -600, canOpen, !isOpen { isOpen = true }
-                            else if t > 120 || v > 600 { if isOpen { isOpen = false } else { dismiss() } }
+                    .padding(.bottom, Theme.Space.l)
+                    .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
+                    if canOpen {
+                        ScrollView { more() }.scrollIndicators(.hidden).frame(height: max(0, height - smallHeight))
+                    }
+                }
+                .padding(.horizontal, Theme.Space.xl)
+                .frame(maxWidth: .infinity, alignment: .top)
+                .frame(height: smallHeight > 0 ? height : nil, alignment: .top)
+                .clipped()
+                .background(
+                    UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.sheet, topTrailingRadius: Theme.Radius.sheet, style: .continuous)
+                        .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
+                )
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                        .onChanged { drag in
+                            let start = dragStart ?? progress
+                            dragStart = start
+                            let travelled = drag.translation.height
+                            if travelled < 0 {
+                                guard canOpen else { return }
+                                progress = min(1, start - travelled / range)
+                                dragY = 0
+                            } else {
+                                // Down: the panel closes up as far as it is open, and past rest it goes down whole.
+                                let left = start - travelled / range
+                                progress = max(0, left)
+                                dragY = left < 0 ? -left * range : 0
+                            }
                         }
-                    }
-            )
-            .padding(.top, isOpen ? 70 : 0)
-            .offset(y: shown ? dragY : 700)
+                        .onEnded { drag in
+                            let start = dragStart ?? progress
+                            dragStart = nil
+                            let v = drag.velocity.height
+                            if start == 0, progress <= 0.001, dragY > 120 || (dragY > 0 && v > 600) { dismiss(); return }
+                            let target: CGFloat = v < -600 ? 1 : v > 600 ? 0 : (progress > 0.5 ? 1 : 0)
+                            settle(to: canOpen ? target : 0)
+                        }
+                )
+                .offset(y: shown ? dragY : 700)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
+        .onPreferenceChange(PanelSmallHeightKey.self) { smallHeight = $0 }
         .tint(Theme.accent)
         .onAppear { withAnimation(spring) { shown = true } }
+        .onChange(of: isOpen) { _, open in if (progress > 0.5) != open { withAnimation(spring) { progress = open ? 1 : 0 } } }
+    }
+
+    private func settle(to target: CGFloat) {
+        withAnimation(spring) { progress = target; dragY = 0 }
+        if (target == 1) != isOpen { isOpen = target == 1 }
     }
 
     /// Goes down (the panel and the dim), then tells the owner.
@@ -462,4 +506,15 @@ struct PanelSheet<Content: View>: View {
             close()
         }
     }
+}
+
+extension PanelSheet where More == EmptyView {
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: @escaping () -> Small) {
+        self.init(isOpen: isOpen, canOpen: canOpen, close: close, content: content, more: { EmptyView() })
+    }
+}
+
+private struct PanelSmallHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
