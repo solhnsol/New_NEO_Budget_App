@@ -23,7 +23,6 @@ struct DayTimelineScreen: View {
     @State private var receivable: Int64 = 0
     @State private var showsSettlement = false
     @State private var openTransaction: TransactionRef?
-    @State private var addingTransaction = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -188,7 +187,6 @@ struct DayTimelineScreen: View {
                 }
             }
           }
-          MonthScrim(state: unfold).zIndex(0.5)
           MonthUnfoldHeader(
             state: unfold, today: model.today,
             cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) }, showsRule: isList,
@@ -200,8 +198,8 @@ struct DayTimelineScreen: View {
             selected: model.selectedDay,
             income: { model.income(on: $0) }
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) }, onToday: { unfold.close(); Task { await goTo(model.today) } })
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { model.creatingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) }, onToday: { unfold.close(); Task { await goTo(model.today) } })
+                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { headerBottom = $0 }
           } strip: { opened in
             WeekStripView(
                 cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
@@ -214,8 +212,8 @@ struct DayTimelineScreen: View {
                 unfold: opened, color: { model.calendarColor($0) }, income: { model.income(on: $0) }
             )
           }
-          // While the month is open the header is taller than the chrome the screen runs under: the screen keeps the inset it had.
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if !unfold.isOpen { chromeFrame = $0 } }
+          // The month pushes the day down as it opens (the design), no dim over it.
+          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chromeFrame = $0 }
           .zIndex(1)
         }
         .background {
@@ -224,6 +222,21 @@ struct DayTimelineScreen: View {
             }
         }
         .sheet(item: $selection) { item in
+            if case let .event(block) = item {
+                EventQuickSheet(block: block, model: model, onEditInfo: { block in
+                    selection = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(400))
+                        infoEvent = block.eventKey
+                    }
+                }, onSettle: { block in
+                    selection = nil
+                    Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(400))
+                        settleEvent = block.eventKey
+                    }
+                })
+            } else {
             EventDetailView(selection: item, zoneIdentifier: zoneIdentifier, onEditInfo: { block in
                 // One sheet at a time: the details close, then the Activity sheet opens.
                 selection = nil
@@ -238,9 +251,10 @@ struct DayTimelineScreen: View {
                     settleEvent = block.eventKey
                 }
             })
+            }
         }
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
-        .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
+        .sheet(isPresented: Binding(get: { model.creatingTransaction }, set: { model.creatingTransaction = $0 })) { ManualTransactionSheet(model: model) }
         .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
         .task(id: model.dataGeneration) {
             if let life = await model.lifeState() {

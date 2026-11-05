@@ -8,6 +8,8 @@ import SwiftUI
 struct EventCreateSheet: View {
     let model: AppModel
     let close: () -> Void
+    /// The 거래 side of the 일정 / 거래 switch at the top.
+    var switchToTransaction: (() -> Void)?
     @State private var title = ""
     @State private var calendarID: CalendarID?
     @State private var day: Date
@@ -22,9 +24,10 @@ struct EventCreateSheet: View {
     @State private var isOpen = false
     @FocusState private var titleFocused: Bool
 
-    init(model: AppModel, close: @escaping () -> Void) {
+    init(model: AppModel, close: @escaping () -> Void, switchToTransaction: (() -> Void)? = nil) {
         self.model = model
         self.close = close
+        self.switchToTransaction = switchToTransaction
         var parts = DateComponents()
         parts.year = model.selectedDay.year; parts.month = model.selectedDay.month; parts.day = model.selectedDay.day
         _day = State(initialValue: Calendar.current.date(from: parts) ?? Date())
@@ -37,6 +40,10 @@ struct EventCreateSheet: View {
     var body: some View {
         PanelSheet(isOpen: $isOpen, close: close) {
             VStack(alignment: .leading, spacing: 0) {
+                if let switchToTransaction {
+                    SheetSegments(options: ["일정", "거래"], selection: Binding(get: { 0 }, set: { if $0 == 1 { switchToTransaction() } }))
+                        .frame(width: 148).padding(.bottom, Theme.Space.m)
+                }
                 SheetTitleLine(canSave: canSave, save: save) {
                     SheetTitleField(text: $title, highlight: suggestion.flatMap { SheetFormat.timeRun(in: title, stripped: $0.strippedTitle) }, focus: $titleFocused, submit: { if canSave { save() } })
                 }

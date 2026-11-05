@@ -37,12 +37,8 @@ struct CalendarMenu: View {
             .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
             .padding(.trailing, 6)
             icon("srch") {}
-            Menu {
-                Button { onAddEvent() } label: { Text("일정 추가") }
-                Button { onAdd() } label: { Text("내역 추가") }
-            } label: {
-                LineIcon(name: "plus").foregroundStyle(Theme.textPrimary).frame(width: Theme.hitTarget, height: Theme.hitTarget).contentShape(Rectangle())
-            }
+            // The design's +: the create sheet, whose 일정 / 거래 switch picks what to make.
+            icon("plus") { onAddEvent() }
         }
     }
 

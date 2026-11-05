@@ -29,6 +29,8 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     /// The new-event panel is open. Drawn by `RootTabs`, over the tab bar, so it can rest on the keyboard.
     var creatingEvent = false
+    /// The manual-transaction sheet, opened from the create sheet's 거래 switch.
+    var creatingTransaction = false
     private(set) var selectedDay: LocalDate
     /// The first of the two days on screen. `selectedDay` is its date.
     var timeline: DayTimeline? { cache[selectedDay] }
