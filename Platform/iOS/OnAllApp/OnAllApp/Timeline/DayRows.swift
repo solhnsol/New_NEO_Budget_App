@@ -407,7 +407,7 @@ private struct TransactionRailRow: View {
             if selected {
                 RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accentSoft)
                     .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
-                    .frame(height: RailMetrics.rowHeight).padding(.leading, 60)
+                    .frame(height: RailMetrics.rowHeight).padding(.leading, 60).padding(.trailing, -10)
             }
         }
         .contentShape(Rectangle())

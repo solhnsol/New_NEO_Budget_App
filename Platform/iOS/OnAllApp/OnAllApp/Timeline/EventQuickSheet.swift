@@ -14,6 +14,8 @@ struct EventQuickSheet: View {
     @State private var start: Date
     @State private var end: Date
     @State private var failure: String?
+    /// Set once the changes are written, so closing the sheet does not write them again.
+    @State private var saved = false
     @State private var scopeChoices: [RecurrenceScope] = []
     @State private var pendingRequest: EventSaveRequest?
     @State private var confirmsDelete = false
@@ -71,6 +73,12 @@ struct EventQuickSheet: View {
         .background(Theme.surface)
         .tint(Theme.accent)
         .environment(\.timeZone, zone)
+        // Closing the sheet any other way than 확인 (a swipe down, a tap outside) keeps what was changed: it is written then, so the day shows it at once.
+        .onDisappear {
+            guard dirty, !saved else { return }
+            let request = makeRequest(scope: block.isRecurringInstance ? .thisOccurrence : nil)
+            Task { _ = await model.save(request) }
+        }
         .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
         .presentationCornerRadius(Theme.Radius.sheet)
         .presentationDragIndicator(.visible)
@@ -189,17 +197,21 @@ struct EventQuickSheet: View {
 
     private func save(_ scope: RecurrenceScope?) async {
         titleFocused = false
-        let request = EventSaveRequest(
-            original: EventSaveOriginal(block: block), proposedStart: start, proposedEnd: max(end, start.addingTimeInterval(900)),
-            proposedTitle: cleanTitle.isEmpty || cleanTitle == block.title ? nil : cleanTitle, scope: scope
-        )
+        let request = makeRequest(scope: scope)
         switch await model.save(request) {
-        case .saved, .unchanged: dismiss()
+        case .saved, .unchanged: saved = true; dismiss()
         case let .needsScope(options): scopeChoices = options
         case .refused: failure = "저장하지 못했어요. 일정이 바뀌었을 수 있어요."
         case .failed: failure = "저장하지 못했어요. 잠시 뒤에 다시 해 주세요."
         case nil: failure = "저장하지 못했어요."
         }
+    }
+
+    private func makeRequest(scope: RecurrenceScope?) -> EventSaveRequest {
+        EventSaveRequest(
+            original: EventSaveOriginal(block: block), proposedStart: start, proposedEnd: max(end, start.addingTimeInterval(900)),
+            proposedTitle: cleanTitle.isEmpty || cleanTitle == block.title ? nil : cleanTitle, scope: scope
+        )
     }
 
     private func delete() async {
