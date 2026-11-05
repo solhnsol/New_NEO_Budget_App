@@ -263,27 +263,21 @@ private struct RailTimeline: View {
                 TransactionRailRow(
                     row: row, selected: model?.selection.contains(row.transactionID) ?? false,
                     onTap: {
-                        guard !row.isIncome else { return }
+                        guard !row.isIncome, !HapticHold.justHappened else { return }
                         if let model, model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.transactionID) } } else { onOpenTransaction(row.transactionID) }
                     },
-                    onLongPress: { if !row.isIncome, let model { Haptics.snap(); withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
+                    onLongPress: { if !row.isIncome, let model { withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
                 ).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
             }
             if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
         .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
         .contentShape(Rectangle())
-        .gesture(
-            LongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8)
-                .sequenced(before: DragGesture(minimumDistance: 0))
-                .onEnded { value in
-                    guard case let .second(true, drag?) = value else { return }
-                    let minute = plan.axis.minute(atY: Double(drag.location.y))
-                    let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
-                    Haptics.snap()
-                    onCreate(max(0, snapped))
-                }
-        )
+        .hapticLongPress(at: { location in
+                let minute = plan.axis.minute(atY: Double(location.y))
+                let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
+                onCreate(max(0, snapped))
+            })
         .padding(.vertical, RailMetrics.vertical)
     }
 }
@@ -397,7 +391,7 @@ private struct TransactionRailRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8, perform: onLongPress)
+        .hapticLongPress(perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)
