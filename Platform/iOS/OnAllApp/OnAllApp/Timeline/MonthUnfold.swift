@@ -319,7 +319,8 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
                     .overlay { IncomeDot(show: came > 0) }
                 Color.clear.frame(height: MonthUnfold.barsRow)
-                EventDots(events: overflow ?? [], color: color)
+                // Income and spending both written: their two lines take the dots' place.
+                EventDots(events: came > 0 && spent != nil ? [] : (overflow ?? []), color: color)
                 Color.clear.frame(height: MonthUnfold.monthGap)
                 AmountLines(spent: spent, income: came > 0 ? MonthUnfold.amountText(came) : nil, open: 1)
             }

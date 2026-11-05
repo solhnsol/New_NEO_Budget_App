@@ -303,7 +303,7 @@ struct WeekStripView: View {
             let column = day.daysSinceUnixEpoch - weekStart.daysSinceUnixEpoch
             ZStack {
                 EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold).offset(y: 7.5 * (1 - unfold))
-                if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
+                if let layout = openWeek, (0..<7).contains(column) { EventDots(events: day < today && income(day) > 0 && MonthUnfold.spendText(of: info) != nil ? [] : layout.overflow[column], color: color).opacity(unfold) }
             }
             Color.clear.frame(height: MonthUnfold.monthGap * unfold)
             AmountLines(spent: day < today ? MonthUnfold.spendText(of: info) : nil, income: day < today && income(day) > 0 ? MonthUnfold.amountText(income(day)) : nil, open: unfold)
