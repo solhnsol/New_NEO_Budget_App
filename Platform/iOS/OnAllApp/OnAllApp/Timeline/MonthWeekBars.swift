@@ -44,10 +44,17 @@ struct EventDots: View {
 
     nonisolated static let height: CGFloat = 9
 
+    /// One dot per calendar (the design: unique colours, at most three).
+    static func uniqueCalendars(_ events: [WeekStripEvent]) -> [CalendarID] {
+        var seen: [CalendarID] = []
+        for event in events where !seen.contains(event.key.calendarID) { seen.append(event.key.calendarID) }
+        return Array(seen.prefix(3))
+    }
+
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(Array(events.prefix(3).enumerated()), id: \.offset) { _, event in
-                Circle().fill(color(event.key.calendarID)).frame(width: 5, height: 5)
+            ForEach(Array(Self.uniqueCalendars(events).enumerated()), id: \.offset) { _, id in
+                Circle().fill(color(id)).frame(width: 5, height: 5)
             }
         }
         .frame(height: Self.height)

@@ -298,10 +298,10 @@ struct WeekStripView: View {
             // Closed: every event of the day as a dot. Open: only those the week's bars left out, as in the month's other weeks.
             let column = day.daysSinceUnixEpoch - weekStart.daysSinceUnixEpoch
             ZStack {
-                EventDots(events: info?.events ?? [], color: color).opacity(1 - unfold)
+                EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold)
                 if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
-            Text(MonthUnfold.spendText(of: info) ?? " ")
+            Text((day < today ? MonthUnfold.spendText(of: info) : nil) ?? " ")
                 .font(.onAll(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.accent)
                 .lineLimit(1).minimumScaleFactor(0.6)

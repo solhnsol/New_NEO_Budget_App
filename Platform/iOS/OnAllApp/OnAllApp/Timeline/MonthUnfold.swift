@@ -51,9 +51,9 @@ enum MonthUnfold {
     static func spendText(of cell: WeekStripDay?) -> String? {
         guard let money = cell?.netSpend.first(where: { $0.currency == "KRW" }) ?? cell?.netSpend.first, money.minorUnits > 0 else { return nil }
         let won = money.minorUnits
-        guard won >= 10_000 else { return "−" + Formatting.grouped(won) }
+        guard won >= 10_000 else { return Formatting.grouped(won) }
         let tenThousands = Double(won) / 10_000
-        return "−" + (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
+        return (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
     }
 
     /// 0 until `from`, 1 from `to`, a straight line between.
@@ -298,7 +298,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     /// Made like the strip's day, so the week that is the strip and the weeks around it read as one.
     private func dayCell(_ day: LocalDate, month: LocalDate, overflow: [WeekStripEvent]?) -> some View {
         let info = cells(day)
-        let spent = MonthUnfold.spendText(of: info)
+        let spent = day < today ? MonthUnfold.spendText(of: info) : nil
         return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
