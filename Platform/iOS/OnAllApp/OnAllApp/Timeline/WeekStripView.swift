@@ -122,7 +122,7 @@ struct WeekStripView: View {
                             }
                         }
                     }
-                    .animation(dragging ? nil : .snappy(duration: 0.34), value: viewOffset)
+                    .animation(dragging ? nil : .spring(response: 0.32, dampingFraction: 0.90), value: viewOffset)
                 }
                 .frame(width: geometry.size.width, height: stripRowHeight, alignment: .topLeading)
             }
@@ -143,8 +143,8 @@ struct WeekStripView: View {
                         dragging = false
                         tapsBlockedUntil = Date().addingTimeInterval(0.3)
                         let width = max(1, stripWidth)
-                        let flick = abs(value.velocity.width) > 500 && (value.velocity.width < 0) == (value.translation.width < 0)
-                        let far = abs(value.translation.width) > width * 0.3
+                        let flick = abs(value.velocity.width) > 400 && (value.velocity.width < 0) == (value.translation.width < 0)
+                        let far = abs(value.translation.width) > width * 0.25
                         if far || flick, abs(value.translation.width) > 8 {
                             // The page changes with the day the strip's selection moves to (see `move`).
                             swipedWeek = true

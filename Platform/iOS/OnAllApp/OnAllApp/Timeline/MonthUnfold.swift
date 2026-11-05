@@ -84,7 +84,7 @@ final class MonthUnfoldState {
     @ObservationIgnored private var tapsLockedUntil = Date.distantPast
     var allowsTap: Bool { Date() >= tapsLockedUntil }
 
-    private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.86)
+    private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.88)
 
     func toggle(selected: LocalDate) { isOpen ? close() : open(selected: selected) }
 
@@ -150,11 +150,12 @@ final class MonthUnfoldState {
         case .pulling:
             let travel = MonthUnfold.travel(rows: MonthUnfold.rows(for: month))
             let speed = velocity.height / travel
-            let target: CGFloat = progress + speed * 0.25 > 0.5 ? 1 : 0
+            // The design: faster than 0.5pt/ms goes the way it moves; slower, it goes to the nearer end.
+            let target: CGFloat = velocity.height > 500 ? 1 : velocity.height < -500 ? 0 : (progress > 0.5 ? 1 : 0)
             let remaining = target - progress
             let initial = abs(remaining) > 0.02 ? max(-4, min(6, speed / remaining)) : 0
             if target == 0 { restoreMonth() }
-            withAnimation(.interpolatingSpring(mass: 1, stiffness: 190, damping: 24, initialVelocity: initial)) { progress = target }
+            withAnimation(.interpolatingSpring(mass: 1, stiffness: 223.8, damping: 26.3, initialVelocity: initial)) { progress = target }
         case .ignored:
             if progress > 0.99, abs(translation.width) > 40, abs(translation.width) > abs(translation.height) * 1.5 { shift(by: translation.width < 0 ? 1 : -1) }
         case .idle:
