@@ -151,10 +151,13 @@ struct SelectCheckSlot: View {
     var gap: CGFloat = 8
 
     var body: some View {
+        // The box grows from a point as it opens and shrinks back as it closes (it is not cut off by a narrowing frame), while its width, and the gap,
+        // make the row slide along with the same spring.
         SelectCheck(picked: picked)
-            .frame(width: selecting ? 22 : 0, height: 22)
+            .scaleEffect(selecting ? 1 : 0.2, anchor: .leading)
+            .opacity(selecting ? 1 : 0)
+            .frame(width: selecting ? 22 : 0, height: 22, alignment: .leading)
             .padding(.trailing, selecting ? gap : 0)
-            .clipped()
             .animation(Theme.Motion.selectSlide, value: selecting)
             .animation(Theme.Motion.select, value: picked)
     }

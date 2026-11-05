@@ -8,6 +8,8 @@ import UIKit
 @available(iOS 18.0, *)
 struct HapticLongPress: UIGestureRecognizerRepresentable {
     var duration: TimeInterval = Theme.Motion.longPressSeconds
+    /// Off (selection mode): the recogniser stays on the view but does not begin. The view's structure never changes, so what is under it keeps animating.
+    var isEnabled = true
     /// The finger is down (true) or has left, moved off or been recognised (false): for the press-in look.
     var isPressing: (Bool) -> Void = { _ in }
     /// The hold was recognised, with where the finger is in the view's own space.
@@ -42,9 +44,18 @@ struct HapticLongPress: UIGestureRecognizerRepresentable {
         let recognizer = Recognizer()
         recognizer.minimumPressDuration = duration
         recognizer.allowableMovement = 10
-        recognizer.touchDown = { isPressing(true) }
+        recognizer.touchDown = {
+            isPressing(true)
+            // A recogniser that fails (the finger moved off, a scroll began) is not told when the touch ends: the press-in look must not stay.
+            DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.25) { isPressing(false) }
+        }
         recognizer.touchUp = { isPressing(false) }
         return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: Recognizer, context: Context) {
+        // Only when it changes: setting it during a touch can cancel the hold.
+        if recognizer.isEnabled != isEnabled { recognizer.isEnabled = isEnabled }
     }
 
     func handleUIGestureRecognizerAction(_ recognizer: Recognizer, context: Context) {
@@ -99,15 +110,13 @@ private struct HapticLongPressRow: ViewModifier {
     @State private var pressing = false
 
     func body(content: Content) -> some View {
-        if !enabled {
-            content
-        } else if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, *) {
             content
                 .scaleEffect(pressing ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.18), value: pressing)
-                .gesture(HapticLongPress(isPressing: { pressing = $0 }, perform: { _ in HapticHold.heldID = id; perform() }))
+                .gesture(HapticLongPress(isEnabled: enabled, isPressing: { pressing = $0 }, perform: { _ in HapticHold.heldID = id; perform() }))
         } else {
-            content.onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8) { HapticHold.heldID = id; perform() }
+            content.onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8) { if enabled { HapticHold.heldID = id; perform() } }
         }
     }
 }
