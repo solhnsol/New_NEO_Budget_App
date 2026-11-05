@@ -293,12 +293,13 @@ struct WeekStripView: View {
                 .accessibilityAddTraits(isShown(day) ? .isSelected : [])
             }
             .frame(height: Self.numberRow)
+            .offset(y: 2)
             .animation(roleAnimation(role), value: role)
             Color.clear.frame(height: MonthUnfold.barsRow * unfold)
             // Closed: every event of the day as a dot. Open: only those the week's bars left out, as in the month's other weeks.
             let column = day.daysSinceUnixEpoch - weekStart.daysSinceUnixEpoch
             ZStack {
-                EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold)
+                EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold).offset(y: 7.5 * (1 - unfold))
                 if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
             Text((day < today ? MonthUnfold.spendText(of: info) : nil) ?? " ")
@@ -306,6 +307,7 @@ struct WeekStripView: View {
                 .foregroundStyle(Theme.accent)
                 .lineLimit(1).minimumScaleFactor(0.6)
                 .frame(height: MonthUnfold.spendRow)
+                .offset(y: -4 * (1 - unfold))
         }
         .frame(width: cell)
     }

@@ -11,10 +11,10 @@ enum MonthUnfold {
     static let spendRow: CGFloat = 14
     static let rowHeight: CGFloat = numberRow + barsRow + dotsRow + spendRow
     /// The weekday names over the weeks and the title bar (month and arrows) over those.
-    static let labelRow: CGFloat = 15
+    static let labelRow: CGFloat = 20
     static let titleRow: CGFloat = 0
     /// What the strip has under its dots and the month does not.
-    static let stripBottomPadding: CGFloat = 6
+    static let stripBottomPadding: CGFloat = 1
 
     static func firstOfMonth(_ day: LocalDate) -> LocalDate { day.adding(days: 1 - day.day) }
 
@@ -221,8 +221,8 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                     .allowsHitTesting(presence > 0.5)
                 weeks((rowCount - after)..<rowCount, month: month, p: p, nearestLast: false)
                 // The handle that pulls the month back up.
-                Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.vertical, 10)
-                    .frame(height: 24 * p, alignment: .top).clipped().opacity(MonthUnfold.ramp(p, from: 0.5, to: 1))
+                Capsule().fill(Theme.rail).frame(width: 36, height: 4)
+                    .frame(maxWidth: .infinity).frame(height: 22).contentShape(Rectangle()).onTapGesture { state.toggle(selected: selected) }
             }
             .padding(.top, Theme.Space.s)
             .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
@@ -306,6 +306,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                     .foregroundStyle(day == today || day == selected ? Theme.accentStrong : Theme.textPrimary)
                     .frame(width: 32, height: 32)
                     .background(day == today || day == selected ? Theme.accentSoft : .clear, in: Circle())
+                    .offset(y: 2)
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
                 Color.clear.frame(height: MonthUnfold.barsRow)
                 EventDots(events: overflow ?? [], color: color)

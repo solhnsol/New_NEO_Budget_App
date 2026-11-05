@@ -41,7 +41,7 @@ struct DaySection: View {
                 }
                 Spacer(minLength: 0)
                 if let timeline, let text = RailPlan.headline(timeline, nowMilliseconds: nowMilliseconds) {
-                    Text(text).font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    text.font(.onAll(size: 15, weight: .medium)).lineLimit(1)
                 }
             }
             .padding(.horizontal, 28).padding(.top, 14).padding(.bottom, 12)
@@ -195,16 +195,12 @@ struct RailPlan {
     /// The row's amount as the design writes it: the number alone, with a minus for money spent and a plus for money coming in.
     static func railAmount(_ text: String, incoming: Bool) -> String { (incoming ? "+" : "−") + (text.hasSuffix("원") ? String(text.dropLast()) : text) }
 
-    /// A past day says what was spent; a day to come how many events it holds; today, what is going on now.
-    static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64) -> String? {
-        if nowMilliseconds >= timeline.dayEndUnixMilliseconds {
-            guard let total = timeline.summary.totals.first, total.linkedNetMinorUnits + total.unlinkedNetMinorUnits > 0 else { return nil }
-            return "쓴 돈 " + Formatting.money(total.linkedNetMinorUnits + total.unlinkedNetMinorUnits, currency: total.currency)
-        }
-        if nowMilliseconds < timeline.dayStartUnixMilliseconds { return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)건" }
-        let now = Int((nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)
-        if let current = timeline.blocks.first(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) { return "진행 중 · " + current.title }
-        return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)건"
+    /// The design's right side of the day title: what was spent ("−9,500원", blue) when anything was; otherwise, for a day not yet over, how many events it holds.
+    static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64) -> Text? {
+        let spent = timeline.summary.totals.first.map { $0.linkedNetMinorUnits + $0.unlinkedNetMinorUnits } ?? 0
+        if spent > 0 { return Text("−" + Formatting.grouped(spent) + "원").foregroundStyle(Theme.accent) }
+        guard nowMilliseconds < timeline.dayEndUnixMilliseconds, !timeline.blocks.isEmpty else { return nil }
+        return Text("일정 \(timeline.blocks.count)건").foregroundStyle(Theme.textTertiary)
     }
 }
 
