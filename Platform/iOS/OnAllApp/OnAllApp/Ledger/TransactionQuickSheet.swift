@@ -13,6 +13,11 @@ struct TransactionQuickSheet: View {
     @State private var opensCategory = false
     @State private var opensEvent = false
     @State private var choosingEvent = false
+    @State private var choosingCategory = false
+    /// How the money moved ("삼성카드", "국민은행 · 체크 1234"), read from the ledger's statements.
+    @State private var payment: String?
+    /// The categories used most, so the chips show those first.
+    @State private var popular: [String] = []
     @State private var detent = PresentationDetent.height(Self.quickHeight)
 
     static let quickHeight: CGFloat = 152
@@ -53,15 +58,17 @@ struct TransactionQuickSheet: View {
                 .padding(.top, 6)
                 VStack(spacing: 0) {
                     Color.clear.frame(height: Theme.Space.xl)
+                    plainRow("결제 수단", payment ?? "—")
                     plainRow("시각", dayText(transaction.occurredAtUnixMilliseconds) + " " + Formatting.clock24(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zone))
-                    if transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix) {
-                        Button { model.removeManual(entry.id); dismiss() } label: {
-                            Text("삭제").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(Theme.dangerStrong)
-                                .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
-                                .background(Theme.dangerSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
-                        }
-                        .padding(.top, Theme.Space.l)
+                    // Only a typed-in transaction can be deleted; the button is there for every one and works for those.
+                    let removable = transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix)
+                    Button { model.removeManual(entry.id); dismiss() } label: {
+                        Text("삭제").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(removable ? Theme.dangerStrong : Theme.disabled)
+                            .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+                            .background(removable ? Theme.dangerSoft : Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
                     }
+                    .disabled(!removable)
+                    .padding(.top, Theme.Space.l)
                 }
             }
             .padding(.horizontal, Theme.Space.xl).padding(.bottom, Theme.Space.l)
@@ -73,13 +80,31 @@ struct TransactionQuickSheet: View {
         .presentationCornerRadius(Theme.Radius.sheet)
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.surface)
+        .sheet(isPresented: $choosingCategory) { CategoryChooserSheet(entry: current, model: model) }
         .sheet(isPresented: $choosingEvent) { TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs) }
         .task(id: [model.dataGeneration, model.overrideRevision]) {
             fresh = await model.ledgerSections()?.lazy.flatMap(\.entries).first { $0.id == entry.id }
             let day = model.dayZone.localDate(of: entry.transaction.occurredAtUnixMilliseconds)
             let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
             nearby = ActivityEditing.eventChoices(near: entry.transaction.occurredAtUnixMilliseconds, in: timelines)
+            if let statements = await model.ledgerStatements() {
+                for statement in statements {
+                    guard let line = statement.lines.first(where: { $0.entryID == entry.id }) else { continue }
+                    payment = Self.paymentText(statement.name, line.instrument)
+                    break
+                }
+            }
+            if let sections = await model.ledgerSections() {
+                let counts = Dictionary(grouping: sections.flatMap(\.entries).compactMap { CategoryIcon.name(for: $0.categoryID) }, by: { $0 }).mapValues(\.count)
+                popular = counts.sorted { ($1.value, $0.key) < ($0.value, $1.key) }.map(\.key)
+            }
         }
+    }
+
+    /// "삼성카드", or the account with what the notification said it was paid with ("국민은행 · 체크 1234").
+    private static func paymentText(_ name: String, _ hint: InstrumentHint?) -> String {
+        let detail = [hint?.displayNameRaw, hint?.maskedHint].compactMap { $0 }.joined(separator: " ")
+        return detail.isEmpty ? name : name + " · " + detail
     }
 
     private func dayText(_ unixMilliseconds: Int64) -> String {
@@ -130,10 +155,13 @@ struct TransactionQuickSheet: View {
     }
 
     private func categoryChips(_ entry: LedgerListEntry) -> some View {
-        QuickFlow(spacing: 6) {
-            ForEach(CategoryIcon.choices, id: \.id) { choice in
+        let currentName = CategoryIcon.name(for: entry.categoryID)
+        let shown = CategoryIcon.choices.filter { $0.name == currentName || popular.prefix(4).contains($0.name) }
+            .sorted { (popular.firstIndex(of: $0.name) ?? 99) < (popular.firstIndex(of: $1.name) ?? 99) }
+        return QuickFlow(spacing: 6) {
+            ForEach(shown, id: \.id) { choice in
                 let id = CanonicalCategoryID(rawValue: choice.id)
-                chip(on: CategoryIcon.name(for: entry.categoryID) == choice.name) {
+                chip(on: currentName == choice.name) {
                     var override = entry.override ?? TransactionOverride()
                     override.category = id
                     model.edit(entry.id, to: override, originalTitle: entry.originalTitle)
@@ -142,6 +170,7 @@ struct TransactionQuickSheet: View {
                     Text(choice.name)
                 }
             }
+            chip(on: false, outlined: true) { choosingCategory = true } label: { Text("전체") }
         }
         .padding(.bottom, Theme.Space.m)
     }
@@ -186,5 +215,45 @@ private struct QuickFlow: Layout {
             x += size.width + spacing; rowHeight = max(rowHeight, size.height); maxX = max(maxX, x - spacing)
         }
         return (CGSize(width: maxX, height: y + rowHeight), frames)
+    }
+}
+
+/// Every category in one list, the one the transaction has marked; a tap sets it and closes.
+struct CategoryChooserSheet: View {
+    let entry: LedgerListEntry
+    let model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let currentName = CategoryIcon.name(for: entry.categoryID)
+        VStack(alignment: .leading, spacing: 0) {
+            Text("분류").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary).padding(.top, Theme.Space.xl).padding(.bottom, Theme.Space.s)
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(CategoryIcon.choices, id: \.id) { choice in
+                        let id = CanonicalCategoryID(rawValue: choice.id)
+                        Button {
+                            var override = entry.override ?? TransactionOverride()
+                            override.category = id
+                            model.edit(entry.id, to: override, originalTitle: entry.originalTitle)
+                            dismiss()
+                        } label: {
+                            HStack(spacing: Theme.Space.m) {
+                                CategoryTile(category: id, size: 32)
+                                Text(choice.name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                                Spacer()
+                                if currentName == choice.name { Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.accent) }
+                            }
+                            .frame(minHeight: Theme.rowHeight).contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.horizontal, Theme.Space.xl)
+        .onAllSheet(detents: [.medium, .large])
+        .tint(Theme.accent)
     }
 }
