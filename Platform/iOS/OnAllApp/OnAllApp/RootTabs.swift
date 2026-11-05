@@ -19,7 +19,7 @@ struct RootTabs: View {
         }
         .background(Theme.background)
         .tint(Theme.accent)
-        .overlay { if model.creatingEvent { EventCreateSheet(model: model, close: { model.creatingEvent = false }, switchToTransaction: { model.creatingEvent = false; model.creatingTransaction = true }) } }
+        .overlay { if model.creatingEvent { EventCreateSheet(model: model, seed: model.newEventSeed, close: { model.creatingEvent = false; model.newEventSeed = nil }, switchToTransaction: { model.creatingEvent = false; model.creatingTransaction = true }) } }
     }
 }
 

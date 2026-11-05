@@ -48,7 +48,10 @@ struct DaySection: View {
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
             .padding(.bottom, 6)
             if let timeline {
-                RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction)
+                RailTimeline(
+                    timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction,
+                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }
+                )
                     .padding(.trailing, Theme.Space.l)
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 48)
@@ -191,7 +194,23 @@ struct RailPlan {
         let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
         let axis = RailAxis(events: events, transactions: rows.map(\.minute), now: now, firstMinute: range.first, lastMinute: range.last)
         var ys: [CGFloat] = []
-        for row in rows { ys.append(max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)) }
+        // The name of an event that has begun stands beside the rail at its start; a row never sits on it (the one below it moves down).
+        let labelBands: [(top: CGFloat, bottom: CGFloat)] = past.map { block in
+            let top = CGFloat(axis.y(block.displayStartMinute))
+            return (top, top + 22)
+        }
+        for row in rows {
+            var y = max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)
+            var moved = true
+            while moved {
+                moved = false
+                for band in labelBands where y + Self.rowHeight / 2 > band.top && y - Self.rowHeight / 2 < band.bottom {
+                    y = band.bottom + Self.rowHeight / 2
+                    moved = true
+                }
+            }
+            ys.append(y)
+        }
         self.past = past
         self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
         self.rows = rows
@@ -238,6 +257,8 @@ private struct RailTimeline: View {
     var incomes: [IncomeItem] = []
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
+    /// A long press on empty time: a new event there (snapped to 15 minutes).
+    var onCreate: (Int) -> Void = { _ in }
 
     var body: some View {
         let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes)
@@ -257,6 +278,18 @@ private struct RailTimeline: View {
             if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
         .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
+        .contentShape(Rectangle())
+        .gesture(
+            LongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8)
+                .sequenced(before: DragGesture(minimumDistance: 0))
+                .onEnded { value in
+                    guard case let .second(true, drag?) = value else { return }
+                    let minute = plan.axis.minute(atY: Double(drag.location.y))
+                    let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
+                    Haptics.snap()
+                    onCreate(max(0, snapped))
+                }
+        )
         .padding(.vertical, RailMetrics.vertical)
     }
 }

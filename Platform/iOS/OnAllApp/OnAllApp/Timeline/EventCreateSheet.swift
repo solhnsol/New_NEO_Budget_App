@@ -24,13 +24,15 @@ struct EventCreateSheet: View {
     @State private var isOpen = false
     @FocusState private var titleFocused: Bool
 
-    init(model: AppModel, close: @escaping () -> Void, switchToTransaction: (() -> Void)? = nil) {
+    init(model: AppModel, seed: (day: LocalDate, minute: Int)? = nil, close: @escaping () -> Void, switchToTransaction: (() -> Void)? = nil) {
         self.model = model
         self.close = close
         self.switchToTransaction = switchToTransaction
         var parts = DateComponents()
-        parts.year = model.selectedDay.year; parts.month = model.selectedDay.month; parts.day = model.selectedDay.day
+        let first = seed?.day ?? model.selectedDay
+        parts.year = first.year; parts.month = first.month; parts.day = first.day
         _day = State(initialValue: Calendar.current.date(from: parts) ?? Date())
+        _startMinute = State(initialValue: seed?.minute)
     }
 
     private var writable: [CalendarDescriptor] { model.calendars.filter(\.isWritable) }

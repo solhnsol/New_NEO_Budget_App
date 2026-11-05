@@ -175,16 +175,12 @@ struct DayTimelineScreen: View {
                         await model.loadMissing()
                     }
                 }
-                if showsList {
-                    DayListView(model: model, topInset: chromeFrame.maxY, onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) })
-                        .padding(.horizontal, Theme.cardMargin)
-                } else {
-                    DayPagerView(
-                        model: model, topInset: chromeFrame.maxY,
-                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                    )
-                    .padding(.horizontal, Theme.cardMargin)
-                }
+                DayPagerView(
+                    model: model, topInset: chromeFrame.maxY, showsList: showsList,
+                    onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+                )
+                .padding(.horizontal, Theme.cardMargin)
+                .id(showsList)
             }
           }
           MonthUnfoldHeader(

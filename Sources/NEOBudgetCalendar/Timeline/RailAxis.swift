@@ -64,6 +64,17 @@ public struct RailAxis: Equatable, Sendable {
         return ys[upper - 1] + (ys[upper] - ys[upper - 1]) * Double(minute - k0) / Double(k1 - k0)
     }
 
+    /// The minute at a height (the inverse of `y`): what a finger held at that point on the rail means. Held at the ends of the range.
+    public func minute(atY y: Double) -> Int {
+        if y <= 0 { return keys[0] }
+        if y >= ys[ys.count - 1] { return keys[keys.count - 1] }
+        var upper = 1
+        while ys[upper] < y { upper += 1 }
+        let span = ys[upper] - ys[upper - 1]
+        guard span > 0 else { return keys[upper - 1] }
+        return keys[upper - 1] + Int(((y - ys[upper - 1]) / span * Double(keys[upper] - keys[upper - 1])).rounded())
+    }
+
     /// The whole hours to label: one per hour in range, dropping a label closer than `minimumGap` to the one before it, or to `avoiding`
     /// (the now line's label).
     public func hourMarks(minimumGap: Double = 16, avoiding minute: Int? = nil) -> [(hour: Int, y: Double)] {

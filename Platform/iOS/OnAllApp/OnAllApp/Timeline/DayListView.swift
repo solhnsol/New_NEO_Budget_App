@@ -6,54 +6,41 @@ import SwiftUI
 /// a box tinted with its colour that holds the transactions that went to it (a name and a time only, once it has begun; a larger title when it is
 /// still to come); a transaction no event holds is a plain row. It reads the same `DayTimeline` as the rail.
 struct DayListView: View {
+    let day: LocalDate
+    let timeline: DayTimeline?
     let model: AppModel
-    /// The day sits under the top chrome (month, week strip); this is how far its content starts below the top of the screen.
-    var topInset: CGFloat = 0
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
-    @State private var timeline: DayTimeline?
-
     var body: some View {
-        let day = model.selectedDay
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds) }
-                HStack(alignment: .firstTextBaseline) {
-                    Text("\(day.day)일 \(Formatting.weekdayShort(day))요일").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary)
-                    Spacer(minLength: 0)
-                    if let plan, plan.eventCount > 0, plan.rowCount == 0 || plan.futureOnly {
-                        Text("일정 \(plan.eventCount)개").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary)
-                    }
-                }
-                .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 8)
-                if let plan {
-                    ForEach(plan.items) { item in
-                        switch item.kind {
-                        case let .row(row): TransactionRow(row: row, inEvent: false).listTap { onOpenTransaction(row.id) }
-                        case let .event(block, rows, isFuture):
-                            EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
-                        }
-                    }
-                    if plan.items.isEmpty {
-                        Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.horizontal, 28).padding(.vertical, Theme.Space.s)
-                    }
-                } else {
-                    ProgressView().frame(maxWidth: .infinity, minHeight: 48)
+        VStack(alignment: .leading, spacing: 0) {
+            let incomes = model.incomeByDay[day] ?? []
+            let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds, incomes: incomes) }
+            HStack(alignment: .firstTextBaseline) {
+                Text("\(day.day)일 \(Formatting.weekdayShort(day))요일").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary)
+                Spacer(minLength: 0)
+                if let plan, plan.eventCount > 0, plan.rowCount == 0 || plan.futureOnly {
+                    Text("일정 \(plan.eventCount)건").font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textTertiary)
                 }
             }
-            .padding(.bottom, Theme.Space.xl)
+            .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 8)
+            if let plan {
+                ForEach(plan.items) { item in
+                    switch item.kind {
+                    case let .row(row): TransactionRow(row: row, inEvent: false).listTap { if !row.isIncome { onOpenTransaction(row.id) } }
+                    case let .event(block, rows, isFuture):
+                        EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
+                    }
+                }
+                if plan.items.isEmpty {
+                    Text("일정과 거래가 없어요").font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.horizontal, 28).padding(.vertical, Theme.Space.s)
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 48)
+            }
         }
-        .scrollBounceBehavior(.basedOnSize)
-        .contentMargins(.top, topInset, for: .scrollContent)
-        .contentMargins(.top, topInset, for: .scrollIndicators)
-        .ignoresSafeArea(edges: .top)
-        .task(id: Key(day: day, generation: model.dataGeneration)) {
-            if let read = await model.readDays([day]).first?.timeline { timeline = read }
-        }
+        .padding(.bottom, Theme.Space.xl)
     }
-
-    private struct Key: Hashable { let day: LocalDate; let generation: Int }
 
     /// What the list draws for one day, in time order.
     struct Plan {
@@ -64,6 +51,8 @@ struct DayListView: View {
             let category: CanonicalCategoryID?
             let amountText: String
             let isIncoming: Bool
+            /// A deposit: its own tile, opens nothing.
+            var isIncome = false
         }
 
         struct Item: Identifiable {
@@ -79,7 +68,7 @@ struct DayListView: View {
         /// Nothing of the day has happened yet.
         let futureOnly: Bool
 
-        init(_ timeline: DayTimeline, nowMilliseconds: Int64) {
+        init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
             let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
             let now = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
             func row(_ id: LedgerEntryID, _ minute: Int, _ title: String?, _ category: CanonicalCategoryID?, _ money: Money, incoming: Bool) -> Row {
@@ -90,6 +79,11 @@ struct DayListView: View {
             var items: [Item] = timeline.markers.map { marker in
                 let loose = row(marker.transactionID, marker.positionMinute, marker.title, marker.categoryID, marker.amount, incoming: marker.flow == .refund)
                 return Item(id: "m/" + marker.transactionID.rawValue, minute: marker.positionMinute, kind: .row(loose))
+            }
+            for income in incomes {
+                let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (income.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+                let deposit = Row(id: income.id, minute: minute, title: income.title ?? "입금", category: nil, amountText: "+" + Formatting.grouped(income.minorUnits), isIncoming: true, isIncome: true)
+                items.append(Item(id: "i/" + income.id.rawValue, minute: minute, kind: .row(deposit)))
             }
             var rowCount = items.count
             for block in blocks {
@@ -161,7 +155,7 @@ extension DayListView {
         let inEvent: Bool
 
         var body: some View {
-            let tile = CategoryIcon.tile(for: row.category)
+            let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
             HStack(spacing: Theme.Space.m) {
                 LineIcon(name: tile.icon, size: 20).foregroundStyle(Theme.textSecondary)
                     .frame(width: 40, height: 40).background(inEvent ? Theme.surface : tile.tint, in: Circle())
