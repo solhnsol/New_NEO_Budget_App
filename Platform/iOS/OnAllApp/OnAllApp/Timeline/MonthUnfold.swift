@@ -9,7 +9,9 @@ enum MonthUnfold {
     static let barsRow: CGFloat = MonthWeekBars.height
     static let dotsRow: CGFloat = EventDots.height
     static let spendRow: CGFloat = 14
-    static let rowHeight: CGFloat = numberRow + barsRow + dotsRow + spendRow
+    /// Between the dots and the amount in a month cell (the design's rows are 96: 36 + 34 + 9 + 3 + 14).
+    static let monthGap: CGFloat = 3
+    static let rowHeight: CGFloat = numberRow + barsRow + dotsRow + monthGap + spendRow
     /// The weekday names over the weeks and the title bar (month and arrows) over those.
     static let labelRow: CGFloat = 20
     static let titleRow: CGFloat = 0
@@ -44,7 +46,7 @@ enum MonthUnfold {
 
     /// The height of the strip at `unfold` (its weekday names folded away, a line for what was spent opened).
     static func stripHeight(unfold: CGFloat) -> CGFloat {
-        labelRow * (1 - unfold) + numberRow + barsRow * unfold + dotsRow + spendRow + stripBottomPadding * (1 - unfold)
+        labelRow * (1 - unfold) + numberRow + (barsRow + monthGap) * unfold + dotsRow + spendRow + stripBottomPadding * (1 - unfold)
     }
 
     /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550). Nil when nothing was spent that day.
@@ -286,7 +288,6 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                 }
                 .overlay(alignment: .topLeading) { if let layout { MonthWeekBars(layout: layout, color: color).padding(.top, MonthUnfold.numberRow) } }
                 .padding(.horizontal, 4)
-                .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
                 .frame(height: MonthUnfold.rowHeight)
                 .opacity(shown)
             }
@@ -310,6 +311,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
                 Color.clear.frame(height: MonthUnfold.barsRow)
                 EventDots(events: overflow ?? [], color: color)
+                Color.clear.frame(height: MonthUnfold.monthGap)
                 Text(spent ?? " ")
                     .font(.onAll(size: 11, weight: .medium).monospacedDigit())
                     .foregroundStyle(Theme.accent)

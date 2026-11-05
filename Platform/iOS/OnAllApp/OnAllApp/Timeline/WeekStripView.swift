@@ -65,7 +65,7 @@ struct WeekStripView: View {
 
     private static let capsuleSpring = Animation.interpolatingSpring(stiffness: 190, damping: 19)
 
-    private var stripRowHeight: CGFloat { Self.numberRow + MonthUnfold.barsRow * unfold + MonthUnfold.dotsRow + MonthUnfold.spendRow }
+    private var stripRowHeight: CGFloat { Self.numberRow + (MonthUnfold.barsRow + MonthUnfold.monthGap) * unfold + MonthUnfold.dotsRow + MonthUnfold.spendRow }
     /// The open week's bars (nil while the strip is closed, or before the week's days are all read).
     private var openWeek: MonthWeekLayout? {
         guard unfold > 0 else { return nil }
@@ -302,6 +302,7 @@ struct WeekStripView: View {
                 EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold).offset(y: 7.5 * (1 - unfold))
                 if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
+            Color.clear.frame(height: MonthUnfold.monthGap * unfold)
             Text((day < today ? MonthUnfold.spendText(of: info) : nil) ?? " ")
                 .font(.onAll(size: 11, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.accent)

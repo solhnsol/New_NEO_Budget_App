@@ -8,11 +8,13 @@ struct MonthWeekBars: View {
     let layout: MonthWeekLayout
     let color: (CalendarID) -> Color
 
-    nonisolated static let laneHeight: CGFloat = 16
+    nonisolated static let laneHeight: CGFloat = 13
     nonisolated static let laneGap: CGFloat = 2
     nonisolated static let lanes = 2
     /// The room the bars take under the day number.
-    nonisolated static let height: CGFloat = CGFloat(lanes) * (laneHeight + laneGap)
+    /// The bars start 4 below the day number's row (the design: bars at 40, number row 36).
+    nonisolated static let top: CGFloat = 4
+    nonisolated static let height: CGFloat = top + CGFloat(lanes) * (laneHeight + laneGap)
 
     var body: some View {
         GeometryReader { proxy in
@@ -22,13 +24,13 @@ struct MonthWeekBars: View {
                 let tint = color(bar.event.key.calendarID)
                 let over = bar.event.endUnixMilliseconds <= now
                 Text(bar.event.title)
-                    .font(.onAll(size: 11, weight: .medium))
-                    .foregroundStyle(over ? Theme.textSecondary : Color.white)
+                    .font(.onAll(size: 10))
+                    .foregroundStyle(over ? Theme.textPrimary : Color.white)
                     .lineLimit(1)
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 3)
                     .frame(width: CGFloat(bar.lastColumn - bar.firstColumn + 1) * cell - 2, height: Self.laneHeight, alignment: .leading)
-                    .background(over ? tint.opacity(0.22) : tint, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
-                    .offset(x: CGFloat(bar.firstColumn) * cell + 1, y: CGFloat(bar.lane) * (Self.laneHeight + Self.laneGap))
+                    .background(over ? tint.opacity(0.22) : tint, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .offset(x: CGFloat(bar.firstColumn) * cell + 1, y: Self.top + CGFloat(bar.lane) * (Self.laneHeight + Self.laneGap))
             }
         }
         .frame(height: Self.height)
