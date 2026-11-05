@@ -334,7 +334,7 @@ private struct TransactionRailRow: View {
                 LineIcon(name: tile.icon, size: 16).foregroundStyle(Theme.textSecondary)
                     .frame(width: 30, height: 30).background(tile.tint, in: Circle())
                 (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                    + Text(" ") .font(.onAll(size: 4))
+                    + Text(" ").font(.onAll(size: 16))
                     + Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
                     .lineLimit(1).padding(.leading, 8)
                 Spacer(minLength: Theme.Space.s)

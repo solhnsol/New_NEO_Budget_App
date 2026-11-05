@@ -199,7 +199,7 @@ struct DayTimelineScreen: View {
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) })
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) }, onToday: { unfold.close(); Task { await goTo(model.today) } })
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
           } strip: { opened in
             WeekStripView(
@@ -286,6 +286,7 @@ private struct DayHeader: View {
     var receivable: Int64 = 0
     var onSettlement: () -> Void = {}
     var onTitle: () -> Void = {}
+    var onToday: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -295,6 +296,12 @@ private struct DayHeader: View {
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
                 .onTapGesture(perform: onTitle)
             Spacer()
+            // The design's "오늘": there while another day than today is selected, gone (faded) on today.
+            Button("오늘", action: onToday)
+                .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                .padding(.horizontal, 10).frame(height: Theme.hitTarget)
+                .opacity(model.selectedDay == model.today ? 0 : 1).allowsHitTesting(model.selectedDay != model.today)
+                .animation(.easeOut(duration: 0.2), value: model.selectedDay == model.today)
             menu
         }
         .padding(.leading, 24).padding(.trailing, 14)
