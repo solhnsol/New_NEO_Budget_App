@@ -381,7 +381,7 @@ struct LedgerEntryLoader: View {
     var body: some View {
         Group {
             if let entry {
-                TransactionDetailView(entry: entry, model: model)
+                TransactionQuickSheet(entry: entry, model: model)
             } else if missing {
                 Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
             } else {
