@@ -41,10 +41,12 @@ struct DaySection: View {
                 }
                 Spacer(minLength: 0)
                 if let timeline, let text = RailPlan.headline(timeline, nowMilliseconds: nowMilliseconds) {
-                    Text(text).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    Text(text).font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 }
             }
-            .padding(.horizontal, 28).padding(.top, 10).padding(.bottom, 8)
+            .padding(.horizontal, 28).padding(.top, 14).padding(.bottom, 12)
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
+            .padding(.bottom, 6)
             if let timeline {
                 RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction)
                     .padding(.trailing, Theme.Space.l)
@@ -140,7 +142,7 @@ struct RailPlan {
     /// The rail's height, grown if stacked rows ran past the axis.
     let height: CGFloat
     let axis: RailAxis
-    static let rowHeight: CGFloat = 26
+    static let rowHeight: CGFloat = 36
     /// The now line's minute, only while it falls inside this day.
     let nowMinute: Int?
 
@@ -199,21 +201,22 @@ struct RailPlan {
             guard let total = timeline.summary.totals.first, total.linkedNetMinorUnits + total.unlinkedNetMinorUnits > 0 else { return nil }
             return "쓴 돈 " + Formatting.money(total.linkedNetMinorUnits + total.unlinkedNetMinorUnits, currency: total.currency)
         }
-        if nowMilliseconds < timeline.dayStartUnixMilliseconds { return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)개" }
+        if nowMilliseconds < timeline.dayStartUnixMilliseconds { return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)건" }
         let now = Int((nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)
         if let current = timeline.blocks.first(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) { return "진행 중 · " + current.title }
-        return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)개"
+        return timeline.blocks.isEmpty ? nil : "일정 \(timeline.blocks.count)건"
     }
 }
 
 private enum RailMetrics {
     /// Where the rail runs, from the left edge of the day: the hour labels sit left of it, everything else right of it.
-    static let railX: CGFloat = 60
+    static let railX: CGFloat = 51
     static let railWidth: CGFloat = 2
     static let barWidth: CGFloat = 6
-    static let dotSize: CGFloat = 10
-    static let contentX: CGFloat = 78
-    static let hourLabelWidth: CGFloat = 40
+    static let dotSize: CGFloat = 12
+    static let contentX: CGFloat = 68
+    static let hourLabelX: CGFloat = 14
+    static let hourLabelWidth: CGFloat = 30
     static let rowHeight = RailPlan.rowHeight
     static let vertical: CGFloat = 12
 }
@@ -232,9 +235,8 @@ private struct RailTimeline: View {
         let height = plan.height
         ZStack(alignment: .topLeading) {
             ForEach(axis.hourMarks(avoiding: plan.nowMinute), id: \.hour) { mark in
-                Rectangle().fill(Theme.divider).frame(height: 1).padding(.leading, RailMetrics.contentX - 8).offset(y: CGFloat(mark.y))
                 Text("\(mark.hour)").font(Theme.Typo.caption.monospacedDigit()).foregroundStyle(Theme.disabled)
-                    .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: CGFloat(mark.y) - 7)
+                    .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(x: RailMetrics.hourLabelX, y: CGFloat(mark.y) - 7)
             }
             Capsule().fill(Theme.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
@@ -264,8 +266,8 @@ private struct PastEventBar: View {
             RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
                 .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
-            Text(block.title).font(.onAll(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 1)
+            Text(block.title).font(.onAll(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 2)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .ignore)
@@ -297,14 +299,14 @@ private struct EventCardView: View {
                 .padding(.vertical, Theme.Space.xs)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(block.title).font(.onAll(size: 16, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    Text(block.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
-                .padding(.vertical, 10)
+                .padding(.top, 8)
             }
         }
-        .padding(.leading, RailMetrics.barWidth + 10).padding(.trailing, 14)
+        .padding(.leading, RailMetrics.barWidth + 13).padding(.trailing, 12)
         .frame(maxWidth: .infinity, minHeight: height, maxHeight: height, alignment: .leading)
         .background(color.opacity(0.14), in: shape)
         .background(Theme.surface, in: shape)
@@ -329,16 +331,18 @@ private struct TransactionRailRow: View {
     var body: some View {
         let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
         ZStack(alignment: .topLeading) {
-            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
+            Circle().fill(Theme.surface).overlay(Circle().strokeBorder(row.colorHex == nil ? Theme.textTertiary : dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
-            HStack(spacing: Theme.Space.s) {
+            HStack(spacing: 0) {
                 let tile = CategoryIcon.tile(for: row.category)
-                LineIcon(name: tile.icon, size: 14).foregroundStyle(Theme.textSecondary)
-                    .frame(width: RailMetrics.rowHeight, height: RailMetrics.rowHeight).background(tile.tint, in: Circle())
-                Text(row.title).font(.onAll(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary).fixedSize()
+                LineIcon(name: tile.icon, size: 16).foregroundStyle(Theme.textSecondary)
+                    .frame(width: 30, height: 30).background(tile.tint, in: Circle())
+                (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    + Text(" ") .font(.onAll(size: 4))
+                    + Text(clockText(row.minute)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary))
+                    .lineLimit(1).padding(.leading, 8)
                 Spacer(minLength: Theme.Space.s)
-                Text(row.amountText).font(.onAll(size: 15, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
+                Text(row.amountText).font(.onAll(size: 16, weight: row.isIncoming ? .semibold : .medium).monospacedDigit())
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
             .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)
@@ -359,10 +363,10 @@ private struct NowLine: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Rectangle().fill(Theme.accent).frame(height: 1.5).padding(.leading, RailMetrics.railX).offset(y: y - 0.75)
-            Circle().fill(Theme.accent).frame(width: 7, height: 7).offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - 3.5, y: y - 3.5)
+            Rectangle().fill(Theme.accent).frame(height: 1).offset(y: y - 0.5)
+            Circle().fill(Theme.accent).frame(width: 10, height: 10).offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - 5, y: y - 5.5)
             Text(clockText(minute)).font(.onAll(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent)
-                .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(y: y - 7)
+                .padding(.horizontal, 2).background(Theme.surface).offset(x: 6, y: y - 8)
             Color.clear.frame(width: 1, height: 1).id("railNow").offset(y: y)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
