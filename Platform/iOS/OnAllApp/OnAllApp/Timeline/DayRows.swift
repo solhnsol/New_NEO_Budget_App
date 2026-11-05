@@ -151,6 +151,23 @@ struct RailPlan {
     /// The now line's minute, only while it falls inside this day.
     let nowMinute: Int?
 
+    /// Where something drawn has touches of its own, in the rail's space (a transaction row, an event card, a begun event's bar and name): a Haptic Touch
+    /// on the empty time between them makes a new event, on these it does what they do.
+    var touchBands: [CGRect] {
+        let wide: CGFloat = 4000
+        var bands = rowYs.map { CGRect(x: 0, y: $0 - Self.rowHeight / 2, width: wide, height: Self.rowHeight) }
+        for block in cards {
+            let top = CGFloat(axis.y(block.displayStartMinute))
+            bands.append(CGRect(x: 0, y: top, width: wide, height: max(6, CGFloat(axis.y(block.displayEndMinute)) - top)))
+        }
+        for block in past {
+            let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(block.displayEndMinute))
+            bands.append(CGRect(x: 0, y: top, width: 70, height: max(6, bottom - top)))
+            bands.append(CGRect(x: 0, y: top, width: wide, height: 22))
+        }
+        return bands
+    }
+
     init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
@@ -261,9 +278,9 @@ private struct RailTimeline: View {
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
                 TransactionRailRow(
-                    row: row, selected: model?.selection.contains(row.transactionID) ?? false,
+                    row: row, selected: model?.selection.contains(row.transactionID) ?? false, selectionActive: model?.selection.isActive ?? false,
                     onTap: {
-                        guard !row.isIncome, !HapticHold.justHappened else { return }
+                        guard !row.isIncome else { return }
                         if let model, model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.transactionID) } } else { onOpenTransaction(row.transactionID) }
                     },
                     onLongPress: { if !row.isIncome, let model { withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
@@ -273,11 +290,11 @@ private struct RailTimeline: View {
         }
         .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
         .contentShape(Rectangle())
-        .hapticLongPress(at: { location in
-                let minute = plan.axis.minute(atY: Double(location.y))
-                let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
-                onCreate(max(0, snapped))
-            })
+        .hapticTouchSpot(title: "여기에 새 일정", systemImage: "calendar.badge.plus", excluding: plan.touchBands) { location in
+            let minute = plan.axis.minute(atY: Double(location.y))
+            let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
+            onCreate(max(0, snapped))
+        }
         .padding(.vertical, RailMetrics.vertical)
     }
 }
@@ -358,6 +375,7 @@ private struct EventCardView: View {
 private struct TransactionRailRow: View {
     let row: RailPlan.Row
     var selected = false
+    var selectionActive = false
     let onTap: () -> Void
     var onLongPress: () -> Void = {}
 
@@ -391,7 +409,7 @@ private struct TransactionRailRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .hapticLongPress(perform: onLongPress)
+        .hapticTouchSelect(enabled: !row.isIncome && !(selectionActive), perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)

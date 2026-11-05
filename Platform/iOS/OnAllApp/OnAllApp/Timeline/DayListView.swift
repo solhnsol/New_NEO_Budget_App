@@ -46,11 +46,10 @@ struct DayListView: View {
     private func pickable(_ row: Plan.Row, inEvent: Bool) -> some View {
         TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id))
             .listTap {
-                guard !row.isIncome, !HapticHold.justHappened else { return }
+                guard !row.isIncome else { return }
                 if model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
             }
-            .hapticLongPress {
-                guard !row.isIncome else { return }
+            .hapticTouchSelect(enabled: !row.isIncome && !model.selection.isActive) {
                 withAnimation(Theme.Motion.select) { model.selection.begin(with: row.id) }
             }
     }
