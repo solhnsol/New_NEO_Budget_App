@@ -151,6 +151,23 @@ struct RailPlan {
     /// The now line's minute, only while it falls inside this day.
     let nowMinute: Int?
 
+    /// Where something drawn has touches of its own, in the rail's space (a transaction row, an event card, a begun event's bar and name): a hold on the
+    /// empty time between them makes a new event, on these it does what they do.
+    var touchBands: [CGRect] {
+        let wide: CGFloat = 4000
+        var bands = rowYs.map { CGRect(x: 0, y: $0 - Self.rowHeight / 2, width: wide, height: Self.rowHeight) }
+        for block in cards {
+            let top = CGFloat(axis.y(block.displayStartMinute))
+            bands.append(CGRect(x: 0, y: top, width: wide, height: max(6, CGFloat(axis.y(block.displayEndMinute)) - top)))
+        }
+        for block in past {
+            let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(block.displayEndMinute))
+            bands.append(CGRect(x: 0, y: top, width: 70, height: max(6, bottom - top)))
+            bands.append(CGRect(x: 0, y: top, width: wide, height: 22))
+        }
+        return bands
+    }
+
     init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
@@ -261,9 +278,9 @@ private struct RailTimeline: View {
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
                 TransactionRailRow(
-                    row: row, selected: model?.selection.contains(row.transactionID) ?? false,
+                    row: row, selected: model?.selection.contains(row.transactionID) ?? false, selecting: model?.selection.isActive ?? false,
                     onTap: {
-                        guard !row.isIncome, !HapticHold.justHappened else { return }
+                        guard !row.isIncome, !HapticHold.justHeld(row.id) else { return }
                         if let model, model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.transactionID) } } else { onOpenTransaction(row.transactionID) }
                     },
                     onLongPress: { if !row.isIncome, let model { withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
@@ -274,6 +291,8 @@ private struct RailTimeline: View {
         .frame(maxWidth: .infinity, minHeight: height, alignment: .topLeading)
         .contentShape(Rectangle())
         .hapticLongPress(at: { location in
+                // A hold that starts on a row or an event belongs to that row or event (selecting, opening), not to the empty time under it.
+                guard !plan.touchBands.contains(where: { $0.contains(location) }) else { return }
                 let minute = plan.axis.minute(atY: Double(location.y))
                 let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
                 onCreate(max(0, snapped))
@@ -358,6 +377,8 @@ private struct EventCardView: View {
 private struct TransactionRailRow: View {
     let row: RailPlan.Row
     var selected = false
+    /// Selection mode is on (every row shows its box).
+    var selecting = false
     let onTap: () -> Void
     var onLongPress: () -> Void = {}
 
@@ -367,6 +388,7 @@ private struct TransactionRailRow: View {
             Circle().fill(Theme.surface).overlay(Circle().strokeBorder(row.colorHex == nil ? Theme.textTertiary : dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
             HStack(spacing: 0) {
+                SelectCheckSlot(selecting: selecting && !row.isIncome, picked: selected)
                 let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
                 LineIcon(name: tile.icon, size: 16).foregroundStyle(Theme.textSecondary)
                     .frame(width: 30, height: 30).background(tile.tint, in: Circle())
@@ -382,16 +404,14 @@ private struct TransactionRailRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(alignment: .topLeading) {
-            // A picked row sits in a light blue box with a blue outline (the design's selection).
+            // A picked row's band: the design's light blue, from the rail's side to the card's edge.
             if selected {
-                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accentSoft)
-                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
-                    .frame(height: RailMetrics.rowHeight).padding(.leading, 60).padding(.trailing, -10)
+                Theme.accentSoft.frame(height: RailMetrics.rowHeight).padding(.leading, 58).padding(.trailing, -Theme.Space.l)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .hapticLongPress(perform: onLongPress)
+        .hapticLongPress(id: row.id, enabled: !selecting && !row.isIncome, perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)

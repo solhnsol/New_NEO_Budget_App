@@ -61,6 +61,8 @@ struct DayPagerView: View {
                             // A day that fits has nothing to scroll: without the bounce the vertical scroll cannot grab a sideways drag.
                             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
                             .contentMargins(.top, topInset, for: .scrollContent)
+                            // The selection bar rises over the bottom: the day keeps room to scroll past it.
+                            .contentMargins(.bottom, model.selection.isActive ? 96 : 0, for: .scrollContent)
                             .contentMargins(.top, topInset, for: .scrollIndicators)
                             .ignoresSafeArea(edges: .top)
                             // Today opens with the now line at 40% of the screen's height.

@@ -44,13 +44,12 @@ struct DayListView: View {
 
     /// A transaction row: a tap opens it (or, in selection mode, picks it); a long press starts selection with it.
     private func pickable(_ row: Plan.Row, inEvent: Bool) -> some View {
-        TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id))
+        TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id), selecting: model.selection.isActive && !row.isIncome)
             .listTap {
-                guard !row.isIncome, !HapticHold.justHappened else { return }
+                guard !row.isIncome, !HapticHold.justHeld(row.id.rawValue) else { return }
                 if model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
             }
-            .hapticLongPress {
-                guard !row.isIncome else { return }
+            .hapticLongPress(id: row.id.rawValue, enabled: !model.selection.isActive && !row.isIncome) {
                 withAnimation(Theme.Motion.select) { model.selection.begin(with: row.id) }
             }
     }
@@ -165,30 +164,27 @@ extension DayListView {
         let row: Plan.Row
         let inEvent: Bool
         var selected = false
+        var selecting = false
 
         var body: some View {
             let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
-            HStack(spacing: Theme.Space.m) {
+            HStack(spacing: 0) {
+                SelectCheckSlot(selecting: selecting, picked: selected, gap: Theme.Space.m)
                 LineIcon(name: tile.icon, size: 20).foregroundStyle(Theme.textSecondary)
                     .frame(width: 40, height: 40).background(inEvent ? Theme.surface : tile.tint, in: Circle())
                 VStack(alignment: .leading, spacing: 0) {
                     Text(row.title).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(clockText(row.minute)).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary)
                 }
+                .padding(.leading, Theme.Space.m)
                 Spacer(minLength: Theme.Space.s)
                 Text(row.amountText).font(row.isIncoming ? Font.onAll(size: 16, weight: .semibold).monospacedDigit() : Theme.Typo.amount)
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
             .padding(.horizontal, inEvent ? Theme.Space.l : 28).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background {
-                // A picked row sits in a light blue box with a blue outline (the design's selection).
-                if selected {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accentSoft)
-                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
-                        .padding(.horizontal, inEvent ? Theme.Space.s : 16)
-                }
-            }
+            // A picked row is tinted across its whole width (the design: `.row.picked`).
+            .background(selected ? Theme.accentSoft : Color.clear)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         }

@@ -110,3 +110,32 @@ struct CalendarSelectionLayer: ViewModifier {
         sheet = .settle(block.eventKey)
     }
 }
+
+/// The design's selection box: an empty circle on every row while selecting, filled blue with a white check on a picked one.
+struct SelectCheck: View {
+    let picked: Bool
+
+    var body: some View {
+        Circle().strokeBorder(picked ? Theme.accentStrong : Theme.disabled, lineWidth: 1.5)
+            .background(Circle().fill(picked ? Theme.accentStrong : .clear))
+            .overlay { if picked { Image(systemName: "checkmark").font(.system(size: 11, weight: .heavy)).foregroundStyle(.white) } }
+            .frame(width: 22, height: 22)
+    }
+}
+
+/// The check that opens in at the start of a row when selection mode begins: its width goes from 0 to 22 (plus the gap) and pushes the row along.
+struct SelectCheckSlot: View {
+    let selecting: Bool
+    let picked: Bool
+    var gap: CGFloat = 8
+
+    var body: some View {
+        SelectCheck(picked: picked)
+            .frame(width: selecting ? 22 : 0, height: 22)
+            .opacity(selecting ? 1 : 0)
+            .padding(.trailing, selecting ? gap : 0)
+            .clipped()
+            .animation(Theme.Motion.select, value: selecting)
+            .animation(Theme.Motion.select, value: picked)
+    }
+}
