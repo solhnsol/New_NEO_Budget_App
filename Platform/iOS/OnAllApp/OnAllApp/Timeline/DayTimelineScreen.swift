@@ -158,60 +158,49 @@ struct DayTimelineScreen: View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
         let isList = true
-        return ZStack(alignment: .top) {
-          Theme.background.ignoresSafeArea()
-          // The design's one white card under the week strip: the day's title and timeline sit on it.
-          RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-              .padding(.horizontal, Theme.cardMargin).padding(.top, headerBottom + Theme.Space.m)
-          VStack(spacing: 0) {
-            if isList {
-                let onScrollToDay: (LocalDate) -> Void = { day in
-                    // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
-                    guard model.moveTo(day) else { return }
-                    listSettle?.cancel()
-                    listSettle = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(250))
-                        guard !Task.isCancelled else { return }
-                        await model.loadMissing()
-                    }
-                }
-                DayPagerView(
-                    model: model, topInset: chromeFrame.maxY, showsList: showsList,
-                    onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                )
-                .padding(.horizontal, Theme.cardMargin)
-                .id(showsList)
-            }
-          }
+        return VStack(spacing: 0) {
+          // The calendar is one grid that grows from the week to the month (`UnifiedCalendar.swift`); the day sits under it and is pushed down as it grows.
           MonthUnfoldHeader(
             state: unfold, today: model.today,
-            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) }, showsRule: isList,
+            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) },
             onSelect: { day in
                 unfold.close()
                 Task { await goTo(day) }
             },
+            onPage: { day in
+                // A swipe settled on another week or month: the day moves with the days already read; what is missing is read once it rests.
+                Haptics.snap()
+                _ = model.moveTo(day)
+                Task { await model.loadMissing() }
+            },
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay,
-            income: { model.income(on: $0) }
+            income: { model.income(on: $0) },
+            dataVersion: model.dataGeneration &* 31 &+ model.weekCells.count &* 7 &+ model.monthCells.count &* 3 &+ model.incomeByDay.count &+ model.overrideRevision
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { model.creatingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) }, onToday: { unfold.close(); Task { await goTo(model.today) } })
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { headerBottom = $0 }
-          } strip: { opened in
-            WeekStripView(
-                cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
-                onSelect: { day in
-                    guard unfold.allowsTap else { return }
-                    unfold.close()
-                    Task { await goTo(day) }
-                },
-                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } },
-                unfold: opened, color: { model.calendarColor($0) }, income: { model.income(on: $0) }
-            )
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { model.creatingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle() }, onToday: { unfold.close(); Task { await goTo(model.today) } })
           }
-          // The month pushes the day down as it opens (the design), no dim over it.
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { chromeFrame = $0 }
-          .zIndex(1)
+          let onScrollToDay: (LocalDate) -> Void = { day in
+              // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
+              guard model.moveTo(day) else { return }
+              listSettle?.cancel()
+              listSettle = Task { @MainActor in
+                  try? await Task.sleep(for: .milliseconds(250))
+                  guard !Task.isCancelled else { return }
+                  await model.loadMissing()
+              }
+          }
+          DayPagerView(
+              model: model, topInset: 0, showsList: showsList,
+              onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+          )
+          .id(showsList)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .background(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+          .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous))
+          .padding(.horizontal, Theme.cardMargin)
         }
+        .background(Theme.background.ignoresSafeArea())
         .background {
             GeometryReader { proxy in
                 Color.clear.onAppear { screenWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in screenWidth = width }
@@ -314,7 +303,7 @@ private struct DayHeader: View {
                     .frame(minHeight: Theme.hitTarget).contentShape(Rectangle())
             } else {
             // Only the month: the days themselves are named once, over their columns.
-            Text("\((unfold.isOpen ? unfold.month : model.selectedDay).month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Text("\(model.selectedDay.month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
                 .onTapGesture(perform: onTitle)
             Spacer()
