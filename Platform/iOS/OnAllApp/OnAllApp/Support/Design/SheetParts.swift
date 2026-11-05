@@ -411,11 +411,14 @@ struct PanelSheet<Content: View>: View {
     let close: () -> Void
     @ViewBuilder let content: () -> Content
     @State private var shown = false
+    /// How far a finger has carried the panel (down is positive); it follows the finger and settles by a spring when let go (the design's sheet).
+    @State private var dragY: CGFloat = 0
+    private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 : 0)
-                .contentShape(Rectangle()).onTapGesture(perform: close)
+            Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
+                .contentShape(Rectangle()).onTapGesture(perform: dismiss)
             VStack(spacing: 0) {
                 Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
                 content()
@@ -428,14 +431,35 @@ struct PanelSheet<Content: View>: View {
                     .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
             )
             .contentShape(Rectangle())
-            .simultaneousGesture(DragGesture(minimumDistance: 12).onEnded { drag in
-                if drag.translation.height < -40, canOpen { withAnimation(Theme.Motion.sheet) { isOpen = true } }
-                else if drag.translation.height > 40 { if isOpen { withAnimation(Theme.Motion.sheet) { isOpen = false } } else { close() } }
-            })
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 10)
+                    .onChanged { drag in
+                        let t = drag.translation.height
+                        // Down: the panel goes with the finger. Up: a little give while it is small (it opens when let go).
+                        dragY = t > 0 ? t : (isOpen || !canOpen ? 0 : t * 0.25)
+                    }
+                    .onEnded { drag in
+                        let t = drag.translation.height, v = drag.velocity.height
+                        withAnimation(spring) {
+                            dragY = 0
+                            if t < -40 || v < -600, canOpen, !isOpen { isOpen = true }
+                            else if t > 120 || v > 600 { if isOpen { isOpen = false } else { dismiss() } }
+                        }
+                    }
+            )
             .padding(.top, isOpen ? 70 : 0)
-            .offset(y: shown ? 0 : 700)
+            .offset(y: shown ? dragY : 700)
         }
         .tint(Theme.accent)
-        .onAppear { withAnimation(Theme.Motion.sheet) { shown = true } }
+        .onAppear { withAnimation(spring) { shown = true } }
+    }
+
+    /// Goes down (the panel and the dim), then tells the owner.
+    private func dismiss() {
+        withAnimation(spring) { shown = false; dragY = 0 }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(260))
+            close()
+        }
     }
 }

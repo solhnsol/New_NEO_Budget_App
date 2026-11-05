@@ -249,6 +249,7 @@ struct DayTimelineScreen: View {
             })
             }
         }
+        .modifier(CalendarSelectionLayer(model: model))
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
         .sheet(isPresented: Binding(get: { model.creatingTransaction }, set: { model.creatingTransaction = $0 })) { ManualTransactionSheet(model: model) }
         .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
@@ -302,6 +303,16 @@ private struct DayHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 0) {
+            if model.selection.isActive {
+                // Selection mode: how many are picked and what they come to, and 취소.
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("\(model.selection.ids.count)건 선택").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
+                Spacer()
+                Button("취소") { withAnimation(Theme.Motion.select) { model.selection.end() } }
+                    .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                    .frame(minHeight: Theme.hitTarget).contentShape(Rectangle())
+            } else {
             // Only the month: the days themselves are named once, over their columns.
             Text("\((unfold.isOpen ? unfold.month : model.selectedDay).month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
@@ -314,6 +325,7 @@ private struct DayHeader: View {
                 .opacity(model.selectedDay == model.today ? 0 : 1).allowsHitTesting(model.selectedDay != model.today)
                 .animation(.easeOut(duration: 0.2), value: model.selectedDay == model.today)
             menu
+            }
         }
         .padding(.leading, 24).padding(.trailing, 14)
         .padding(.top, 16)

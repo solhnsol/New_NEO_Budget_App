@@ -29,6 +29,8 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     /// The new-event panel is open. Drawn by `RootTabs`, over the tab bar, so it can rest on the keyboard.
     var creatingEvent = false
+    /// The transactions picked in selection mode on the calendar (a long press on a row starts it).
+    var selection = LedgerSelection()
     /// Where a long press on the day started a new event (day and minute); the create sheet opens with that start.
     var newEventSeed: (day: LocalDate, minute: Int)?
     /// The manual-transaction sheet, opened from the create sheet's 거래 switch.

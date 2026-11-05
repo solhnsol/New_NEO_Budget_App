@@ -1,0 +1,112 @@
+import NEOBudgetCalendar
+import NEOBudgetCore
+import SwiftUI
+
+/// Selection mode on the calendar (the design's: a long press on a transaction row picks it, taps pick more, the bar below acts on all of them).
+/// The picks live in `AppModel.selection`; the rows draw themselves from it. The actions are the ledger tab's: 분류 · 일정 · 태그 · 정산 · 삭제.
+struct CalendarSelectionLayer: ViewModifier {
+    let model: AppModel
+    @State private var sheet: LedgerScreen.SelectionSheet?
+    @State private var isPickingEvent = false
+    @State private var pickEntries: [LedgerListEntry] = []
+    @State private var confirmsDelete = false
+    @State private var notice: String?
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if model.selection.isActive {
+                    LedgerSelectionBar(perform: perform).transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .overlay {
+                if confirmsDelete {
+                    LedgerDeleteAlert(count: model.selection.ids.count, cancel: { confirmsDelete = false }, confirm: { confirmsDelete = false; deleteSelected() })
+                        .transition(.opacity)
+                }
+            }
+            .animation(Theme.Motion.actionBar, value: model.selection.isActive)
+            .animation(Theme.Motion.scrim, value: confirmsDelete)
+            .sheet(item: $sheet) { item in
+                switch item {
+                case .category:
+                    LedgerCategorySheet(count: model.selection.ids.count) { category in
+                        model.editMany(Array(model.selection.ids)) { $0.category = category }
+                        sheet = nil
+                        end()
+                    }
+                    .onAllSelectionSheet()
+                case .tag:
+                    LedgerTagSheet(count: model.selection.ids.count, known: model.knownTags) { tags in
+                        model.editMany(Array(model.selection.ids)) { override in
+                            for tag in tags where !override.tags.contains(tag) { override.tags.append(tag) }
+                        }
+                        sheet = nil
+                        end()
+                    }
+                    .onAllSelectionSheet()
+                case let .settle(key):
+                    SettlementSheet(model: model, eventKey: key)
+                }
+            }
+            .fullScreenCover(isPresented: $isPickingEvent) {
+                LedgerEventPicker(model: model, entries: pickEntries, onApplied: end)
+            }
+            .alert(notice ?? "", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+                Button("확인", role: .cancel) {}
+            }
+    }
+
+    private func end() { withAnimation(Theme.Motion.select) { model.selection.end() } }
+
+    /// The picked ones as the ledger lists them (read when an action needs more than their ids).
+    private func pickedEntries() async -> [LedgerListEntry] {
+        (await model.ledgerSections() ?? []).flatMap(\.entries).filter { model.selection.contains($0.id) }
+    }
+
+    private func perform(_ action: LedgerSelectionBar.Action) {
+        switch action {
+        case .category: sheet = .category
+        case .tag: sheet = .tag
+        case .event: Task { pickEntries = await pickedEntries(); isPickingEvent = true }
+        case .delete: confirmDelete()
+        case .settle: Task { await settleSelected() }
+        }
+    }
+
+    /// Only typed-in transactions can be deleted; what the bank or card reported stays.
+    private func confirmDelete() {
+        let ids = model.selection.ids
+        let manual = ids.filter { $0.rawValue.hasPrefix(ManualTransaction.idPrefix) }
+        if manual.isEmpty {
+            notice = "카드·통장에서 온 거래는 지울 수 없어요."
+        } else if manual.count < ids.count {
+            notice = "카드·통장에서 온 거래는 지울 수 없어요. 직접 입력한 거래만 골라서 지워 주세요."
+        } else {
+            confirmsDelete = true
+        }
+    }
+
+    private func deleteSelected() {
+        model.removeManuals(model.selection.ids)
+        end()
+    }
+
+    /// Settling is per event: it opens for the one event every picked transaction is in.
+    private func settleSelected() async {
+        let entries = await pickedEntries()
+        let activities = Set(entries.flatMap { $0.portions.compactMap(\.activityID) })
+        let everyOneLinked = entries.allSatisfy { entry in entry.portions.contains { $0.activityID != nil } }
+        guard everyOneLinked, activities.count == 1, let activity = activities.first, let first = entries.first else {
+            notice = "같은 일정에 들어 있는 거래만 정산할 수 있어요. 먼저 '일정'에서 한 일정으로 모아 주세요."
+            return
+        }
+        let day = model.dayZone.localDate(of: first.transaction.occurredAtUnixMilliseconds)
+        let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
+        guard let block = timelines.flatMap(\.blocks).first(where: { $0.activity?.activityID == activity }) else {
+            notice = "이 일정을 찾지 못했어요. 일정에서 정산해 주세요."
+            return
+        }
+        sheet = .settle(block.eventKey)
+    }
+}

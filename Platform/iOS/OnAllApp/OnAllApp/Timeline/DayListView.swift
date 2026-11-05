@@ -27,9 +27,9 @@ struct DayListView: View {
             if let plan {
                 ForEach(plan.items) { item in
                     switch item.kind {
-                    case let .row(row): TransactionRow(row: row, inEvent: false).listTap { if !row.isIncome { onOpenTransaction(row.id) } }
+                    case let .row(row): pickable(row, inEvent: false)
                     case let .event(block, rows, isFuture):
-                        EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, onOpenTransaction: onOpenTransaction)
+                        EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
                     }
                 }
                 if plan.items.isEmpty {
@@ -40,6 +40,20 @@ struct DayListView: View {
             }
         }
         .padding(.bottom, Theme.Space.xl)
+    }
+
+    /// A transaction row: a tap opens it (or, in selection mode, picks it); a long press starts selection with it.
+    private func pickable(_ row: Plan.Row, inEvent: Bool) -> some View {
+        TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id))
+            .listTap {
+                guard !row.isIncome else { return }
+                if model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
+            }
+            .onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8) {
+                guard !row.isIncome else { return }
+                Haptics.snap()
+                withAnimation(Theme.Motion.select) { model.selection.begin(with: row.id) }
+            }
     }
 
     /// What the list draws for one day, in time order.
@@ -118,7 +132,7 @@ private struct EventBox: View {
     let rows: [DayListView.Plan.Row]
     let isFuture: Bool
     let onSelect: () -> Void
-    let onOpenTransaction: (LedgerEntryID) -> Void
+    let rowView: (DayListView.Plan.Row) -> AnyView
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
@@ -137,9 +151,7 @@ private struct EventBox: View {
             }
             .padding(.horizontal, Theme.Space.l).padding(.top, isFuture ? 14 : 12).padding(.bottom, rows.isEmpty && !isFuture ? 12 : 2)
             .listTap(onSelect)
-            ForEach(rows) { row in
-                DayListView.TransactionRow(row: row, inEvent: true).listTap { onOpenTransaction(row.id) }
-            }
+            ForEach(rows) { row in rowView(row) }
         }
         .padding(.bottom, rows.isEmpty ? (isFuture ? 12 : 0) : Theme.Space.s)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,6 +165,7 @@ extension DayListView {
     struct TransactionRow: View {
         let row: Plan.Row
         let inEvent: Bool
+        var selected = false
 
         var body: some View {
             let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
@@ -169,6 +182,14 @@ extension DayListView {
             }
             .padding(.horizontal, inEvent ? Theme.Space.l : 28).padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background {
+                // A picked row sits in a light blue box with a blue outline (the design's selection).
+                if selected {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accentSoft)
+                        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
+                        .padding(.horizontal, inEvent ? Theme.Space.s : 16)
+                }
+            }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         }

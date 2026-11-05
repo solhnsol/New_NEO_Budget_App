@@ -55,9 +55,9 @@ struct EventQuickSheet: View {
                 .padding(.top, Theme.Space.xl)
                 HStack(spacing: Theme.Space.s) {
                     pill(Self.dayText(start, zone), hasDate: true)
-                    pill(Self.clock(start, zone), time: $start)
+                    pill(Self.clock(start, zone), time: timeBinding($start, isStart: true))
                     Text("–").foregroundStyle(Theme.disabled)
-                    pill(Self.clock(end, zone), time: $end)
+                    pill(Self.clock(end, zone), time: timeBinding($end, isStart: false))
                     Spacer(minLength: 0)
                 }
                 .padding(.top, Theme.Space.m)
@@ -104,6 +104,24 @@ struct EventQuickSheet: View {
                     }
                 }
             }
+    }
+
+    /// A time picked in the system picker is only the clock part of what it hands back (it may carry today's date, not the event's): the hour and
+    /// minute are put on the day the event is on. A start moved to or past the end pushes the end a quarter hour after it.
+    private func timeBinding(_ binding: Binding<Date>, isStart: Bool) -> Binding<Date> {
+        Binding(
+            get: { binding.wrappedValue },
+            set: { picked in
+                var calendar = Calendar(identifier: .gregorian)
+                calendar.timeZone = zone
+                let clock = calendar.dateComponents([.hour, .minute], from: picked)
+                // The day of the start is the event's day; an end that already runs into another day keeps its own day.
+                let anchor = isStart ? start : end
+                guard let moved = calendar.date(bySettingHour: clock.hour ?? 0, minute: clock.minute ?? 0, second: 0, of: anchor) else { return }
+                binding.wrappedValue = moved
+                if isStart, end <= moved { end = moved.addingTimeInterval(15 * 60) }
+            }
+        )
     }
 
     /// Changing the day moves both ends, keeping the times of day.

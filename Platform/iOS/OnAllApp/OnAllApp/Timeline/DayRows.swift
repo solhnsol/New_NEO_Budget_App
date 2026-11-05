@@ -50,7 +50,7 @@ struct DaySection: View {
             if let timeline {
                 RailTimeline(
                     timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction,
-                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }
+                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }, model: model
                 )
                     .padding(.trailing, Theme.Space.l)
             } else {
@@ -259,6 +259,8 @@ private struct RailTimeline: View {
     let onOpenTransaction: (LedgerEntryID) -> Void
     /// A long press on empty time: a new event there (snapped to 15 minutes).
     var onCreate: (Int) -> Void = { _ in }
+    /// Selection mode lives on the model: a row picks itself there.
+    var model: AppModel?
 
     var body: some View {
         let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes)
@@ -273,7 +275,14 @@ private struct RailTimeline: View {
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
-                TransactionRailRow(row: row, onTap: { if !row.isIncome { onOpenTransaction(row.transactionID) } }).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
+                TransactionRailRow(
+                    row: row, selected: model?.selection.contains(row.transactionID) ?? false,
+                    onTap: {
+                        guard !row.isIncome else { return }
+                        if let model, model.selection.isActive { withAnimation(Theme.Motion.select) { model.selection.toggle(row.transactionID) } } else { onOpenTransaction(row.transactionID) }
+                    },
+                    onLongPress: { if !row.isIncome, let model { Haptics.snap(); withAnimation(Theme.Motion.select) { model.selection.begin(with: row.transactionID) } } }
+                ).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
             }
             if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
@@ -369,7 +378,9 @@ private struct EventCardView: View {
 /// name, time and amount on one line, no card. Spent is blue, money coming in is red.
 private struct TransactionRailRow: View {
     let row: RailPlan.Row
+    var selected = false
     let onTap: () -> Void
+    var onLongPress: () -> Void = {}
 
     var body: some View {
         let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
@@ -391,8 +402,17 @@ private struct TransactionRailRow: View {
             .padding(.leading, RailMetrics.contentX).frame(height: RailMetrics.rowHeight)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(alignment: .topLeading) {
+            // A picked row sits in a light blue box with a blue outline (the design's selection).
+            if selected {
+                RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.accentSoft)
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.accent, lineWidth: 1.5))
+                    .frame(height: RailMetrics.rowHeight).padding(.leading, 60)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
+        .onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8, perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)
