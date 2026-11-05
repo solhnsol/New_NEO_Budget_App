@@ -194,23 +194,8 @@ struct RailPlan {
         let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
         let axis = RailAxis(events: events, transactions: rows.map(\.minute), now: now, firstMinute: range.first, lastMinute: range.last)
         var ys: [CGFloat] = []
-        // The name of an event that has begun stands beside the rail at its start; a row never sits on it (the one below it moves down).
-        let labelBands: [(top: CGFloat, bottom: CGFloat)] = past.map { block in
-            let top = CGFloat(axis.y(block.displayStartMinute))
-            return (top, top + 22)
-        }
-        for row in rows {
-            var y = max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)
-            var moved = true
-            while moved {
-                moved = false
-                for band in labelBands where y + Self.rowHeight / 2 > band.top && y - Self.rowHeight / 2 < band.bottom {
-                    y = band.bottom + Self.rowHeight / 2
-                    moved = true
-                }
-            }
-            ys.append(y)
-        }
+        // Rows sharing a minute stack downward; the axis already made room for that (`RailAxis.Needs.stackStep`).
+        for row in rows { ys.append(max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)) }
         self.past = past
         self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
         self.rows = rows

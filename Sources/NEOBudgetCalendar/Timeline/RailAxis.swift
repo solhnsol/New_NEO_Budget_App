@@ -18,6 +18,10 @@ public struct RailAxis: Equatable, Sendable {
         public var pastEventStart = 28.0
         public var cardEnd = 56.0
         public var other = 14.0
+        /// How far apart rows that share a minute are drawn (a row and the gap to the next): the axis makes room for the stack.
+        public var stackStep = 38.0
+        /// Room under a past event's start for its name (it stands beside the rail there).
+        public var nameRoom = 22.0
         /// Points per minute where nothing needs more room.
         public var emptyPointsPerMinute = 0.35
         public init() {}
@@ -42,8 +46,14 @@ public struct RailAxis: Equatable, Sendable {
         for event in events {
             add(event.start, event.isCard ? needs.other : needs.pastEventStart)
             add(event.end, event.isCard ? needs.cardEnd : needs.other)
+            // The name of an event that has begun sits under its start: nothing else may be drawn in that room.
+            if !event.isCard { add(event.start + 1, needs.nameRoom) }
         }
         for minute in transactions { add(minute, needs.transaction) }
+        // Rows that share a minute are stacked; the axis grows by the stack (the design: the time axis is stretched, not the rows moved).
+        for (minute, count) in Dictionary(grouping: transactions, by: { $0 }).mapValues(\.count) where count > 1 {
+            add(minute + 1, Double(count - 1) * needs.stackStep)
+        }
         if let now { add(now, needs.other) }
         let sorted = need.keys.sorted()
         var ys = [0.0]

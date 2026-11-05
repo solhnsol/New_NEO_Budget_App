@@ -26,3 +26,14 @@ import Testing
     #expect(empty.first == 540 && empty.last == 1080)
     #expect(padded.first == 540 && padded.last == 780)
 }
+
+@Test func railAxisStretchesForRowsSharingAMinuteAndForAPastEventsName() {
+    // Three rows at 17:43 stack 38 apart: the next thing after them (a name under an event begun at 19:00) is still below the last row.
+    let axis = RailAxis(
+        events: [.init(start: 19 * 60, end: 20 * 60, isCard: false)], transactions: [17 * 60 + 43, 17 * 60 + 43, 17 * 60 + 43],
+        now: nil, firstMinute: 17 * 60, lastMinute: 21 * 60
+    )
+    let lastRow = axis.y(17 * 60 + 43) + 2 * 38
+    #expect(axis.y(19 * 60) >= lastRow + 18)
+    #expect(axis.y(19 * 60 + 1) - axis.y(19 * 60) >= 22)
+}
