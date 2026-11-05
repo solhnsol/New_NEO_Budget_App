@@ -432,7 +432,7 @@ struct PanelSheet<Content: View>: View {
             )
             .contentShape(Rectangle())
             .simultaneousGesture(
-                DragGesture(minimumDistance: 10)
+                DragGesture(minimumDistance: 10, coordinateSpace: .global)
                     .onChanged { drag in
                         let t = drag.translation.height
                         // Down: the panel goes with the finger. Up: a little give while it is small (it opens when let go).
