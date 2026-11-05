@@ -33,6 +33,8 @@ struct WeekStripView: View {
     var unfold: CGFloat = 0
     /// A calendar's colour, for the dots and bars.
     var color: (CalendarID) -> Color = { _ in Theme.accent }
+    /// What came in on a day (0: nothing).
+    var income: (LocalDate) -> Int64 = { _ in 0 }
 
     private static let numberRow: CGFloat = 36
     private static let ball: CGFloat = 32
@@ -293,6 +295,7 @@ struct WeekStripView: View {
                 .accessibilityAddTraits(isShown(day) ? .isSelected : [])
             }
             .frame(height: Self.numberRow)
+            .overlay { IncomeDot(show: day < today && income(day) > 0, y: 4) }
             .offset(y: 2)
             .animation(roleAnimation(role), value: role)
             Color.clear.frame(height: MonthUnfold.barsRow * unfold)
@@ -303,11 +306,7 @@ struct WeekStripView: View {
                 if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
             }
             Color.clear.frame(height: MonthUnfold.monthGap * unfold)
-            Text((day < today ? MonthUnfold.spendText(of: info) : nil) ?? " ")
-                .font(.onAll(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.accent)
-                .lineLimit(1).minimumScaleFactor(0.6)
-                .frame(height: MonthUnfold.spendRow)
+            AmountLines(spent: day < today ? MonthUnfold.spendText(of: info) : nil, income: day < today && income(day) > 0 ? MonthUnfold.amountText(income(day)) : nil, open: unfold)
                 .offset(y: -4 * (1 - unfold))
         }
         .frame(width: cell)

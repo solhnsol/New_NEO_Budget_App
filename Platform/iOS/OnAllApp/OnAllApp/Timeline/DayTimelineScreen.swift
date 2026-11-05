@@ -197,7 +197,8 @@ struct DayTimelineScreen: View {
                 Task { await goTo(day) }
             },
             loadMonth: { await model.loadMonth(startingAt: $0) },
-            selected: model.selectedDay
+            selected: model.selectedDay,
+            income: { model.income(on: $0) }
           ) {
             DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) }, onToday: { unfold.close(); Task { await goTo(model.today) } })
                 .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
@@ -210,7 +211,7 @@ struct DayTimelineScreen: View {
                     Task { await goTo(day) }
                 },
                 onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } },
-                unfold: opened, color: { model.calendarColor($0) }
+                unfold: opened, color: { model.calendarColor($0) }, income: { model.income(on: $0) }
             )
           }
           // While the month is open the header is taller than the chrome the screen runs under: the screen keeps the inset it had.

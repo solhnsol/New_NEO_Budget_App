@@ -52,7 +52,11 @@ enum MonthUnfold {
     /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550). Nil when nothing was spent that day.
     static func spendText(of cell: WeekStripDay?) -> String? {
         guard let money = cell?.netSpend.first(where: { $0.currency == "KRW" }) ?? cell?.netSpend.first, money.minorUnits > 0 else { return nil }
-        let won = money.minorUnits
+        return amountText(money.minorUnits)
+    }
+
+    /// 24,000 → 2.4만; under 10,000 written out.
+    static func amountText(_ won: Int64) -> String {
         guard won >= 10_000 else { return Formatting.grouped(won) }
         let tenThousands = Double(won) / 10_000
         return (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
@@ -191,6 +195,8 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     let onSelect: (LocalDate) -> Void
     let loadMonth: (LocalDate) async -> Void
     let selected: LocalDate
+    /// What came in on a day (0: nothing), for the red dot and the amount line.
+    var income: (LocalDate) -> Int64 = { _ in 0 }
     @ViewBuilder let top: () -> Top
     /// The week strip at the given unfold (0 closed, 1 open).
     @ViewBuilder let strip: (CGFloat) -> Strip
@@ -301,6 +307,7 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     private func dayCell(_ day: LocalDate, month: LocalDate, overflow: [WeekStripEvent]?) -> some View {
         let info = cells(day)
         let spent = day < today ? MonthUnfold.spendText(of: info) : nil
+        let came = day < today ? income(day) : 0
         return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
@@ -310,14 +317,11 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
                     .background(day == today || day == selected ? Theme.accentSoft : .clear, in: Circle())
                     .offset(y: 2)
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
+                    .overlay { IncomeDot(show: came > 0) }
                 Color.clear.frame(height: MonthUnfold.barsRow)
                 EventDots(events: overflow ?? [], color: color)
                 Color.clear.frame(height: MonthUnfold.monthGap)
-                Text(spent ?? " ")
-                    .font(.onAll(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.accent)
-                    .lineLimit(1).minimumScaleFactor(0.6)
-                    .frame(height: MonthUnfold.spendRow)
+                AmountLines(spent: spent, income: came > 0 ? MonthUnfold.amountText(came) : nil, open: 1)
             }
             .frame(maxWidth: .infinity)
             .opacity(day.month == month.month ? 1 : 0.35)

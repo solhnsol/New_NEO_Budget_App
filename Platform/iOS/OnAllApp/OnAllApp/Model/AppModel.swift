@@ -70,6 +70,9 @@ final class AppModel {
     /// The days of the months the month panel has been opened on (events and what was spent), read when it opens or moves to a month.
     private(set) var monthCells: [LocalDate: WeekStripDay] = [:]
     private(set) var calendars: [CalendarDescriptor] = []
+    /// The deposits of the ledger by day, for the calendar's red income marks and rows.
+    private(set) var incomeByDay: [LocalDate: [IncomeItem]] = [:]
+    func income(on day: LocalDate) -> Int64 { incomeByDay[day]?.reduce(0) { $0 + $1.minorUnits } ?? 0 }
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
     /// My owed money closed by netting, counted as spending on the netting day (display only; `LifeState.nettedSpending`).
@@ -288,6 +291,8 @@ final class AppModel {
     func reload() async {
         guard let service else { return }
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
+        let incomes = (try? await ledger.incomes()) ?? []
+        incomeByDay = Dictionary(grouping: incomes, by: { dayZone.localDate(of: $0.occurredAtUnixMilliseconds) })
         dataGeneration += 1
         let mine = dataGeneration
         fullReloadsInFlight += 1

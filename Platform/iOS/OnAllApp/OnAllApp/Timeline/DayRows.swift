@@ -40,7 +40,7 @@ struct DaySection: View {
                     AllDayCount(items: allDays, onSelect: { onSelect(.allDay($0)) })
                 }
                 Spacer(minLength: 0)
-                if let timeline, let text = RailPlan.headline(timeline, nowMilliseconds: nowMilliseconds) {
+                if let timeline, let text = RailPlan.headline(timeline, nowMilliseconds: nowMilliseconds, income: model.income(on: day)) {
                     text.font(.onAll(size: 15, weight: .medium)).lineLimit(1)
                 }
             }
@@ -48,7 +48,7 @@ struct DaySection: View {
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
             .padding(.bottom, 6)
             if let timeline {
-                RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction)
+                RailTimeline(timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction)
                     .padding(.trailing, Theme.Space.l)
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 48)
@@ -132,6 +132,8 @@ struct RailPlan {
         let isIncoming: Bool
         /// The colour of the event it happened inside, or of the event it was linked to; none for an ordinary one.
         let colorHex: String?
+        /// A deposit (not spending): drawn with a red down-arrow tile, opens nothing.
+        var isIncome = false
     }
 
     let past: [EventBlock]
@@ -146,7 +148,7 @@ struct RailPlan {
     /// The now line's minute, only while it falls inside this day.
     let nowMinute: Int?
 
-    init(_ timeline: DayTimeline, nowMilliseconds: Int64) {
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = []) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
@@ -174,6 +176,13 @@ struct RailPlan {
                 ))
             }
         }
+        for item in incomes {
+            let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+            rows.append(Row(
+                id: "i/" + item.id.rawValue, transactionID: item.id, minute: minute, title: item.title ?? "입금", category: nil,
+                amountText: "+" + Formatting.grouped(item.minorUnits), isIncoming: true, colorHex: nil, isIncome: true
+            ))
+        }
         rows.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
 
         let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: $0.displayEndMinute, isCard: $0.displayStartMinute >= cutoff) }
@@ -196,9 +205,13 @@ struct RailPlan {
     static func railAmount(_ text: String, incoming: Bool) -> String { (incoming ? "+" : "−") + (text.hasSuffix("원") ? String(text.dropLast()) : text) }
 
     /// The design's right side of the day title: what was spent ("−9,500원", blue) when anything was; otherwise, for a day not yet over, how many events it holds.
-    static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64) -> Text? {
+    static func headline(_ timeline: DayTimeline, nowMilliseconds: Int64, income: Int64 = 0) -> Text? {
         let spent = timeline.summary.totals.first.map { $0.linkedNetMinorUnits + $0.unlinkedNetMinorUnits } ?? 0
-        if spent > 0 { return Text("−" + Formatting.grouped(spent) + "원").foregroundStyle(Theme.accent) }
+        // Money in (red, no sign) then money out (blue, minus), as the design writes them.
+        let came = income > 0 ? Text(Formatting.grouped(income) + "원").foregroundStyle(Theme.income) : nil
+        let went = spent > 0 ? Text("−" + Formatting.grouped(spent) + "원").foregroundStyle(Theme.accent) : nil
+        if let came, let went { return came + Text(" ") + went }
+        if let line = came ?? went { return line }
         guard nowMilliseconds < timeline.dayEndUnixMilliseconds, !timeline.blocks.isEmpty else { return nil }
         return Text("일정 \(timeline.blocks.count)건").foregroundStyle(Theme.textTertiary)
     }
@@ -222,11 +235,12 @@ private struct RailTimeline: View {
     let timeline: DayTimeline
     let nowMilliseconds: Int64
     let zone: DisplayTimeZone
+    var incomes: [IncomeItem] = []
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
 
     var body: some View {
-        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds)
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes)
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
@@ -238,7 +252,7 @@ private struct RailTimeline: View {
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
-                TransactionRailRow(row: row, onTap: { onOpenTransaction(row.transactionID) }).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
+                TransactionRailRow(row: row, onTap: { if !row.isIncome { onOpenTransaction(row.transactionID) } }).offset(y: plan.rowYs[index] - RailMetrics.rowHeight / 2)
             }
             if let now = plan.nowMinute { NowLine(minute: now, y: CGFloat(axis.y(now))) }
         }
@@ -330,7 +344,7 @@ private struct TransactionRailRow: View {
             Circle().fill(Theme.surface).overlay(Circle().strokeBorder(row.colorHex == nil ? Theme.textTertiary : dot, lineWidth: 2)).frame(width: RailMetrics.dotSize, height: RailMetrics.dotSize)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.dotSize / 2, y: (RailMetrics.rowHeight - RailMetrics.dotSize) / 2)
             HStack(spacing: 0) {
-                let tile = CategoryIcon.tile(for: row.category)
+                let tile = row.isIncome ? (icon: "down", tint: Theme.incomeSoft) : CategoryIcon.tile(for: row.category)
                 LineIcon(name: tile.icon, size: 16).foregroundStyle(Theme.textSecondary)
                     .frame(width: 30, height: 30).background(tile.tint, in: Circle())
                 (Text(row.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary)

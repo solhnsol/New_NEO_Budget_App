@@ -69,3 +69,41 @@ extension AppModel {
         Color(hex: calendars.first { $0.id == id }?.colorHex) ?? Theme.accent
     }
 }
+
+/// The red dot at the top right of a day's number: money came in that day (the design: 6pt, 9pt right of the number's centre, 3pt from the cell's top).
+/// `y` is its centre in the view it is drawn over.
+struct IncomeDot: View {
+    let show: Bool
+    var y: CGFloat = 6
+
+    var body: some View {
+        GeometryReader { proxy in
+            Circle().fill(Theme.income).frame(width: 6, height: 6).position(x: proxy.size.width / 2 + 12, y: y).opacity(show ? 1 : 0)
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// What a day shows under its marks. Closed: what was spent, in one line. Open (the month): what came in (red) above what was spent (blue), 10pt lines.
+struct AmountLines: View {
+    let spent: String?
+    let income: String?
+    /// 0 closed, 1 open.
+    let open: CGFloat
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Text(spent ?? " ")
+                .font(.onAll(size: 11, weight: .medium).monospacedDigit()).foregroundStyle(Theme.accent)
+                .lineLimit(1).minimumScaleFactor(0.6)
+                .frame(height: MonthUnfold.spendRow).opacity(1 - open)
+            VStack(spacing: 0) {
+                if let income { Text(income).foregroundStyle(Theme.income).frame(height: 12) }
+                if let spent { Text(spent).foregroundStyle(Theme.accent).frame(height: 12) }
+            }
+            .font(.onAll(size: 10, weight: .medium).monospacedDigit()).lineLimit(1)
+            .opacity(open)
+        }
+        .frame(height: MonthUnfold.spendRow, alignment: .bottom)
+    }
+}
