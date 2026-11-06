@@ -3,9 +3,16 @@ import NEOBudgetCore
 /// One boarding and the charges that followed it: the base fare at tap-in, then a distance surcharge at tap-out or a transfer
 /// charge. Shown as one transaction at the boarding time; the ledger keeps every charge (`records/20261025-교통-승하차-합치기-설계.md`).
 public struct TransitTrip: Equatable, Sendable {
-    /// The boarding first, then what followed, in time order. Always two or more.
+    /// The boarding first, then what followed, in time order. Two or more, or one when `exitTaps` has the 하차.
     public let legs: [LedgerEntryID]
+    /// No-charge taps that ended the ride (a ₩0 하차), in time order; not ledger entries.
+    public let exitTaps: [Int64]
     public var boarding: LedgerEntryID { legs[0] }
+
+    public init(legs: [LedgerEntryID], exitTaps: [Int64] = []) {
+        self.legs = legs
+        self.exitTaps = exitTaps
+    }
 }
 
 /// Finds trips among spending. A pure function over display values; it changes nothing.
@@ -36,12 +43,14 @@ public enum TransitTripMerge {
         for account in byAccount.keys.sorted() {
             let spends = byAccount[account, default: []].sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
             var open: [TransactionMarker] = []
-            func close() {
-                if open.count > 1 { trips.append(TransitTrip(legs: open.map(\.id))) }
+            func close(before next: Int64 = .max) {
+                if let exits = exitTaps(of: open, before: next, taps: noChargeTaps), open.count > 1 || !exits.isEmpty {
+                    trips.append(TransitTrip(legs: open.map(\.id), exitTaps: exits))
+                }
                 open = []
             }
             for marker in spends {
-                guard isTransit(marker) else { close(); continue }
+                guard isTransit(marker) else { close(before: marker.occurredAtUnixMilliseconds); continue }
                 if let first = open.first, let last = open.last,
                    marker.amount.currency == first.amount.currency,
                    // A subway-to-bus transfer is two trips: a subway group and a bus group.
@@ -51,13 +60,28 @@ public enum TransitTripMerge {
                    marker.amount.minorUnits < first.amount.minorUnits {
                     open.append(marker)
                 } else {
-                    close()
+                    close(before: marker.occurredAtUnixMilliseconds)
                     open = [marker]
                 }
             }
             close()
         }
         return trips
+    }
+
+    /// The no-charge taps after the trip's last charge and before the next spending, each within `gap` of the one before and `span` of the boarding.
+    /// Taps in the same minute as a charge are that charge's own alighting. `nil` for an empty trip.
+    private static func exitTaps(of legs: [TransactionMarker], before next: Int64, taps: [Int64]) -> [Int64]? {
+        guard let first = legs.first, let last = legs.last else { return nil }
+        let minutes = Set(legs.map { $0.occurredAtUnixMilliseconds / 60_000 })
+        var found: [Int64] = []
+        var latest = last.occurredAtUnixMilliseconds
+        for tap in taps.sorted() where tap > latest && tap < next && tap - first.occurredAtUnixMilliseconds <= span && !minutes.contains(tap / 60_000) {
+            guard tap - latest <= gap else { break }
+            found.append(tap)
+            latest = tap
+        }
+        return found
     }
 
     /// The last moment of the trip before `end`: its last charge, or a later no-charge tap.

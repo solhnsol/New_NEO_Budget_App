@@ -54,13 +54,14 @@ struct DayListView: View {
 
     /// A transaction row: a tap opens it (or, in selection mode, picks it); a long press starts selection with it.
     private func pickable(_ row: Plan.Row, inEvent: Bool) -> some View {
-        TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id), selecting: model.selection.isActive && !row.isIncome)
+        TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id), selecting: model.selection.isActive && !row.isIncome && !TransactionBundling.isTap(row.id))
             .listTap {
+                if TransactionBundling.isTap(row.id) { return }
                 if row.isIncome { return onOpenIncome(row.id) }
                 guard !HapticHold.justHeld(row.id.rawValue) else { return }
                 if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
             }
-            .hapticLongPress(id: row.id.rawValue, enabled: !model.selection.isActive && !row.isIncome) {
+            .hapticLongPress(id: row.id.rawValue, enabled: !model.selection.isActive && !row.isIncome && !TransactionBundling.isTap(row.id)) {
                 withAnimation(Theme.Motion.selectSlide) { model.selection.begin(with: row.id) }
             }
     }
@@ -68,7 +69,7 @@ struct DayListView: View {
     /// A bundle: one row (its tile with the count, its name, the sum); a tap opens it to list its transactions, or in selection mode picks all of them.
     private func bundleView(_ bundle: Plan.Bundle) -> some View {
         let open = model.openBundles.contains(bundle.key)
-        let ids = bundle.rows.map(\.id)
+        let ids = bundle.rows.map(\.id).filter { !TransactionBundling.isTap($0) }
         let picked = model.selection.containsAll(ids)
         return VStack(alignment: .leading, spacing: 0) {
             BundleListRow(bundle: bundle, open: open, selecting: model.selection.isActive, picked: picked)
@@ -143,12 +144,24 @@ struct DayListView: View {
             var rowCount = items.count
             // Loose transactions that belong together become one bundle row at the first of them.
             let looseRows: [Row] = items.compactMap { if case let .row(row) = $0.kind, !row.isIncome { return row } else { return nil } }
-            let keys = TransactionBundling.keys(
+            let (keys, exits) = TransactionBundling.keys(
                 looseRows.map { TransactionBundling.Candidate(id: $0.id, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncoming) },
                 dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf, noChargeTaps: noChargeTaps
             )
             var byKey: [String: [Row]] = [:]
             for (row, key) in zip(looseRows, keys) { if let key { byKey[key, default: []].append(row) } }
+            // A trip's no-charge exit taps are its ₩0 하차 legs, at their own time.
+            for (key, taps) in exits {
+                guard let boarding = byKey[key]?.first else { continue }
+                for tap in taps {
+                    let minute = Int((tap - timeline.dayStartUnixMilliseconds) / 60_000)
+                    guard minute >= 0, minute < timeline.railEndMinute else { continue }
+                    byKey[key, default: []].append(Row(
+                        id: TransactionBundling.tapID(tap), minute: minute, title: "하차", category: boarding.category,
+                        amountText: RailPlan.railAmount(Formatting.money(0, currency: "KRW"), incoming: false), isIncoming: false
+                    ))
+                }
+            }
             var placed = Set<String>()
             items = items.compactMap { item in
                 guard case let .row(row) = item.kind, let at = looseRows.firstIndex(where: { $0.id == row.id }), let key = keys[at], let members = byKey[key] else { return item }
@@ -157,7 +170,7 @@ struct DayListView: View {
                 var title = ordered[0].title + " 외 \(ordered.count - 1)건"
                 if key.hasPrefix("a:") {
                     // A trip: called by its vehicle, its first charge the 승차 and the rest 하차.
-                    title = TransitMode.groupName(for: ordered.map(\.title))
+                    title = TransitMode.groupName(for: ordered.filter { !TransactionBundling.isTap($0.id) }.map(\.title))
                     for index in ordered.indices { ordered[index].title = index == 0 ? "승차" : "하차" }
                 }
                 return Item(id: "b/" + key, minute: ordered[0].minute, kind: .bundle(Bundle(key: key, title: title, rows: ordered)))
