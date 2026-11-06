@@ -236,7 +236,9 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         if let name = NotificationCorrelator.refundSearchKey(for: observation.draft) {
             sameNamePurchases = (index.purchasesByName[name] ?? []).compactMap { candidates[$0]?.correlationRecord }
         }
-        let decision = correlator.decide(observation, nearby: nearby, sameNamePurchases: sameNamePurchases)
+        var decision = correlator.decide(observation, nearby: nearby, sameNamePurchases: sameNamePurchases)
+        // A withdrawal is spending whatever it might also be; a same-money hint stays on the alert that carries it.
+        if withdrawalSettles, case .suggests = decision { decision = .newAct(NewAct()) }
         if waited {
             switch decision {
             case .corroborates: break

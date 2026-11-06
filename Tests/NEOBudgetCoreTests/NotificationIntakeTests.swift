@@ -164,9 +164,21 @@ private let received: Int64 = 1_790_936_040_000
         try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
         let alone = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 가게A 7,000원 1002-123-456*** 잔액 900,000원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
         var ledger = try IntakeLedger(notifications: [alone], setup: setup, intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
-        #expect(ledger.snapshot()?.entries.isEmpty == true)
-        try ledger.settleWithdrawals(at: (alone.notificationAtUnixMilliseconds ?? alone.capturedAtUnixMilliseconds) + 6 * 60_000)
+        // Nothing waits: the withdrawal is spending the moment it is received.
         #expect(ledger.snapshot()?.entries.map(\.kind) == [.expense])
+    }
+
+    @Test func theNameOfASpendingIsTheMostSpecificAlertThatIsEvidenceOfIt() throws {
+        var setup = IntakeSetup()
+        _ = try replay([try bankWithdrawal, try cardApproval], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        let card = try #require(setup.registry.openCandidates.first { $0.key.institution == .hyundaiCard })
+        let target = try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 0, currency: "KRW")), makeID: { "account-1" })
+        try setup.link(card.id, to: target.binding)
+        // The bank's withdrawal comes first and is spending at once; the card's approval then names the shop.
+        let ledger = try IntakeLedger(notifications: [try bankWithdrawal, try cardApproval], setup: setup, intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
+        let entry = try #require(ledger.snapshot()?.entries.first)
+        #expect(ledger.displayName(of: entry.id) == "가맹점A")
     }
 
     @Test func aNotificationThatIsNotAPaymentChangesNothing() throws {

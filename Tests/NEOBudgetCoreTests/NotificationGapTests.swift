@@ -103,7 +103,9 @@ private let card = AccountID(rawValue: "check-card")
 
     @Test func aTossServiceWordIsNotAPerson() throws {
         let snapshot = try replay([try woori("[출금] 토스 페이 10,000원")])
-        #expect(snapshot.ledger.entries.isEmpty)
+        // `토스 페이` is not a person's name: the withdrawal is plain spending, not a transfer to someone.
+        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+        #expect(!snapshot.candidates.values.contains { $0.candidate.sourceDraft?.ruleID == NotificationIntake.tossPersonTransferRuleID })
     }
 
     // MARK: Tmoney fare delivered twice vs. two rides

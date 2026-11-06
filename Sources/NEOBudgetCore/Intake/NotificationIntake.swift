@@ -261,6 +261,10 @@ public struct NotificationIntake: Sendable {
             try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
         }
         try settleStaleWithdrawals(at: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
+        // A withdrawal booked as spending a moment ago may be what a waiting cancellation was for.
+        if recordedDraft.kind == .withdrawal {
+            try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
+        }
         return .processed(candidateID: candidate.id, result: result)
     }
 
@@ -389,10 +393,10 @@ public struct NotificationIntake: Sendable {
         }
     }
 
-    /// How long a bank withdrawal waits for the alert that explains it (a card approval, a Toss payment, the other leg of a transfer).
-    public static let withdrawalWaitMilliseconds: Int64 = 5 * 60_000
+    /// How long a bank withdrawal waits before it is booked as spending: none. A later alert that explains it corrects the booking.
+    public static let withdrawalWaitMilliseconds: Int64 = 0
 
-    /// A bank withdrawal nothing explained within `withdrawalWaitMilliseconds` is spending: named after whom it went to, with no
+    /// A bank withdrawal nothing has explained yet is spending: named after whom it went to, with no
     /// category or shop, which the user is asked for later. `now` is the time of the newest notification (or the clock).
     public func settleStaleWithdrawals<Repository: CandidateProcessingRepository>(at now: Int64, repository: inout Repository) throws {
         let waiting = try repository.correlationRecords(near: now, within: Self.withdrawalWaitMilliseconds * 4).filter {

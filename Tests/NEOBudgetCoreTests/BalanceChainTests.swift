@@ -86,8 +86,8 @@ private let received: Int64 = 1_790_936_040_000
         let ledger = try ledger([try woori("출금", "5,000", balance: "100,000", at: 10), try woori("출금", "3,000", balance: "80,000", at: 15)])
         let gap = try #require(ledger.balanceBreaks.first)
         #expect(ledger.balanceBreaks.count == 1 && gap.differenceMinorUnits == -17_000)
-        let entries = try ledger.repository.processingSnapshot().ledger.entries
-        #expect(entries.isEmpty)       // detection books nothing
+        #expect(try gapEntries(ledger).isEmpty)       // detection books nothing of its own; the two withdrawals are spending already
+        #expect(try ledger.repository.processingSnapshot().ledger.entries.count == 2)
     }
 
     @Test func confirmingBooksOneExpenseAndAnAlreadyBalancedChainSuggestsNothing() throws {
@@ -114,9 +114,9 @@ private let received: Int64 = 1_790_936_040_000
         let left = try gapEntries(book)
         #expect(left.isEmpty)
         #expect(book.balanceBreaks.isEmpty)
-        // The three withdrawals wait for the user as before; the 17,000 is not also booked as a guess.
+        // The three withdrawals are spending already; the 17,000 is not also booked as a guess.
         let entries = try book.repository.processingSnapshot().ledger.entries
-        #expect(entries.isEmpty)
+        #expect(entries.count == 3)
     }
 
     @Test func anActWaitingForTheUserInsideTheGapExplainsItSoNothingIsSuggested() throws {
