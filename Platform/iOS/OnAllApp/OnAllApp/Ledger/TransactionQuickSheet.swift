@@ -21,6 +21,8 @@ struct TransactionQuickSheet: View {
     @State private var detent = PresentationDetent.height(Self.quickHeight)
 
     static let quickHeight: CGFloat = 152
+    /// Options that open under a row must be reachable: the small sheet grows to the middle one.
+    private func raiseIfOpen(_ open: Bool) { if open, detent != .large { detent = .medium } }
     private var current: LedgerListEntry { fresh ?? entry }
     private var zone: String { model.dayZone.identifier }
 
@@ -45,14 +47,14 @@ struct TransactionQuickSheet: View {
                             CategoryTile(category: entry.categoryID, size: 24)
                             Text(CategoryIcon.name(for: entry.categoryID) ?? "안 함")
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle() } }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle(); raiseIfOpen(opensCategory) } }
                     if opensCategory && !incoming { categoryChips(entry) }
                     row("연결된 일정", open: opensEvent, tappable: true) {
                         HStack(spacing: 6) {
                             if let linked { Circle().fill(Color(hex: linked.colorHex) ?? Theme.accent).frame(width: 8, height: 8) }
                             Text(linked?.title ?? (entry.portions.compactMap(\.activityTitle).first ?? "없음"))
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle() } }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle(); raiseIfOpen(opensEvent) } }
                     if opensEvent { eventChips(entry, linked: linked) }
                 }
                 .padding(.top, 6)
@@ -76,17 +78,14 @@ struct TransactionQuickSheet: View {
         .scrollIndicators(.hidden)
         .background(Theme.surface)
         .tint(Theme.accent)
-        .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
+        .presentationDetents([.height(Self.quickHeight), .medium, .large], selection: $detent)
         .presentationCornerRadius(Theme.Radius.sheet)
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.surface)
         .sheet(isPresented: $choosingCategory) { CategoryChooserSheet(entry: current, model: model) }
         .sheet(isPresented: $choosingEvent) { TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs) }
         .task(id: [model.dataGeneration, model.overrideRevision]) {
-            fresh = await model.ledgerSections()?.lazy.flatMap(\.entries).first { $0.id == entry.id }
-            let day = model.dayZone.localDate(of: entry.transaction.occurredAtUnixMilliseconds)
-            let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
-            nearby = ActivityEditing.eventChoices(near: entry.transaction.occurredAtUnixMilliseconds, in: timelines)
+            await refreshEntry()
             if let statements = await model.ledgerStatements() {
                 for statement in statements {
                     guard let line = statement.lines.first(where: { $0.entryID == entry.id }) else { continue }
@@ -175,12 +174,21 @@ struct TransactionQuickSheet: View {
         .padding(.bottom, Theme.Space.m)
     }
 
+    /// Reads the entry and the events around it again, so what the sheet shows is what is stored (also right after a link or unlink).
+    private func refreshEntry() async {
+        let id = entry.id
+        fresh = await model.ledgerSections()?.lazy.flatMap(\.entries).first { $0.id == id }
+        let day = model.dayZone.localDate(of: entry.transaction.occurredAtUnixMilliseconds)
+        let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
+        nearby = ActivityEditing.eventChoices(near: entry.transaction.occurredAtUnixMilliseconds, in: timelines)
+    }
+
     private func eventChips(_ entry: LedgerListEntry, linked: ActivityEditing.EventChoice?) -> some View {
         QuickFlow(spacing: 6) {
-            chip(on: linked == nil) { Task { _ = await model.perform(ActivityEditing.unlink(entry.transaction.id, now: model.nowMilliseconds)) } } label: { Text("없음") }
+            chip(on: linked == nil) { Task { _ = await model.perform(ActivityEditing.unlink(entry.transaction.id, now: model.nowMilliseconds)); await refreshEntry() } } label: { Text("없음") }
             ForEach(nearby.prefix(2)) { choice in
                 chip(on: choice == linked) {
-                    Task { _ = await model.perform(ActivityEditing.link(entry.transaction.id, event: choice.key, now: model.nowMilliseconds)) }
+                    Task { _ = await model.perform(ActivityEditing.link(entry.transaction.id, event: choice.key, now: model.nowMilliseconds)); await refreshEntry() }
                 } label: {
                     Circle().fill(Color(hex: choice.colorHex) ?? Theme.accent).frame(width: 8, height: 8)
                     Text(choice.title)
