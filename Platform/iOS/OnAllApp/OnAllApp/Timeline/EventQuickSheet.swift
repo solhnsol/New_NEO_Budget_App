@@ -101,7 +101,8 @@ struct EventQuickSheet: View {
     /// A pill with the date or time in it and the system picker laid invisibly over it.
     private func pill(_ text: String, hasDate: Bool = false, time: Binding<Date>? = nil) -> some View {
         Text(text).font(.onAll(size: 15, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, Theme.Space.m).frame(height: Theme.smallButtonHeight)
+            // minWidth: the clear picker over a time pill is about as wide as "22:00"; the narrower 미정 pill would clip it and its tap does nothing.
+            .padding(.horizontal, Theme.Space.m).frame(minWidth: time == nil ? 0 : 68).frame(height: Theme.smallButtonHeight)
             .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.smallButton, style: .continuous))
             .overlay {
                 // The system picker over the pill, drawn clear: its tap opens the picker, the pill stays as designed.
