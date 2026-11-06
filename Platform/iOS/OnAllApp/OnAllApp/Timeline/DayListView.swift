@@ -84,7 +84,7 @@ struct DayListView: View {
         struct Row: Identifiable {
             let id: LedgerEntryID
             let minute: Int
-            let title: String
+            var title: String
             let category: CanonicalCategoryID?
             let amountText: String
             let isIncoming: Bool
@@ -145,8 +145,13 @@ struct DayListView: View {
             items = items.compactMap { item in
                 guard case let .row(row) = item.kind, let at = looseRows.firstIndex(where: { $0.id == row.id }), let key = keys[at], let members = byKey[key] else { return item }
                 guard placed.insert(key).inserted else { return nil }
-                let ordered = members.sorted { ($0.minute, $0.id.rawValue) < ($1.minute, $1.id.rawValue) }
-                let title = key.hasPrefix("a:") ? ordered[0].title : ordered[0].title + " 외 \(ordered.count - 1)건"
+                var ordered = members.sorted { ($0.minute, $0.id.rawValue) < ($1.minute, $1.id.rawValue) }
+                var title = ordered[0].title + " 외 \(ordered.count - 1)건"
+                if key.hasPrefix("a:") {
+                    // A trip: called by its vehicle, its first charge the 승차 and the rest 하차.
+                    title = TransitMode.groupName(for: ordered.map(\.title))
+                    for index in ordered.indices { ordered[index].title = index == 0 ? "승차" : "하차" }
+                }
                 return Item(id: "b/" + key, minute: ordered[0].minute, kind: .bundle(Bundle(key: key, title: title, rows: ordered)))
             }
             for block in blocks {

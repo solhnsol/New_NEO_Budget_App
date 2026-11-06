@@ -130,7 +130,7 @@ struct RailPlan {
         let id: String
         let transactionID: LedgerEntryID
         let minute: Int
-        let title: String
+        var title: String
         let category: CanonicalCategoryID?
         let amountText: String
         let isIncoming: Bool
@@ -237,7 +237,12 @@ struct RailPlan {
         for (key, indices) in Dictionary(grouping: rows.indices.filter { rows[$0].bundleKey != nil }, by: { rows[$0].bundleKey! }).sorted(by: { $0.value[0] < $1.value[0] }) {
             guard indices.count > 1 else { rows[indices[0]].bundleKey = nil; continue }
             let ordered = indices.sorted()
-            let title = key.hasPrefix("a:") ? rows[ordered[0]].title : rows[ordered[0]].title + " 외 \(ordered.count - 1)건"
+            var title = rows[ordered[0]].title + " 외 \(ordered.count - 1)건"
+            if key.hasPrefix("a:") {
+                // A trip: called by its vehicle, its first charge the 승차 and the rest 하차.
+                title = TransitMode.groupName(for: ordered.map { rows[$0].title })
+                for (position, index) in ordered.enumerated() { rows[index].title = position == 0 ? "승차" : "하차" }
+            }
             for index in ordered { rowBundle[index] = bundles.count }
             bundles.append(Bundle(key: key, indices: ordered, title: title, isAuto: key.hasPrefix("a:")))
         }
@@ -404,7 +409,8 @@ private struct RailTimeline: View {
 
     /// "09:14–09:48"
     private func bundleRange(_ bundle: RailPlan.Bundle, _ plan: RailPlan) -> String {
-        clockText(plan.rows[bundle.first].minute) + "–" + clockText(plan.rows[bundle.last].minute)
+        if bundle.isAuto { return "승차 " + clockText(plan.rows[bundle.first].minute) + " · 하차 " + clockText(plan.rows[bundle.last].minute) }
+        return clockText(plan.rows[bundle.first].minute) + "–" + clockText(plan.rows[bundle.last].minute)
     }
 
     /// The collapsed bundle's row: its name, the sum of its legs, at its first leg.
