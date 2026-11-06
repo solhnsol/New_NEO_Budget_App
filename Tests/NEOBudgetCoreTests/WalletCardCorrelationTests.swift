@@ -83,14 +83,15 @@ private let received: Int64 = 1_790_936_040_000
         }
     }
 
-    @Test func aSameAmountRepeatInTheSameAppStillWaitsForReviewAndOnlyOneWalletAlertIsAbsorbed() throws {
+    /// Each Wallet tap is evidence of its own alert, also of the repeat that waits for review (so only that alert is left to confirm).
+    @Test func aSameAmountRepeatInTheSameAppStillWaitsForReviewAndEachWalletAlertIsAbsorbedByItsOwnPayment() throws {
         let first = try appAlert("4,500", "가상카페", time: "7:13:30 PM")
         let firstTap = try walletTap("4,500", "가상카페", time: "7:13:41 PM")
         let second = try appAlert("4,500", "가상카페", time: "7:15:30 PM")
         let secondTap = try walletTap("4,500", "가상카페", time: "7:15:41 PM")
         let snapshot = try replay([first, firstTap, second, secondTap])
         #expect(snapshot.ledger.entries.count == 1)
-        #expect(open(snapshot) == 2)
-        #expect(snapshot.candidates.values.filter { $0.corroborates?.rule == .walletTap }.count == 1)
+        #expect(open(snapshot) == 1)
+        #expect(snapshot.candidates.values.filter { $0.corroborates?.rule == .walletTap }.count == 2)
     }
 }

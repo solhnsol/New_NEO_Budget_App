@@ -36,6 +36,10 @@ public enum DayTimelineBuilder {
     public static func build(_ input: DayTimelineInput) -> DayTimeline {
         let bounds = input.timeZone.dayBounds(input.day)
         let totalMinutes = Int((bounds.end - bounds.start) / 60_000)
+        // The rail runs from the ledger day's start to the next one's: transactions from midnight up to that start close the day at their true time.
+        let ledger = input.timeZone.ledgerDayBounds(input.day)
+        let railEnd = max(bounds.end, ledger.end)
+        let railEndMinute = Int((railEnd - bounds.start) / 60_000)
         let calendarsByID = Dictionary(input.calendars.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let activitiesByEvent = input.life.activitiesByEvent()
         let transactionsByID = Dictionary(input.transactions.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -50,7 +54,7 @@ public enum DayTimelineBuilder {
             let activity = activitiesByEvent[event.key]
             switch event.time {
             case let .timed(range):
-                guard range.overlaps(from: bounds.start, to: bounds.end) else { continue }
+                guard range.overlaps(from: bounds.start, to: railEnd) else { continue }
                 timed.append(TimedCandidate(
                     key: event.key, calendar: calendar, title: event.title, range: range, activity: activity,
                     isRecurringInstance: event.isRecurringInstance, isEditable: event.isEditable,
@@ -71,7 +75,7 @@ public enum DayTimelineBuilder {
                 let calendar = calendarsByID[association.key.calendarID]
                 switch association.lastKnown.time {
                 case let .timed(range):
-                    guard range.overlaps(from: bounds.start, to: bounds.end) else { continue }
+                    guard range.overlaps(from: bounds.start, to: railEnd) else { continue }
                     timed.append(TimedCandidate(
                         key: association.key, calendar: calendar, title: association.lastKnown.title, range: range,
                         activity: activity, isRecurringInstance: false, isEditable: false, revisionToken: nil, state: .eventMissing
@@ -99,7 +103,7 @@ public enum DayTimelineBuilder {
                     flow: marker.flow,
                     occurredAtUnixMilliseconds: marker.occurredAtUnixMilliseconds,
                     timePrecision: marker.timePrecision,
-                    occursOnSelectedDay: marker.occurredAtUnixMilliseconds >= bounds.start && marker.occurredAtUnixMilliseconds < bounds.end,
+                    occursOnSelectedDay: marker.occurredAtUnixMilliseconds >= ledger.start && marker.occurredAtUnixMilliseconds < ledger.end,
                     allocatedAmount: allocation.amount.knowledge,
                     isPartOfTransaction: !wholeTransaction,
                     source: allocation.provenance.source,
@@ -145,18 +149,18 @@ public enum DayTimelineBuilder {
         let minimumVisual = input.policy.minimumVisualDurationMinutes
         var prepared: [PreparedBlock] = timed.map { candidate in
             let clippedStart = max(candidate.range.startUnixMilliseconds, bounds.start)
-            let clippedEnd = min(candidate.range.endUnixMilliseconds, bounds.end)
+            let clippedEnd = min(candidate.range.endUnixMilliseconds, railEnd)
             let startMinute = Int((clippedStart - bounds.start) / 60_000)
             let endMinute = max(startMinute + 1, Int((clippedEnd - bounds.start + 59_999) / 60_000))
             var displayStart = startMinute
             var displayEnd = max(endMinute, startMinute + minimumVisual)
-            if displayEnd > totalMinutes {
-                displayEnd = totalMinutes
-                displayStart = max(0, min(startMinute, totalMinutes - minimumVisual))
+            if displayEnd > railEndMinute {
+                displayEnd = railEndMinute
+                displayStart = max(0, min(startMinute, railEndMinute - minimumVisual))
             }
             return PreparedBlock(
                 candidate: candidate,
-                startMinute: startMinute, endMinute: min(endMinute, totalMinutes),
+                startMinute: startMinute, endMinute: min(endMinute, railEndMinute),
                 displayStart: displayStart, displayEnd: displayEnd
             )
         }
@@ -180,7 +184,7 @@ public enum DayTimelineBuilder {
                 displayStartMinute: item.displayStart,
                 displayEndMinute: item.displayEnd,
                 continuesFromPreviousDay: candidate.range.startUnixMilliseconds < bounds.start,
-                continuesToNextDay: candidate.range.endUnixMilliseconds > bounds.end,
+                continuesToNextDay: candidate.range.endUnixMilliseconds > railEnd,
                 layout: layouts[index],
                 activity: badge(for: candidate.activity),
                 allocations: items,
@@ -221,7 +225,7 @@ public enum DayTimelineBuilder {
         // Transactions that happened on this day.
         let visibleActivityIDs = Set(blocks.compactMap { $0.activity?.activityID } + allDayItems.compactMap { $0.activity?.activityID })
         let dayTransactions = input.transactions
-            .filter { $0.occurredAtUnixMilliseconds >= bounds.start && $0.occurredAtUnixMilliseconds < bounds.end }
+            .filter { $0.occurredAtUnixMilliseconds >= ledger.start && $0.occurredAtUnixMilliseconds < ledger.end }
             .sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
 
         var markers: [TransactionMarkerItem] = []
@@ -310,6 +314,7 @@ public enum DayTimelineBuilder {
             dayStartUnixMilliseconds: bounds.start,
             dayEndUnixMilliseconds: bounds.end,
             totalMinutes: totalMinutes,
+            railEndMinute: railEndMinute,
             allDay: allDayItems,
             blocks: blocks,
             markers: markers,

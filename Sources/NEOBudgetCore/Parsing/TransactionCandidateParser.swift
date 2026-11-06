@@ -26,7 +26,7 @@ public enum NotTransactionReason: String, Codable, Sendable {
     case balanceInquiry, unrecognized
 }
 
-public enum NotificationParseFailure: Error, Equatable, Sendable {
+public enum NotificationParseFailure: String, Error, Codable, Equatable, Sendable {
     case amountMissing
     case amountUnparseable
     case amountAmbiguous

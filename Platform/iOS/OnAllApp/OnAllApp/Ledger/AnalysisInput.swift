@@ -19,7 +19,7 @@ enum AnalysisInput {
             let waiting = max(0, min(expected, net))
             let activity = activity(of: entry, life: life)
             return AnalysisTransaction(
-                id: entry.id.rawValue, date: zone.localDate(of: entry.transaction.occurredAtUnixMilliseconds), shareMinorUnits: net - waiting,
+                id: entry.id.rawValue, date: zone.ledgerDate(of: entry.transaction.occurredAtUnixMilliseconds), shareMinorUnits: net - waiting,
                 pendingMinorUnits: waiting, category: entry.categoryID, tags: tags(of: entry, life: life), activity: activity,
                 isRecurring: entry.transaction.flow == .spend && recurring.isRecurring(
                     id: entry.id.rawValue, name: entry.transaction.title ?? "", amountMinorUnits: entry.transaction.amount.minorUnits)
@@ -32,7 +32,7 @@ enum AnalysisInput {
         entries.compactMap { entry in
             guard entry.transaction.flow == .spend, entry.transaction.amount.currency == currency, let title = entry.transaction.title else { return nil }
             return RecurringInput(
-                id: entry.id.rawValue, name: title, date: zone.localDate(of: entry.transaction.occurredAtUnixMilliseconds),
+                id: entry.id.rawValue, name: title, date: zone.ledgerDate(of: entry.transaction.occurredAtUnixMilliseconds),
                 amountMinorUnits: entry.transaction.amount.minorUnits
             )
         }

@@ -216,6 +216,8 @@ public struct DayTimeline: Equatable, Sendable {
     public let dayEndUnixMilliseconds: Int64
     /// 1440 normally; 1380 or 1500 on a daylight-saving transition day.
     public let totalMinutes: Int
+    /// Where the day's rail ends, in minutes from the start of the day: `totalMinutes` plus the ledger day start (the early hours of the next day belong to this day).
+    public let railEndMinute: Int
     public var allDay: [AllDayItem]
     public var blocks: [EventBlock]
     public var markers: [TransactionMarkerItem]

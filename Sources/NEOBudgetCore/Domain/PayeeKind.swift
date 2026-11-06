@@ -9,7 +9,7 @@ public enum PayeeKind: String, Sendable {
     public static func classify(_ draft: TransactionCandidateDraft) -> PayeeKind {
         switch draft.kind {
         case .transferOut, .transferIn, .withdrawal, .deposit: break
-        default: return .merchant
+        default: if draft.ruleID != NotificationIntake.tossPersonTransferRuleID { return .merchant }
         }
         let names = [draft.counterparty.payeeRaw, draft.counterparty.merchantRaw, draft.counterparty.memoRaw]
         return names.contains { $0.map(isPersonName) ?? false } ? .person : .merchant

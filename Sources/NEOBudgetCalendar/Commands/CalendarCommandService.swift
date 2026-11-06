@@ -65,7 +65,7 @@ public actor CalendarCommandService {
     /// activity that can appear, so spending bought earlier still shows inside its activity.
     public func dayTimeline(for day: LocalDate, visibleCalendarIDs: Set<CalendarID>? = nil) async throws -> DayTimeline {
         let timeZone = configuration.displayTimeZone
-        let bounds = timeZone.dayBounds(day)
+        let bounds = (start: timeZone.dayBounds(day).start, end: max(timeZone.dayBounds(day).end, timeZone.ledgerDayBounds(day).end))
         let events = try await provider.events(from: bounds.start, to: bounds.end, calendarIDs: visibleCalendarIDs)
         let calendars = try await provider.calendars()
         let life = try repository.snapshot().state
@@ -146,7 +146,8 @@ public actor CalendarCommandService {
             timeZone: timeZone,
             events: events,
             life: try repository.snapshot().state,
-            transactions: transactions.transactions(occurringFrom: from, to: to),
+            // The ledger day starts after midnight, so the window slides by the same amount.
+            transactions: transactions.transactions(occurringFrom: timeZone.ledgerDayBounds(first).start, to: timeZone.ledgerDayBounds(first.adding(days: 6)).end),
             reductions: spendReductions
         )
     }

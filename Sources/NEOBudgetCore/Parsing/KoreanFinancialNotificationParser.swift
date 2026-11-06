@@ -58,6 +58,7 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
 
     private static let transitFarePattern = try! NSRegularExpression(pattern: #"^₩([0-9]+(?:,[0-9]{3})*)\s+for\s+(.+)$"#)
     private static let transitBalancePattern = try! NSRegularExpression(pattern: #"balance is ₩[0-9]"#)
+    private static let transitBalanceAmount = try! NSRegularExpression(pattern: #"balance is ₩([0-9]+(?:,[0-9]{3})*)"#)
 
     /// A ride paid from a prepaid transit card: `₩1,550 for Metro` with `Your new balance is ₩10,000.` The fare is the amount;
     /// the balance is never read as one. Balance-only and no-charge notices of the same card are not transactions.
@@ -88,6 +89,9 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             kind: .purchase,
             direction: .outflow,
             amount: try Money(minorUnits: fare, currency: "KRW"),
+            // The card's balance after the ride tells two same-fare rides from one alert delivered twice (see the dedup validator).
+            balanceAfter: Self.captures(Self.transitBalanceAmount, body)?.first.flatMap { Int64($0.replacingOccurrences(of: ",", with: "")) }
+                .flatMap { try? Money(minorUnits: $0, currency: "KRW") },
             occurredAt: timestamp,
             instrument: InstrumentHint(kind: .transitCard, displayNameRaw: title),
             counterparty: DraftCounterparty(merchantRaw: groups[1].trimmingCharacters(in: .whitespaces)),

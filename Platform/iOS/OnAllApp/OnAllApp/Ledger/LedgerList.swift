@@ -125,7 +125,7 @@ enum LedgerList {
         persons: Set<LedgerEntryID> = [], surplus: SurplusTreatment = .income
     ) -> [LedgerDaySection] {
         let entries = netted(transactions.map { entry($0, life: life, override: overrides[$0.id], rules: rules, persons: persons) }, life: life, refundOf: refundOf, surplus: surplus)
-        let byDay = Dictionary(grouping: entries) { zone.localDate(of: $0.transaction.occurredAtUnixMilliseconds) }
+        let byDay = Dictionary(grouping: entries) { zone.ledgerDate(of: $0.transaction.occurredAtUnixMilliseconds) }
         return byDay.keys.sorted(by: >).map { day in
             LedgerDaySection(day: day, entries: (byDay[day] ?? []).sorted(by: newestFirst))
         }

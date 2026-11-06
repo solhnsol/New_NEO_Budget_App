@@ -16,8 +16,8 @@ private func sampleStatements() async throws -> [LedgerStatements.Statement] {
 @Test func accountStatementRunsItsBalance() async throws {
     let statements = try await sampleStatements()
     let bank = try #require(statements.first { $0.name == "생활비" })
-    // 1,000,000 opening + 2,000,000 salary − 23,700 spending − 100,000 transfer − 15,000 card bill + 5,000 refund.
-    #expect(bank.current == 2_866_300)
+    // 1,000,000 opening + 2,000,000 salary − 30,200 spending (incl. the 01:30 late-night 6,500) − 100,000 transfer − 15,000 card bill + 5,000 refund.
+    #expect(bank.current == 2_859_800)
     #expect(bank.lines.first?.balanceAfter == bank.current)          // newest first
     #expect(bank.lines.contains { $0.kind == .income && $0.delta.minorUnits == 2_000_000 })
     #expect(bank.lines.contains { $0.kind == .transfer && $0.delta.minorUnits == -100_000 })

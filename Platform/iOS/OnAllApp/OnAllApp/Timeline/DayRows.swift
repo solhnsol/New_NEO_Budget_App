@@ -51,7 +51,7 @@ struct DaySection: View {
             if let timeline {
                 RailTimeline(
                     timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction,
-                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }, onOpenIncome: onOpenIncome, model: model
+                    onCreate: { minute in model.newEventSeed = minute >= 1440 ? (day.adding(days: 1), minute - 1440) : (day, minute); model.creatingEvent = true }, onOpenIncome: onOpenIncome, model: model
                 )
                     .padding(.trailing, Theme.Space.l)
             } else {
@@ -197,10 +197,10 @@ struct RailPlan {
 
     init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = [], isOpen: (String) -> Bool = { _ in false }, openEnds: Set<CalendarEventKey> = []) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
-        let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
+        let cutoff = Int(max(-1, min(Int64(timeline.railEndMinute + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
         let past = blocks.filter { $0.displayStartMinute < cutoff }
-        let now = cutoff >= 0 && cutoff < timeline.totalMinutes ? cutoff : nil
+        let now = cutoff >= 0 && cutoff < timeline.railEndMinute ? cutoff : nil
 
         // An open event that has begun runs to its last transaction (the saved end is only a placeholder), so those transactions are inside it.
         var reach: [String: Int] = [:]
@@ -227,7 +227,7 @@ struct RailPlan {
         let marked = Set(timeline.markers.map(\.transactionID))
         for block in blocks {
             for item in block.allocations where item.occursOnSelectedDay && !marked.contains(item.transactionID) {
-                let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+                let minute = Int(max(0, min(Int64(timeline.railEndMinute - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
                 rows.append(Row(
                     id: "a/" + item.allocationID.rawValue, transactionID: item.transactionID, minute: minute, title: item.title ?? "거래", category: item.categoryID,
                     amountText: RailPlan.railAmount(Formatting.knowledge(item.allocatedAmount, currency: item.transactionAmount.currency), incoming: item.flow == .refund),
@@ -236,7 +236,7 @@ struct RailPlan {
             }
         }
         for item in incomes {
-            let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+            let minute = Int(max(0, min(Int64(timeline.railEndMinute - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
             rows.append(Row(
                 id: "i/" + item.id.rawValue, transactionID: item.id, minute: minute, title: item.title ?? "입금", category: nil,
                 amountText: "+" + Formatting.grouped(item.minorUnits), isIncoming: true, colorHex: nil, isIncome: true
@@ -279,7 +279,9 @@ struct RailPlan {
         let order = rows.indices.filter { included[$0] }.sorted { (layoutMinute[$0], $0) < (layoutMinute[$1], $1) }
         var covered = events.flatMap { [$0.start, $0.end] } + order.map { layoutMinute[$0] }
         if let now { covered.append(now) }
-        let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
+        // The midnight divider sits on the axis whenever the day reaches past it.
+        if covered.contains(where: { $0 > 1440 }) { covered.append(1440) }
+        let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.railEndMinute)
         let axis = RailAxis(events: events, transactions: order.map { layoutMinute[$0] }, now: now, firstMinute: range.first, lastMinute: range.last)
         // A dot always sits on its real minute; rows that share a minute step down inside the room the axis stretched for them. A row at the minute
         // a past event began is drawn under that event's name, not over it.
@@ -354,11 +356,19 @@ private struct RailTimeline: View {
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
-            ForEach(axis.hourMarks(avoiding: plan.nowMinute), id: \.hour) { mark in
-                Text("\(mark.hour)").font(Theme.Typo.caption.monospacedDigit()).foregroundStyle(Theme.disabled)
+            ForEach(axis.hourMarks(avoiding: plan.nowMinute).filter { $0.hour != 24 }, id: \.hour) { mark in
+                Text("\(mark.hour % 24)").font(Theme.Typo.caption.monospacedDigit()).foregroundStyle(Theme.disabled)
                     .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(x: RailMetrics.hourLabelX, y: CGFloat(mark.y) - 7)
             }
             Capsule().fill(Theme.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
+            if timeline.railEndMinute > 1440, axis.lastMinute >= 1440 {
+                // Past midnight the day goes on: what happened before the day start belongs to this day, at its true time.
+                HStack(spacing: Theme.Space.s) {
+                    Text("자정").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
+                    Rectangle().fill(Theme.divider).frame(height: 1)
+                }
+                .padding(.leading, RailMetrics.contentX).offset(y: CGFloat(axis.y(1440)) - 7).allowsHitTesting(false)
+            }
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis, end: plan.end(of: block), isOpen: plan.isOpen(block)) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis, end: plan.end(of: block), isOpen: plan.isOpen(block)) { onSelect(.event(block)) } }
             // The spine of each bundle, under its rows: from its first leg to its last.
@@ -406,7 +416,7 @@ private struct RailTimeline: View {
                 // A hold that starts on a row or an event belongs to that row or event (selecting, opening), not to the empty time under it.
                 guard !plan.touchBands.contains(where: { $0.contains(location) }) else { return }
                 let minute = plan.axis.minute(atY: Double(location.y))
-                let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
+                let snapped = min(timeline.railEndMinute - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
                 onCreate(max(0, snapped))
             })
         .padding(.vertical, RailMetrics.vertical)
@@ -447,7 +457,7 @@ private struct RailTimeline: View {
     }
 }
 
-private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", minute / 60, minute % 60) }
+private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", minute % 1440 / 60, minute % 60) }
 
 /// An event that has begun: the rail turns its colour and thickens over its stretch; the name stands beside it at its start, left-aligned.
 private struct PastEventBar: View {

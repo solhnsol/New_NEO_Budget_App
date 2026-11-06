@@ -386,3 +386,19 @@ private extension Array {
     #expect(result.blocks.first { $0.title == "메모" }?.activity == nil)
     #expect(result.blocks.first { $0.title == "그냥" }?.activity?.display == .empty)
 }
+
+@Test func theRailRunsToTheNextLedgerDayStartAndKeepsEarlyMorningSpendAtItsTrueTime() throws {
+    var zone = seoul
+    zone.ledgerDayStartMinutes = 240
+    let next = today.adding(days: 1)
+    let txs = [
+        marker("t-before", at: clock(2), amount: 1_000),                    // 02:00 today: belongs to yesterday's tail
+        marker("t-day", at: clock(12), amount: 2_000),
+        marker("t-tail", at: at(next, 1, 30), amount: 3_000)                // 01:30 tomorrow: tail of today
+    ]
+    let timeline = build([], transactions: txs, zone: zone)
+    #expect(timeline.markers.map(\.transactionID) == [txID("t-day"), txID("t-tail")])
+    #expect(timeline.markers.map(\.positionMinute) == [720, 1_440 + 90])
+    #expect(timeline.railEndMinute == 1_440 + 240)
+    #expect(timeline.summary.totals.first.map { $0.unlinkedNetMinorUnits } == 5_000)
+}

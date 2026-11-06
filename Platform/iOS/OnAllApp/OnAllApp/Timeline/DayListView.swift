@@ -125,7 +125,7 @@ struct DayListView: View {
 
         init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = []) {
             let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
-            let now = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
+            let now = Int(max(-1, min(Int64(timeline.railEndMinute + 1), raw)))
             func row(_ id: LedgerEntryID, _ minute: Int, _ title: String?, _ category: CanonicalCategoryID?, _ money: Money, incoming: Bool) -> Row {
                 Row(id: id, minute: minute, title: title ?? "거래", category: category, amountText: RailPlan.railAmount(Formatting.money(money.minorUnits, currency: money.currency), incoming: incoming), isIncoming: incoming, amountMinor: money.minorUnits)
             }
@@ -136,7 +136,7 @@ struct DayListView: View {
                 return Item(id: "m/" + marker.transactionID.rawValue, minute: marker.positionMinute, kind: .row(loose))
             }
             for income in incomes {
-                let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (income.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+                let minute = Int(max(0, min(Int64(timeline.railEndMinute - 1), (income.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
                 let deposit = Row(id: income.id, minute: minute, title: income.title ?? "입금", category: nil, amountText: "+" + Formatting.grouped(income.minorUnits), isIncoming: true, isIncome: true)
                 items.append(Item(id: "i/" + income.id.rawValue, minute: minute, kind: .row(deposit)))
             }
@@ -165,14 +165,14 @@ struct DayListView: View {
             for block in blocks {
                 // A transaction wholly inside an event has no marker of its own; it is drawn from the event's allocations.
                 let inside: [Row] = block.allocations.filter { $0.occursOnSelectedDay && !marked.contains($0.transactionID) }.map { item in
-                    let minute = Int(max(0, min(Int64(timeline.totalMinutes - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
+                    let minute = Int(max(0, min(Int64(timeline.railEndMinute - 1), (item.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)))
                     return row(item.transactionID, minute, item.title, item.categoryID, item.transactionAmount, incoming: item.flow == .refund)
                 }.sorted { ($0.minute, $0.id.rawValue) < ($1.minute, $1.id.rawValue) }
                 rowCount += inside.count
                 items.append(Item(id: "e/" + block.id.rawValue, minute: block.displayStartMinute, kind: .event(block, inside, isFuture: block.displayStartMinute >= now)))
             }
             // Today, with no event going on: the time of day as a hairline among the rows (the design's `.nowl`).
-            if raw >= 0, raw < Int64(timeline.totalMinutes), !blocks.contains(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) {
+            if raw >= 0, raw < Int64(timeline.railEndMinute), !blocks.contains(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) {
                 items.append(Item(id: "now", minute: now, kind: .nowLine))
             }
             self.items = items.sorted { ($0.minute, $0.id) < ($1.minute, $1.id) }
@@ -183,7 +183,7 @@ struct DayListView: View {
     }
 }
 
-private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", minute / 60, minute % 60) }
+private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", minute % 1440 / 60, minute % 60) }
 
 private extension View {
     /// A row that opens on a tap: a tap gesture, not a `Button`, so a swipe that starts on it never opens it.

@@ -385,7 +385,7 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
     /// only account the text points to.
     public func counterpartAlias(in text: String) -> AccountID? {
         let text = NotificationText.normalize(text)
-        let hits = Set(counterpartAliases.compactMap { phrase, account -> AccountID? in
+        let hits = Set(allAliases().compactMap { phrase, account -> AccountID? in
             guard profile(.account(account))?.isActive == true else { return nil }
             var from = text.startIndex
             while let found = text.range(of: phrase, range: from..<text.endIndex) {
@@ -397,6 +397,15 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
             return nil
         })
         return hits.count == 1 ? hits.first : nil
+    }
+
+    /// Seeded words: bank messages say `카카오페이` for a top-up of Kakao Pay money. They count only while the user has exactly one
+    /// active Kakao Pay account registered, so an unregistered wallet is never guessed (the top-up then stays spending).
+    private func allAliases() -> [String: AccountID] {
+        var all = counterpartAliases
+        let kakao = profiles.filter { $0.isActive && $0.institution == .kakaoPay }
+        if kakao.count == 1, case let .account(id) = kakao[0].binding, all["카카오페이"] == nil { all["카카오페이"] = id }
+        return all
     }
 
     private static func aliasKey(_ text: String) -> String { NotificationText.normalize(text) }

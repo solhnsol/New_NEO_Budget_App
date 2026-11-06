@@ -48,7 +48,7 @@ public struct IntakeLedger {
     public private(set) var notifications: [RawNotification]
     public private(set) var setup: IntakeSetup
     public private(set) var repository: InMemoryCandidateProcessingRepository
-    private var outcomes: [String: NotificationIntakeOutcome]
+    private var outcomes: [String: IntakeLedgerSnapshot.Outcome]
     /// Where each received notification sits in `notifications`, which is also the set of IDs already received.
     private var positions: [String: Int]
     /// IDs of the notifications a partial replay left out (older than its cutoff); empty for a full one. They are not in
@@ -91,6 +91,67 @@ public struct IntakeLedger {
     }
 
     public var isComplete: Bool { deferredIDs.isEmpty }
+
+    /// Bump when anything that decides what a notification becomes changes (the parser's reading, the assembler, the
+    /// correlator, deduplication): a saved ledger made under another value is not used, and the ledger is replayed once.
+    public static let rulesRevision = 5
+
+    /// The ledger as it stands, to save and restore later (`init(restoring:...)`). Nil for a partial replay.
+    public func snapshot() -> IntakeLedgerSnapshot? {
+        guard isComplete else { return nil }
+        let state = repository.exportedState()
+        return IntakeLedgerSnapshot(
+            rules: Self.rulesKey(intake), history: Self.historyKey(history), setup: setup,
+            notificationIDs: notifications.map(\.id), outcomes: outcomes,
+            candidateRevision: state.candidateRevision, candidates: state.candidates, entries: state.entries
+        )
+    }
+
+    /// Continues from a saved ledger instead of replaying: the notifications it covers are not parsed again, only the ones
+    /// after them. Throws when the snapshot does not belong to these inputs (other rules, history or setup, or its
+    /// notifications are not the start of `notifications`) or does not rebuild; the caller then replays everything.
+    public init(
+        restoring snapshot: IntakeLedgerSnapshot, notifications: [RawNotification], setup: IntakeSetup,
+        intake: NotificationIntake, history: ImportedHistory? = nil
+    ) throws {
+        let plan = try history.map(ActualImportPlanner.plan)
+        var setup = setup
+        if let plan { try setup.importAccounts(plan) }
+        let covered = snapshot.notificationIDs.count
+        guard snapshot.format == IntakeLedgerSnapshot.currentFormat, snapshot.rules == Self.rulesKey(intake),
+              snapshot.history == Self.historyKey(history), snapshot.setup == setup,
+              notifications.count >= covered, zip(snapshot.notificationIDs, notifications).allSatisfy({ $0 == $1.id }),
+              snapshot.outcomes.count <= covered
+        else { throw IntakeLedgerSnapshotError.notApplicable }
+        self.notifications = Array(notifications.prefix(covered))
+        self.history = history
+        self.importPlan = plan
+        self.setup = snapshot.setup
+        self.intake = intake
+        self.outcomes = snapshot.outcomes
+        self.positions = Dictionary(uniqueKeysWithValues: snapshot.notificationIDs.enumerated().map { ($1, $0) })
+        guard positions.count == covered else { throw IntakeLedgerSnapshotError.notApplicable }
+        self.repository = try InMemoryCandidateProcessingRepository(
+            configuration: snapshot.setup.configuration, candidateRevision: snapshot.candidateRevision,
+            candidates: snapshot.candidates, entries: snapshot.entries
+        )
+        try receive(Array(notifications.dropFirst(covered)))
+    }
+
+    private static func rulesKey(_ intake: NotificationIntake) -> String {
+        [NotificationIntake.parserID, NotificationIntake.parserVersion, intake.policyVersion, intake.timeZoneIdentifier, String(rulesRevision)]
+            .joined(separator: "/")
+    }
+
+    /// FNV-1a over the history's canonical JSON; a different import gives a different key.
+    private static func historyKey(_ history: ImportedHistory?) -> String {
+        guard let history else { return "" }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in (try? encoder.encode(history)) ?? Data() { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+        return String(hash, radix: 16)
+    }
 
     /// Adds the notifications not already received (by ID) and processes them. Returns the ones that were new.
     @discardableResult
@@ -347,7 +408,7 @@ public struct IntakeLedger {
         switch outcome {
         case let .notTransaction(reason): return .notTransaction(reason)
         case let .unreadable(failure): return .unreadable(failure)
-        case let .processed(candidateID, _):
+        case let .processed(candidateID):
             guard let stored = repository.storedCandidate(candidateID) else { return .failed }
             if let entry = stored.promotedEntryID { return .recorded(entry) }
             if let act = stored.corroborates?.candidateID {
@@ -399,7 +460,54 @@ public struct IntakeLedger {
 
     private mutating func ingest(_ notification: RawNotification) {
         if let outcome = try? intake.ingest(notification, setup: &setup, repository: &repository) {
-            outcomes[notification.id] = outcome
+            outcomes[notification.id] = switch outcome {
+            case let .notTransaction(reason): .notTransaction(reason)
+            case let .unreadable(failure): .unreadable(failure)
+            case let .processed(candidateID, _): .processed(candidateID)
+            }
         }
+    }
+}
+
+
+public enum IntakeLedgerSnapshotError: Error, Equatable, Sendable { case notApplicable }
+
+/// A built ledger saved to disk (`IntakeLedger.snapshot()`), so a launch processes only the notifications that arrived
+/// since. It is derived data: anything that does not match the current inputs is thrown away and replayed.
+public struct IntakeLedgerSnapshot: Codable, Equatable, Sendable {
+    public static let currentFormat = 1
+
+    /// What became of one notification (the part of `NotificationIntakeOutcome` the inbox reads).
+    public enum Outcome: Codable, Equatable, Sendable {
+        case notTransaction(NotTransactionReason)
+        case unreadable(NotificationParseFailure)
+        case processed(TransactionCandidateID)
+    }
+
+    public let format: Int
+    public let rules: String
+    public let history: String
+    /// The setup as the replay left it (learned rules and candidate accounts included).
+    public let setup: IntakeSetup
+    /// The notifications already processed, in arrival order.
+    public let notificationIDs: [String]
+    public let outcomes: [String: Outcome]
+    public let candidateRevision: UInt64
+    public let candidates: [StoredTransactionCandidate]
+    public let entries: [LedgerEntry]
+
+    init(
+        rules: String, history: String, setup: IntakeSetup, notificationIDs: [String], outcomes: [String: Outcome],
+        candidateRevision: UInt64, candidates: [StoredTransactionCandidate], entries: [LedgerEntry]
+    ) {
+        self.format = Self.currentFormat
+        self.rules = rules
+        self.history = history
+        self.setup = setup
+        self.notificationIDs = notificationIDs
+        self.outcomes = outcomes
+        self.candidateRevision = candidateRevision
+        self.candidates = candidates
+        self.entries = entries
     }
 }
