@@ -54,6 +54,9 @@ struct CalendarCard: View {
     let onCreate: (LocalDate) -> Void
     let loadMonth: (LocalDate) async -> Void
 
+    /// The day names, the week and the handle: what the card takes in layout.
+    static let closedHeight: CGFloat = 28 + stripHeight + 22
+
     private enum Axis { case horizontal, vertical }
     @State private var axis: Axis?
     @State private var startProgress: CGFloat = 0
@@ -79,13 +82,16 @@ struct CalendarCard: View {
                     }
                 }
                 .frame(maxWidth: .infinity)
-                .frame(height: stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * max(0, min(1.03, p)), alignment: .top)
+                .frame(height: stripHeight + MonthUnfold.growth(rows: rows, progress: p), alignment: .top)
                 .clipped()
                 handle
             }
             .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
+            .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
         }
-        .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
+        // Laid out at the closed height whatever `progress` is: the open month overflows over the day list (which is moved down by `growth`) instead of
+        // pushing it, so a finger moving the calendar does not lay the list out again.
+        .frame(height: Self.closedHeight, alignment: .top)
         .background(GeometryReader { proxy in Color.clear.onAppear { width = proxy.size.width }.onChange(of: proxy.size.width) { _, new in width = new } })
         .simultaneousGesture(drag)
         .modifier(HoldToCreate(enabled: state.progress > 0.5) { phase in holdChanged(phase) })
@@ -368,6 +374,24 @@ private struct CalendarDay: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(day.month)월 \(day.day)일, 일정 \(info?.eventCount ?? 0)건" + (spent.map { ", 지출 \($0)" } ?? ""))
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}
+
+/// Moves `content` down by as much as the calendar card has grown. It reads the progress here, so a finger moving the calendar re-runs only this
+/// (an offset) and not the screen that built `content`.
+struct UnfoldPush<Content: View>: View {
+    let state: MonthUnfoldState
+    let rows: Int
+    let content: Content
+
+    init(state: MonthUnfoldState, rows: Int, @ViewBuilder content: () -> Content) {
+        self.state = state
+        self.rows = rows
+        self.content = content()
+    }
+
+    var body: some View {
+        ProgressDriven(value: state.progress) { p in content.offset(y: MonthUnfold.growth(rows: rows, progress: p)) }
     }
 }
 
