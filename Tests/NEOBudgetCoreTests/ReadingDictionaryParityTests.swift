@@ -1,6 +1,6 @@
 import Foundation
-import Testing
 import NEOBudgetCore
+import Testing
 
 /// 읽기 사전(공식 항목)이 예전 코드 파서와 같은 결과를 내는지 모든 고정 알림으로 견주어 본다.
 private struct AllFixtures: Decodable {
@@ -254,3 +254,13 @@ private func appNote(_ app: String, _ title: String?, _ subtitle: String?, _ bod
     #expect(try parser.parse(note(nil, nil, "[광고] 아무 내용 입금 5,000원", app: "other"), context: ctx()) == .notTransaction(.promotion))
 }
 
+
+@Test func theEntryTheUserJustBuiltIsFoundByEntryIDForTheSameNotification() throws {
+    let n = note("테스트뱅크 입출금알림", nil, "[출금] 스타벅스 50,000원 123-456-789***계좌 잔액 1,000,000원", app: "bank.test")
+    let builder = ReadingEntryBuilder(text: NotificationText.joined(n))
+    var picks = builder.suggestions()
+    for token in builder.tokens where token.text == "스타벅스" { picks[token.id] = .merchant }
+    let entry = try builder.readEntry(name: "x", applicationIdentifier: "bank.test", kind: nil, assignments: picks, group: "g", id: "abc")
+    let parser = ReadingEntryParser(dictionary: ReadingDictionary(userEntries: [entry]))
+    #expect(parser.entryID(for: n) == entry.id)
+}
