@@ -27,7 +27,7 @@ struct AnalysisScreen: View {
             .tint(Theme.accent)
             .toolbar { if let onClose { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } } }
         }
-        .task(id: [model.dataGeneration, model.overrideRevision, model.recurringRevision]) {
+        .task(id: [model.dataGeneration, model.overrideRevision, model.recurringRevision, model.budgetRevision]) {
             if let loaded = await AnalysisSnapshot.load(model) { snapshot = loaded } else if snapshot == nil { failed = true }
         }
     }

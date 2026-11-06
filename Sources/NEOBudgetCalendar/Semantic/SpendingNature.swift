@@ -57,21 +57,29 @@ public enum SpendingNatureResolver {
             specific: [(.allocation, .allocation(allocation.id)), (.transaction, .transaction(allocation.transactionID))],
             activityID: allocation.activityID,
             transactionTags: life.tags(forTransaction: allocation.transactionID).map(\.tagID),
-            category: allocation.category,
+            category: allocation.category.categoryID,
             in: life
+        )
+    }
+
+    /// For a whole transaction (not one allocation): its own statement, then its activity, tags, activity type and category.
+    public static func resolve(transaction: LedgerEntryID, activityID: ActivityID?, category: CanonicalCategoryID?, in life: LifeState) -> ResolvedSpendingNature {
+        resolve(
+            specific: [(.transaction, .transaction(transaction))], activityID: activityID,
+            transactionTags: life.tags(forTransaction: transaction).map(\.tagID), category: category, in: life
         )
     }
 
     public static func resolve(component: ExpenseComponent, in life: LifeState) -> ResolvedSpendingNature {
         let specific: [(NatureSource, NatureTarget)] = [(.component, .component(component.id))]
-        return resolve(specific: specific, activityID: component.activityID, transactionTags: [], category: component.category, in: life)
+        return resolve(specific: specific, activityID: component.activityID, transactionTags: [], category: component.category.categoryID, in: life)
     }
 
     private static func resolve(
         specific: [(NatureSource, NatureTarget)],
         activityID: ActivityID?,
         transactionTags: [TagID],
-        category: CategoryAssignment,
+        category: CanonicalCategoryID?,
         in life: LifeState
     ) -> ResolvedSpendingNature {
         for (source, target) in specific {
@@ -87,7 +95,7 @@ public enum SpendingNatureResolver {
         if let typeID = activity?.activityType?.value, let nature = life.natureSignals[.activityType(typeID)]?.value {
             return ResolvedSpendingNature(nature: nature, source: .activityType)
         }
-        if let categoryID = category.categoryID, let nature = life.natureSignals[.category(categoryID)]?.value {
+        if let categoryID = category, let nature = life.natureSignals[.category(categoryID)]?.value {
             return ResolvedSpendingNature(nature: nature, source: .category)
         }
         return ResolvedSpendingNature(nature: nil, source: .none)

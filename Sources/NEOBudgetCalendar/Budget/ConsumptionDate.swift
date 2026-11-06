@@ -18,7 +18,7 @@ public struct OvernightEvent: Equatable, Sendable {
     }
 }
 
-public struct ConsumptionDateRule: Equatable, Sendable {
+public struct ConsumptionDateRule: Equatable, Codable, Sendable {
     /// Payments before this minute of the day count for the day before. 0 turns the rule off. Settings allow 0–6 hours.
     public var cutoffMinutes: Int
     public var groupOvernightEvents: Bool

@@ -160,6 +160,7 @@ final class AppModel {
         loadOverrides()
         loadOpenEndMarks()
         loadRecurring()
+        loadBudget()
         observeLedger()
         if eventKit != nil {
             switch EventKitCalendarProvider.accessState() {
@@ -700,6 +701,29 @@ final class AppModel {
             try? data.write(to: url, options: .atomic)
         }
         recurringRevision += 1
+    }
+
+    // MARK: Budget
+
+    /// What the user set for budgets (`BudgetStore`), one small file. Amounts shown are computed from the ledger when read, never saved.
+    private(set) var budgetStore = BudgetStore()
+    /// Moves with every change, so budget and analysis screens reload.
+    private(set) var budgetRevision = 0
+    private var budgetURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "budget.json") }
+
+    func loadBudget() {
+        if let url = budgetURL, let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode(BudgetStore.self, from: data) { budgetStore = saved }
+        budgetRevision += 1
+    }
+
+    /// Applies a change to the budget settings, plans or alert records and saves it.
+    func changeBudget(_ change: (inout BudgetStore) -> Void) {
+        change(&budgetStore)
+        if let url = budgetURL, let data = try? JSONEncoder().encode(budgetStore) {
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: url, options: .atomic)
+        }
+        budgetRevision += 1
     }
 
     /// The tags the user has put on transactions, most used first (what the tag field offers).
