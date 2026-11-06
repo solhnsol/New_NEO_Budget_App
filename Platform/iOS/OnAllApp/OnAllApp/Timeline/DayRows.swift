@@ -432,8 +432,14 @@ private struct PastEventBar: View {
             RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
                 .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
-            Text(block.title).font(.onAll(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-                .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 2)
+            HStack(spacing: Theme.Space.s) {
+                Text(block.title).font(.onAll(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Spacer(minLength: 0)
+                if let total = LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds) {
+                    Text(total).font(.onAll(size: 12, weight: .medium).monospacedDigit()).foregroundStyle(Theme.accent).lineLimit(1)
+                }
+            }
+            .padding(.leading, RailMetrics.contentX).contentShape(Rectangle()).onTapGesture(perform: onTap).offset(y: top + 2)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .ignore)
@@ -449,6 +455,13 @@ private struct EventCardView: View {
     let axis: RailAxis
     let onTap: () -> Void
 
+    /// What the transactions put in this event come to (the event's own share, as the timeline counts it).
+    private var spentText: some View {
+        LinkedTotal.text(spend: block.allocatedSpend, refunds: block.allocatedRefunds).map {
+            Text($0).font(.onAll(size: 13, weight: .medium).monospacedDigit()).foregroundStyle(Theme.accent).lineLimit(1)
+        }
+    }
+
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
         let top = CGFloat(axis.y(block.displayStartMinute))
@@ -461,11 +474,16 @@ private struct EventCardView: View {
                     Text(block.title).font(.onAll(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
+                    spentText
                 }
                 .padding(.vertical, Theme.Space.xs)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(block.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                    HStack(spacing: Theme.Space.s) {
+                        Text(block.title).font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Spacer(minLength: 0)
+                        spentText
+                    }
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }

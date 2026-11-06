@@ -312,7 +312,9 @@ final class AppModel {
         guard let service else { return }
         await refreshSpendReductions(service)
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
-        let incomes = ((try? await ledger.incomes()) ?? []).map { item in
+        // A deposit that paid back someone's share belongs to the purchase it settled, not to income.
+        let settled = (try? await service.lifeSnapshot().state)?.settledDepositIDs ?? []
+        let incomes = ((try? await ledger.incomes()) ?? []).filter { !settled.contains($0.id) }.map { item in
             IncomeItem(id: item.id, occurredAtUnixMilliseconds: item.occurredAtUnixMilliseconds, minorUnits: item.minorUnits, title: transactionOverrides[item.id]?.title ?? item.title)
         }
         incomeByDay = Dictionary(grouping: incomes, by: { dayZone.localDate(of: $0.occurredAtUnixMilliseconds) })
