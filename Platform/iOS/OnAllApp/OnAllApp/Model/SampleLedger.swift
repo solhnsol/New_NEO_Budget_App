@@ -57,6 +57,8 @@ enum SampleLedger {
             try candidate("sample-convenience", .purchase, .outflow, 3_500, instant(14, 5), merchant: "편의점"),
             try candidate("sample-transfer", .transferOut, .outflow, 100_000, instant(15, 0)),
             try candidate("sample-bill", .cardBillPayment, .outflow, 15_000, instant(18, 0)),
+            // 01:30 the next morning: before the 04:00 ledger day start, so it closes today at its true time.
+            try candidate("sample-late-night", .purchase, .outflow, 6_500, zone.instant(of: today.adding(days: 1), minuteOfDay: 90), merchant: "야식"),
             try candidate("sample-refund", .refund, .inflow, 5_000, instant(20, 10), original: "sample-restaurant-approval"),
             try candidate("sample-delivery", .purchase, .outflow, 6_200, instant(21, 30), merchant: "배달", card: true, exact: false),
         ] + (ProcessInfo.processInfo.arguments.contains("-demo-dense")
