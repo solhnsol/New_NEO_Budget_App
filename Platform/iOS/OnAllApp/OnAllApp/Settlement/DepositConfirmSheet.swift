@@ -29,6 +29,8 @@ struct DepositConfirmSheet: View {
     @State private var isSaving = false
     @State private var failed = false
     @State private var askingShort = false
+    /// The user picked one of the two short-deposit rows themselves, so the same question is not asked again on save.
+    @State private var shortChoiceMade = false
 
     private var review: DepositReview {
         let sender = deposit.title.flatMap { name in life.persons.values.first { !$0.isSelf && $0.matches(name: name) } }
@@ -119,7 +121,7 @@ struct DepositConfirmSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("취소") { dismiss() } } }
             .primaryActionBar(isShown: true, isEnabled: (picked != nil || pickedGathering != nil) && !isSaving) {
-                if let chosen, let fit, DepositConfirmation.isUnexplainedShort(fit, counterparty: chosen.counterpartyID, in: life) {
+                if !shortChoiceMade, let chosen, let fit, DepositConfirmation.isUnexplainedShort(fit, counterparty: chosen.counterpartyID, in: life) {
                     askingShort = true
                 } else {
                     Task { await save() }
@@ -127,7 +129,7 @@ struct DepositConfirmSheet: View {
             } label: {
                 Text(picked == nil && pickedGathering == nil ? "정산을 골라 주세요" : "정산으로 기록하기")
             }
-            .alert("\(senderName)님 정산 입금이 부족해요. 확인해 주세요", isPresented: $askingShort) {
+            .alert("\(chosen.flatMap { life.persons[$0.counterpartyID]?.displayName } ?? senderName)님 정산 입금이 부족해요. 확인해 주세요", isPresented: $askingShort) {
                 Button("부족액 요청 다시 보내기") { shortChoice = .keepOpen; Task { await save() } }
                 Button("차액은 내 지출로") { shortChoice = .close; Task { await save() } }
                 Button("취소", role: .cancel) {}
@@ -149,8 +151,8 @@ struct DepositConfirmSheet: View {
                 .onAllCardRow()
         case let .short(left):
             Section {
-                choiceRow("남은 \(money(left)) 더 받기", detail: "정산을 열어 두고 나머지를 기다려요.", isOn: shortChoice == .keepOpen) { shortChoice = .keepOpen }
-                choiceRow("여기서 정산 닫기", detail: "나머지 \(money(left))은 안 받아요. 내 몫에 남아요.", isOn: shortChoice == .close) { shortChoice = .close }
+                choiceRow("남은 \(money(left)) 더 받기", detail: "정산을 열어 두고 나머지를 기다려요.", isOn: shortChoice == .keepOpen) { shortChoice = .keepOpen; shortChoiceMade = true }
+                choiceRow("여기서 정산 닫기", detail: "나머지 \(money(left))은 안 받아요. 내 몫에 남아요.", isOn: shortChoice == .close) { shortChoice = .close; shortChoiceMade = true }
             } header: {
                 Text("\(money(left)) 덜 왔어요")
             }

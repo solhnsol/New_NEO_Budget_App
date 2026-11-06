@@ -83,3 +83,14 @@ private let trip = allDayEvent("trip", title: "여행", from: today, to: today)
     let again = try await h.service.bindRefunds(refundOf: refundOf)
     #expect(again == 0)
 }
+
+@Test func whenTheEventMovesWhatItTookByTimeIsNamedForRelease() async throws {
+    let payment = marker("meal", at: at(today, 12, 41), amount: 15_000)
+    let h = Harness.make(events: [lunch], transactions: [payment])
+    let bounds = seoul.dayBounds(today)
+    _ = try await h.service.bindByTime(from: bounds.start, to: bounds.end)
+    let life = await h.life()
+    let moved = event("lunch", title: "점심", from: at(today, 13), to: at(today, 14))
+    #expect(TimeBinding.staleAllocations(events: [moved], transactions: [payment], life: life).map(\.transactionID) == [txID("meal")])
+    #expect(TimeBinding.staleAllocations(events: [lunch], transactions: [payment], life: life).isEmpty)
+}

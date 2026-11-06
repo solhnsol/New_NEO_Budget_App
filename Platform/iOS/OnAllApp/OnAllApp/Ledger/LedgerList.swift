@@ -54,6 +54,16 @@ struct LedgerListEntry: Identifiable, Equatable {
         return transaction.amount.minorUnits - offsets.reduce(0) { $0 + $1.minorUnits }
     }
 
+    /// What settlements took off this purchase (received, still asked for, or surplus), refunds not counted: what the calendar takes off its amount,
+    /// so the day and week show the user's own share from the moment the settlement exists.
+    var shareReductionMinorUnits: Int64 {
+        guard transaction.flow == .spend else { return 0 }
+        return offsets.reduce(0) { total, offset in
+            if case .refund = offset.kind { return total }
+            return total + offset.minorUnits
+        }
+    }
+
     /// Something asked of someone for this purchase has not come in yet.
     var isWaitingForSettlement: Bool { offsets.contains { if case .pending = $0.kind { true } else { false } } }
 
@@ -149,7 +159,7 @@ enum LedgerList {
         guard let title else { return transaction }
         return TransactionMarker(
             id: transaction.id, occurredAtUnixMilliseconds: transaction.occurredAtUnixMilliseconds, amount: transaction.amount,
-            flow: transaction.flow, title: title, timePrecision: transaction.timePrecision
+            flow: transaction.flow, title: title, timePrecision: transaction.timePrecision, isTransit: transaction.isTransit
         )
     }
 

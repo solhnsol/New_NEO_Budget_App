@@ -15,10 +15,12 @@ public enum LedgerTimelineProjection {
     public struct EntryDetails: Sendable, Equatable {
         public var titles: [LedgerEntryID: String]
         public var timePrecisions: [LedgerEntryID: TimePrecision]
+        public var transitEntries: Set<LedgerEntryID>
 
-        public init(titles: [LedgerEntryID: String] = [:], timePrecisions: [LedgerEntryID: TimePrecision] = [:]) {
+        public init(titles: [LedgerEntryID: String] = [:], timePrecisions: [LedgerEntryID: TimePrecision] = [:], transitEntries: Set<LedgerEntryID> = []) {
             self.titles = titles
             self.timePrecisions = timePrecisions
+            self.transitEntries = transitEntries
         }
 
         public static let none = EntryDetails()
@@ -45,7 +47,8 @@ public enum LedgerTimelineProjection {
                 amount: impact.amount,
                 flow: flow,
                 title: title,
-                timePrecision: details.timePrecisions[entry.id] ?? .approximate
+                timePrecision: details.timePrecisions[entry.id] ?? .approximate,
+                isTransit: details.transitEntries.contains(entry.id)
             )
         }
         .sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
@@ -63,6 +66,7 @@ public enum LedgerTimelineProjection {
             guard let entryID = stored.promotedEntryID, let draft = stored.candidate.sourceDraft else { continue }
             if let title = title(of: draft.counterparty) { details.titles[entryID] = title }
             details.timePrecisions[entryID] = timePrecision(of: draft.occurredAt)
+            if draft.instrument.kind == .transitCard { details.transitEntries.insert(entryID) }
         }
         return details
     }

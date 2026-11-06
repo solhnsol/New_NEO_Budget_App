@@ -92,13 +92,13 @@ public struct AllocationItem: Equatable, Sendable {
     public let allocationID: AllocationID
     public let transactionID: LedgerEntryID
     public var title: String?
-    public let transactionAmount: Money
+    public var transactionAmount: Money
     public let flow: TransactionFlow
     public let occurredAtUnixMilliseconds: Int64
     public let timePrecision: TimePrecision
     /// False when the allocation is meaningful but the payment is outside the selected day.
     public let occursOnSelectedDay: Bool
-    public let allocatedAmount: AmountKnowledge
+    public var allocatedAmount: AmountKnowledge
     /// True unless the allocation is known to be the entire transaction.
     public let isPartOfTransaction: Bool
     public let source: AssignmentSource
@@ -127,7 +127,7 @@ public struct EventBlock: Equatable, Sendable {
     public let activity: ActivityBadge?
     public var allocations: [AllocationItem]
     /// Spending allocated to this activity per currency, with uncertainty kept (never a falsely exact total).
-    public let allocatedSpend: [AmountAggregate]
+    public var allocatedSpend: [AmountAggregate]
     public let allocatedRefunds: [AmountAggregate]
     public let isRecurringInstance: Bool
     public let isEditable: Bool
@@ -150,7 +150,7 @@ public struct AllDayItem: Equatable, Sendable {
     public let isLastDayOfEvent: Bool
     public let activity: ActivityBadge?
     public var allocations: [AllocationItem]
-    public let allocatedSpend: [AmountAggregate]
+    public var allocatedSpend: [AmountAggregate]
     public let allocatedRefunds: [AmountAggregate]
     public let isEditable: Bool
     public let revisionToken: String?
@@ -163,7 +163,7 @@ public struct MarkerAllocation: Equatable, Sendable {
     /// `nil` is a deliberate "no activity" portion.
     public let activityID: ActivityID?
     public let activityTitle: String?
-    public let amount: AmountKnowledge
+    public var amount: AmountKnowledge
     public let eventMissing: Bool
     /// Whether that activity is drawn on this day (so the portion is also visible inside a block).
     public let isShownToday: Bool
@@ -174,14 +174,14 @@ public struct MarkerAllocation: Equatable, Sendable {
 public struct TransactionMarkerItem: Equatable, Sendable {
     public let transactionID: LedgerEntryID
     public var title: String?
-    public let amount: Money
+    public var amount: Money
     public let flow: TransactionFlow
     public let occurredAtUnixMilliseconds: Int64
     /// Whole minutes from the start of the selected day.
     public let positionMinute: Int
     public let timePrecision: TimePrecision
     /// Empty means no portion is allocated. That is a normal state: the spending counts as non-activity.
-    public let allocations: [MarkerAllocation]
+    public var allocations: [MarkerAllocation]
     /// What is left of the transaction after its allocations (widened by unknown portions).
     public let remainder: AmountBounds
     public let isFullyAllocated: Bool
@@ -192,9 +192,9 @@ public struct TransactionMarkerItem: Equatable, Sendable {
 public struct CurrencyTotals: Equatable, Sendable {
     public let currency: String
     /// Net spending (refunds subtract) of the day's transactions that is settled as belonging to activities.
-    public let linkedNetMinorUnits: Int64
+    public var linkedNetMinorUnits: Int64
     /// Net spending certainly outside activities: explicit "no activity" portions and unallocated remainders.
-    public let unlinkedNetMinorUnits: Int64
+    public var unlinkedNetMinorUnits: Int64
     /// Net spending whose placement is not yet known because some portion has no settled amount.
     public let uncertainNetMinorUnits: Int64
 }
@@ -206,7 +206,7 @@ public struct DaySummary: Equatable, Sendable {
     public let unlinkedTransactionCount: Int
     /// Today's transactions that are split or only partly allocated.
     public let partiallyAllocatedTransactionCount: Int
-    public let totals: [CurrencyTotals]
+    public var totals: [CurrencyTotals]
 }
 
 public struct DayTimeline: Equatable, Sendable {
@@ -219,7 +219,7 @@ public struct DayTimeline: Equatable, Sendable {
     public var allDay: [AllDayItem]
     public var blocks: [EventBlock]
     public var markers: [TransactionMarkerItem]
-    public let summary: DaySummary
+    public var summary: DaySummary
 }
 
 extension DayTimeline {

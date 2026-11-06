@@ -49,6 +49,8 @@ public struct TransactionMarker: Codable, Hashable, Sendable {
     public let flow: TransactionFlow
     public let title: String?
     public let timePrecision: TimePrecision
+    /// A ride paid from a transit card. Time binding never puts these into an event (Hans 2026-11-06); the user can still link one by hand.
+    public let isTransit: Bool
 
     public init(
         id: LedgerEntryID,
@@ -56,8 +58,10 @@ public struct TransactionMarker: Codable, Hashable, Sendable {
         amount: Money,
         flow: TransactionFlow,
         title: String? = nil,
-        timePrecision: TimePrecision = .approximate
+        timePrecision: TimePrecision = .approximate,
+        isTransit: Bool = false
     ) {
+        self.isTransit = isTransit
         self.id = id
         self.occurredAtUnixMilliseconds = occurredAtUnixMilliseconds
         self.amount = amount

@@ -4,6 +4,7 @@ import NEOBudgetCore
 /// applies the proposals as automated allocations, which a user decision always outranks.
 ///
 /// - Only spending is bound. A refund is shown with its original purchase, never on its own.
+/// - Transit rides are left out: they are not part of an event unless the user links them.
 /// - Only timed events. An all-day event never takes spending by time.
 /// - A transaction with any allocation already, including a deliberate "no activity" one, is left alone: a user who took a transaction out of an
 ///   event is never overruled, and an earlier binding is never moved.
@@ -25,13 +26,32 @@ public enum TimeBinding {
         }
     }
 
+    /// Bindings this rule made earlier that no longer hold because the event's time moved (23:30 → 23:00 puts a 23:15 payment outside it). Only the
+    /// rule's own automated allocations are named, and only for events that were fetched; a user's choice is never touched.
+    public static func staleAllocations(events: [CalendarEvent], transactions: [TransactionMarker], life: LifeState) -> [(transactionID: LedgerEntryID, allocationID: AllocationID)] {
+        var rangeOfActivity: [ActivityID: (start: Int64, end: Int64)] = [:]
+        let byEvent = life.activitiesByEvent()
+        for event in events {
+            guard let activity = byEvent[event.key], case let .timed(range) = event.time else { continue }
+            rangeOfActivity[activity.id] = (range.startUnixMilliseconds, range.endUnixMilliseconds)
+        }
+        return transactions.flatMap { transaction -> [(LedgerEntryID, AllocationID)] in
+            (life.allocationSet(for: transaction.id)?.allocations ?? []).compactMap { allocation in
+                guard allocation.provenance.source == .automated, allocation.provenance.origin == origin,
+                      let activityID = allocation.activityID, let range = rangeOfActivity[activityID] else { return nil }
+                let time = transaction.occurredAtUnixMilliseconds
+                return range.start <= time && time < range.end ? nil : (transaction.id, allocation.id)
+            }
+        }
+    }
+
     public static func proposals(events: [CalendarEvent], transactions: [TransactionMarker], life: LifeState) -> [Proposal] {
         let timed = events.compactMap { event -> (key: CalendarEventKey, start: Int64, end: Int64)? in
             guard case let .timed(range) = event.time, range.endUnixMilliseconds > range.startUnixMilliseconds else { return nil }
             return (event.key, range.startUnixMilliseconds, range.endUnixMilliseconds)
         }
         return transactions
-            .filter { $0.flow == .spend && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .filter { $0.flow == .spend && !$0.isTransit && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
             .sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
             .compactMap { transaction in
                 let time = transaction.occurredAtUnixMilliseconds
