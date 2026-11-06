@@ -442,7 +442,9 @@ struct PanelSheet<Small: View, More: View>: View {
         GeometryReader { screen in
             let openHeight = smallHeight + (moreHeight > 0 ? min(moreHeight, screen.size.height * 0.55) : screen.size.height - 70 - smallHeight)
             let range = max(1, openHeight - smallHeight)
-            let height = smallHeight + range * max(0, min(1, progress))
+            // The panel is laid out once at its fullest and only moved: pulling it up slides it, so nothing is laid out again while the finger moves.
+            let panelHeight = canOpen ? smallHeight + range : smallHeight
+            let hidden = panelHeight - smallHeight - range * max(0, min(1, progress)) * (canOpen ? 1 : 0)
             ZStack(alignment: .bottom) {
                 Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
                     .contentShape(Rectangle()).onTapGesture(perform: attemptDismiss)
@@ -454,13 +456,12 @@ struct PanelSheet<Small: View, More: View>: View {
                     .padding(.bottom, Theme.Space.l)
                     .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
                     if canOpen {
-                        ScrollView { more().background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: max(0, height - smallHeight))
+                        ScrollView { more().background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: range)
                     }
                 }
                 .padding(.horizontal, Theme.Space.xl)
                 .frame(maxWidth: .infinity, alignment: .top)
-                .frame(height: smallHeight > 0 ? height : nil, alignment: .top)
-                .clipped()
+                .frame(height: smallHeight > 0 ? panelHeight : nil, alignment: .top)
                 .background(
                     UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.sheet, topTrailingRadius: Theme.Radius.sheet, style: .continuous)
                         .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
@@ -492,7 +493,9 @@ struct PanelSheet<Small: View, More: View>: View {
                             settle(to: canOpen ? target : 0)
                         }
                 )
-                .offset(y: shown ? dragY : 700)
+                // Comes up from the bottom edge of the screen, whole; hidden until measured so it never shows its first, unsized layout.
+                .offset(y: smallHeight > 0 ? (shown ? hidden + dragY : screen.size.height) : screen.size.height)
+                .opacity(smallHeight > 0 ? 1 : 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
@@ -500,7 +503,8 @@ struct PanelSheet<Small: View, More: View>: View {
         .onPreferenceChange(PanelMoreHeightKey.self) { moreHeight = $0 }
         .tint(Theme.accent)
         .environment(\.panelDismiss, PanelDismiss(run: { dismiss() }))
-        .onAppear { if !appearsShown { withAnimation(spring) { shown = true } } }
+        // Rises once its height is known, so the slide starts from below the screen with the panel already laid out.
+        .onChange(of: smallHeight) { _, height in if height > 0, !shown { withAnimation(spring) { shown = true } } }
         .onChange(of: isOpen) { _, open in if (progress > 0.5) != open { withAnimation(spring) { progress = open ? 1 : 0 } } }
     }
 
