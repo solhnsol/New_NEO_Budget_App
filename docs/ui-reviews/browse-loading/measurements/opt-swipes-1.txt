@@ -1,0 +1,27 @@
+script swipes zoom 1.00 seconds 11.74
+step cost: mean 0.062 / p50 0.033 / p99 0.294 / max 1.875 ms (n=941)
+step interval: mean 9.505 / p50 9.134 / p99 19.207 / max 87.932 ms (n=937)
+display frames: mean 16.690 / p50 16.667 / p99 16.667 / max 33.333 ms (n=702); late (>1.5x median) 1 of 702
+view build: 0.11/0.08/0.42 ms (n=600)
+partitions: background 9, planned in a frame 1, engine runs 9, found 5049
+day reads during script: 8, cached 8, selected 4d from today, position 20742.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+PROBE swipes
+recorded 11.74 s; display frames n=702 mean 16.690 p50 16.667 p99 16.667 max 33.333 ms; nominal 16.67 ms; late (>1.5x) 1
+main run-loop turns busy: n=2899 mean 0.820 p50 0.153 p99 5.439 max 24.476 ms
+  screenBody: n=983 mean 0.030 p50 0.021 p99 0.109 max 0.199 ms
+  gridBuild: n=1006 mean 0.081 p50 0.058 p99 0.327 max 0.397 ms
+  hostLayout: n=537 mean 0.467 p50 0.414 p99 1.264 max 1.412 ms
+  applyMove: n=941 mean 0.058 p50 0.031 p99 0.274 max 1.874 ms
+  engine: n=5 mean 0.008 p50 0.006 p99 0.014 max 0.014 ms
+  warmAhead: n=5 mean 0.014 p50 0.012 p99 0.023 max 0.023 ms
+  warmLand: n=6 mean 0.001 p50 0.001 p99 0.003 max 0.003 ms
+  cacheMerge: n=36 mean 0.022 p50 0.015 p99 0.091 max 0.091 ms
+  haptics: n=16 mean 0.208 p50 0.095 p99 1.837 max 1.837 ms
+  outerBody: n=45 mean 0.054 p50 0.040 p99 0.134 max 0.134 ms
+  weekStripBody: n=67 mean 0.011 p50 0.009 p99 0.064 max 0.064 ms
+  summaryBody: n=8 mean 0.003 p50 0.002 p99 0.007 max 0.007 ms
+marks: boundary 16, dayLanded 8, dragBegan 12, released 12, rested 6, selectedDayChanged 8
+  late +3.954s 33.3 ms: busiest turn 24.5 ms (app 1.0, unattributed 23.5) [hostLayout 0.4, applyMove 0.3, gridBuild 0.3, screenBody 0.2, outerBody 0.1, cacheMerge 0.1, weekStripBody 0.0] marks [dragBegan]
+late frames, summed: app spans 1.0 ms, unattributed 23.5 ms; by kind (inclusive) [hostLayout 0.4, applyMove 0.3, gridBuild 0.3, screenBody 0.2, outerBody 0.1, cacheMerge 0.1, weekStripBody 0.0]
+late frames near a mark: dragBegan 1

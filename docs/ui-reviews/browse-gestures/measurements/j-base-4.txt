@@ -1,0 +1,26 @@
+script rubber zoom 1.00 seconds 5.97
+step cost: —
+step interval: —
+display frames: mean 16.856 / p50 16.667 / p99 23.401 / max 43.266 ms (n=352); late (>1.5x median) 3 of 352
+view build: 0.09/0.07/0.68 ms (n=82)
+partitions: background 3, planned in a frame 1, engine runs 8 (asked for by a frame 1), found 536
+day reads during script: 0, cached 8, selected 1d from today, position 20739.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 0, where they differed 0, most things crossfaded at once 0
+PROBE rubber
+recorded 5.98 s; display frames n=352 mean 16.856 p50 16.667 p99 23.401 max 43.266 ms; nominal 16.67 ms; late (>1.5x) 3
+main run-loop turns busy: n=1338 mean 0.872 p50 0.018 p99 5.358 max 26.798 ms
+  screenBody: n=4 mean 0.051 p50 0.060 p99 0.065 max 0.065 ms
+  gridBuild: n=328 mean 0.089 p50 0.076 p99 0.435 max 0.667 ms
+  hostLayout: n=214 mean 0.599 p50 0.592 p99 1.207 max 1.935 ms
+  engine: n=4 mean 0.203 p50 0.224 p99 0.462 max 0.462 ms
+  warmAhead: n=4 mean 0.257 p50 0.271 p99 0.552 max 0.552 ms
+  pinchStep: n=240 mean 0.096 p50 0.077 p99 0.597 max 1.079 ms
+marks: pinchBegan 4, pinchEnded 4
+  turn at pinchBegan: n=3 mean 23.517 p50 23.210 p99 26.806 max 26.806 ms
+  turn at pinchEnded: n=4 mean 6.213 p50 2.449 p99 18.360 max 18.360 ms
+  late +0.566s 34.5 ms: busiest turn 12.3 ms (app 0.8, unattributed 11.5) [hostLayout 1.4, warmAhead 0.7, engine 0.6, gridBuild 0.4, pinchStep 0.1, screenBody 0.1] marks [pinchEnded]
+  late +1.525s 43.3 ms: busiest turn 26.8 ms (app 4.9, unattributed 21.9) [hostLayout 2.9, gridBuild 1.0, pinchStep 1.0] marks [pinchBegan]
+  late +4.515s 33.3 ms: busiest turn 13.3 ms (app 1.3, unattributed 12.1) [hostLayout 1.8, gridBuild 1.1, pinchStep 0.9] marks [pinchBegan]
+late frames, summed: app spans 7.0 ms, unattributed 45.4 ms; by kind (inclusive) [hostLayout 6.2, gridBuild 2.5, pinchStep 2.0, warmAhead 0.7, engine 0.6, screenBody 0.1]
+late frames near a mark: pinchBegan 2, pinchEnded 1

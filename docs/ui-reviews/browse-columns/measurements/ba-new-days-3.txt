@@ -1,0 +1,28 @@
+script days zoom 1.00 seconds 3.98
+step cost: mean 0.066 / p50 0.050 / p99 0.228 / max 2.025 ms (n=329)
+step interval: mean 9.817 / p50 9.168 / p99 16.451 / max 46.398 ms (n=328)
+display frames: mean 16.667 / p50 16.667 / p99 16.667 / max 16.667 ms (n=237); late (>1.5x median) 0 of 237
+view build: 0.11/0.09/6.03 ms (n=375)
+partitions: background 4, planned in a frame 1, engine runs 4 (asked for by a frame 1), found 2164
+day reads during script: 2, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 77, where they differed 0, most things crossfaded at once 0
+PROBE days
+recorded 3.98 s; display frames n=237 mean 16.667 p50 16.667 p99 16.667 max 16.667 ms; nominal 16.67 ms; late (>1.5x) 0
+main run-loop turns busy: n=909 mean 1.225 p50 0.384 p99 9.460 max 13.197 ms
+  screenBody: n=357 mean 0.031 p50 0.027 p99 0.110 max 0.278 ms
+  gridBuild: n=359 mean 0.096 p50 0.089 p99 0.208 max 0.378 ms
+  hostLayout: n=201 mean 0.671 p50 0.691 p99 1.264 max 2.145 ms
+  applyMove: n=329 mean 0.063 p50 0.048 p99 0.227 max 2.023 ms
+  warmLand: n=1 mean 0.002 p50 0.002 p99 0.002 max 0.002 ms
+  cacheMerge: n=17 mean 0.020 p50 0.020 p99 0.037 max 0.037 ms
+  haptics: n=4 mean 0.533 p50 0.073 p99 1.943 max 1.943 ms
+  blend: n=77 mean 0.120 p50 0.006 p99 4.377 max 4.377 ms
+  outerBody: n=21 mean 0.073 p50 0.068 p99 0.175 max 0.175 ms
+  weekStripBody: n=27 mean 0.012 p50 0.011 p99 0.022 max 0.022 ms
+  summaryBody: n=2 mean 0.006 p50 0.006 p99 0.006 max 0.006 ms
+marks: boundary 4, dayLanded 2, rested 2, selectedDayChanged 2
+  turn at boundary: n=4 mean 13.882 p50 13.728 p99 20.437 max 20.437 ms
+  turn at dayLanded: n=2 mean 2.751 p50 3.398 p99 3.398 max 3.398 ms
+  turn at rested: n=2 mean 15.814 p50 18.881 p99 18.881 max 18.881 ms
+  turn at selectedDayChanged: n=2 mean 15.814 p50 18.881 p99 18.881 max 18.881 ms

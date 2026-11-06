@@ -1,0 +1,54 @@
+## agg-swipes
+runs 5; frames 3503; late 13 (0.37%); worst frame 41.8 ms; busiest late turns: [4.1, 5.0, 5.4, 6.0, 6.7, 12.2, 18.2, 18.4, 22.5, 23.9, 24.2, 25.1, 26.3]
+late turns summed: app spans 16.1 ms, unattributed 181.8 ms (92%)
+late frames by nearby mark: {'dragBegan': 9, 'boundary': 4}
+app spans in late frames (inclusive ms): {'hostLayout': 16.5, 'gridBuild': 7.1, 'applyMove': 6.8, 'screenBody': 2.9, 'haptics': 2.2, 'outerBody': 1.3, 'cacheMerge': 0.5, 'weekStripBody': 0.1}
+haptics max 2.1 ms
+## agg-days
+runs 5; frames 1193; late 9 (0.75%); worst frame 49.4 ms; busiest late turns: [10.6, 12.2, 12.5, 16.4, 19.1, 20.0, 20.3, 21.5, 22.8]
+late turns summed: app spans 17.3 ms, unattributed 138.1 ms (89%)
+late frames by nearby mark: {'boundary': 5, '(none)': 4}
+app spans in late frames (inclusive ms): {'hostLayout': 17.3, 'applyMove': 14.2, 'haptics': 11.6, 'gridBuild': 4.0, 'screenBody': 1.5, 'outerBody': 1.1, 'cacheMerge': 0.2, 'weekStripBody': 0.0}
+haptics max 4.9 ms
+## agg-zoom
+runs 5; frames 819; late 3 (0.37%); worst frame 46.0 ms; busiest late turns: [16.6, 17.7, 17.8]
+late turns summed: app spans 10.8 ms, unattributed 41.3 ms (79%)
+late frames by nearby mark: {'(none)': 3}
+app spans in late frames (inclusive ms): {'hostLayout': 9.1, 'gridBuild': 3.5, 'engine': 1.3}
+haptics max 0.0 ms
+## agg2-swipes
+runs 5; frames 3483; late 23 (0.66%); worst frame 419.8 ms; busiest late turns: [4.7, 5.8, 5.9, 6.0, 6.1, 11.8, 18.3, 18.5, 18.7, 18.7, 19.0, 19.2, 19.9, 20.0, 20.5, 24.8, 24.8, 25.5, 26.0, 33.1, 83.1, 94.0, 402.7]
+late turns summed: app spans 141.0 ms, unattributed 786.0 ms (85%)
+late frames by nearby mark: {'boundary': 13, 'dragBegan': 6, '(none)': 4, 'dayLanded': 3, 'selectedDayChanged': 3, 'released': 1, 'rested': 1}
+app spans in late frames (inclusive ms): {'hostLayout': 100.5, 'gridBuild': 30.4, 'applyMove': 27.8, 'screenBody': 16.9, 'haptics': 15.5, 'weekStripBody': 4.3, 'outerBody': 1.5, 'cacheMerge': 0.5}
+haptics max 5.4 ms
+## opt-swipes
+runs 5; frames 3509; late 8 (0.23%); worst frame 38.7 ms; busiest late turns: [5.2, 13.5, 15.7, 16.4, 16.8, 17.4, 20.0, 24.5]
+late turns summed: app spans 8.5 ms, unattributed 121.0 ms (93%)
+late frames by nearby mark: {'boundary': 6, 'dragBegan': 2, 'released': 1}
+app spans in late frames (inclusive ms): {'hostLayout': 4.9, 'applyMove': 4.6, 'gridBuild': 3.2, 'haptics': 2.8, 'screenBody': 1.3, 'outerBody': 0.7, 'cacheMerge': 0.2, 'weekStripBody': 0.0}
+haptics max 2.0 ms
+## opt-days
+runs 5; frames 1190; late 5 (0.42%); worst frame 46.4 ms; busiest late turns: [13.9, 16.2, 19.4, 20.0, 21.0]
+late turns summed: app spans 7.6 ms, unattributed 82.9 ms (92%)
+late frames by nearby mark: {'boundary': 3, '(none)': 2}
+app spans in late frames (inclusive ms): {'hostLayout': 14.9, 'applyMove': 5.5, 'haptics': 4.4, 'gridBuild': 1.7, 'screenBody': 0.7, 'outerBody': 0.6, 'cacheMerge': 0.1, 'weekStripBody': 0.0}
+haptics max 2.4 ms
+## opt-zoom
+runs 5; frames 820; late 1 (0.12%); worst frame 33.3 ms; busiest late turns: [15.4]
+late turns summed: app spans 2.2 ms, unattributed 13.2 ms (86%)
+late frames by nearby mark: {'(none)': 1}
+app spans in late frames (inclusive ms): {'hostLayout': 1.9, 'gridBuild': 0.3}
+haptics max 0.0 ms
+## slow-swipes
+runs 3; frames 2105; late 7 (0.33%); worst frame 40.7 ms; busiest late turns: [5.6, 6.7, 11.8, 18.5, 19.1, 21.3, 25.3]
+late turns summed: app spans 10.6 ms, unattributed 97.6 ms (90%)
+late frames by nearby mark: {'dragBegan': 4, 'boundary': 4, 'selectedDayChanged': 1}
+app spans in late frames (inclusive ms): {'hostLayout': 6.4, 'applyMove': 5.9, 'gridBuild': 4.1, 'haptics': 2.5, 'screenBody': 1.7, 'outerBody': 1.0, 'cacheMerge': 0.3, 'weekStripBody': 0.1}
+haptics max 2.2 ms
+## fail-swipes
+runs 3; frames 2098; late 8 (0.38%); worst frame 44.5 ms; busiest late turns: [4.6, 6.3, 11.5, 12.3, 16.0, 16.3, 18.1, 18.7]
+late turns summed: app spans 16.4 ms, unattributed 87.5 ms (84%)
+late frames by nearby mark: {'boundary': 4, 'dragBegan': 3, 'dayLanded': 1}
+app spans in late frames (inclusive ms): {'hostLayout': 12.9, 'applyMove': 6.5, 'gridBuild': 4.0, 'haptics': 3.9, 'screenBody': 1.8, 'outerBody': 1.5, 'cacheMerge': 0.5, 'weekStripBody': 0.3}
+haptics max 1.9 ms

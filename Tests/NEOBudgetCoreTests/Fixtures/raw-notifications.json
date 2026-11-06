@@ -1,0 +1,29 @@
+[
+  {
+    "id": "synthetic-shortcut-input",
+    "source": {
+      "applicationIdentifier": "fixture.bank.shortcut",
+      "displayName": "테스트은행",
+      "providerHint": "test-bank"
+    },
+    "sourceDeliveryID": "delivery-001",
+    "capturedAtUnixMilliseconds": 1791169200000,
+    "notificationAtUnixMilliseconds": 1791169190000,
+    "title": " 승인 ",
+    "subtitle": "5,000원",
+    "body": "테스트상호\r\n잔액 100,000원",
+    "rawPayload": "{\"example\":\"synthetic input\"}"
+  },
+  {
+    "id": "synthetic-listener-input",
+    "source": {
+      "applicationIdentifier": "fixture.bank.listener",
+      "displayName": "테스트은행",
+      "providerHint": "test-bank"
+    },
+    "capturedAtUnixMilliseconds": 1791169205000,
+    "title": " 승인 ",
+    "subtitle": "5,000원",
+    "body": "테스트상호\r\n잔액 100,000원"
+  }
+]

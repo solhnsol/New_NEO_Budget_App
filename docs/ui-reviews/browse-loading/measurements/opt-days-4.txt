@@ -1,0 +1,28 @@
+script days zoom 1.00 seconds 3.98
+step cost: mean 0.044 / p50 0.029 / p99 0.185 / max 2.506 ms (n=337)
+step interval: mean 9.610 / p50 9.109 / p99 20.565 / max 65.607 ms (n=336)
+display frames: mean 16.880 / p50 16.667 / p99 20.259 / max 46.408 ms (n=234); late (>1.5x median) 2 of 234
+view build: 0.06/0.05/2.75 ms (n=386)
+partitions: background 4, planned in a frame 1, engine runs 5, found 1851
+day reads during script: 2, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+PROBE days
+recorded 3.98 s; display frames n=234 mean 16.880 p50 16.667 p99 20.259 max 46.408 ms; nominal 16.67 ms; late (>1.5x) 2
+main run-loop turns busy: n=967 mean 0.892 p50 0.297 p99 7.575 max 21.008 ms
+  screenBody: n=357 mean 0.019 p50 0.017 p99 0.073 max 0.184 ms
+  gridBuild: n=367 mean 0.050 p50 0.046 p99 0.173 max 0.250 ms
+  hostLayout: n=199 mean 0.716 p50 0.594 p99 2.130 max 3.079 ms
+  applyMove: n=337 mean 0.042 p50 0.028 p99 0.180 max 2.504 ms
+  engine: n=1 mean 0.005 p50 0.005 p99 0.005 max 0.005 ms
+  warmAhead: n=1 mean 0.010 p50 0.010 p99 0.010 max 0.010 ms
+  warmLand: n=1 mean 0.000 p50 0.000 p99 0.000 max 0.000 ms
+  cacheMerge: n=17 mean 0.014 p50 0.013 p99 0.050 max 0.050 ms
+  haptics: n=2 mean 1.251 p50 2.423 p99 2.423 max 2.423 ms
+  outerBody: n=17 mean 0.045 p50 0.036 p99 0.129 max 0.129 ms
+  weekStripBody: n=16 mean 0.008 p50 0.009 p99 0.013 max 0.013 ms
+  summaryBody: n=2 mean 0.002 p50 0.003 p99 0.003 max 0.003 ms
+marks: boundary 2, dayLanded 2, rested 2, selectedDayChanged 2
+  late +0.158s 33.3 ms: busiest turn 21.0 ms (app 2.8, unattributed 18.2) [applyMove 2.5, haptics 2.4, hostLayout 1.6, gridBuild 0.2, screenBody 0.1, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0] marks [boundary]
+  late +2.538s 46.4 ms: busiest turn 20.0 ms (app 0.6, unattributed 19.3) [hostLayout 4.2, gridBuild 0.4, applyMove 0.3, screenBody 0.2, haptics 0.1, outerBody 0.1, weekStripBody 0.0] marks [boundary]
+late frames, summed: app spans 3.4 ms, unattributed 37.6 ms; by kind (inclusive) [hostLayout 5.9, applyMove 2.9, haptics 2.5, gridBuild 0.6, screenBody 0.3, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0]
+late frames near a mark: boundary 2

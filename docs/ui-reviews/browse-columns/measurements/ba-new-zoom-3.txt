@@ -1,0 +1,17 @@
+script zoom zoom 1.00 seconds 3.39
+step cost: mean 0.133 / p50 0.110 / p99 0.996 / max 1.039 ms (n=161)
+step interval: mean 17.257 / p50 17.268 / p99 18.269 / max 18.593 ms (n=160)
+display frames: mean 16.667 / p50 16.667 / p99 16.667 / max 16.667 ms (n=201); late (>1.5x median) 0 of 201
+view build: 0.11/0.10/0.56 ms (n=162)
+partitions: background 3, planned in a frame 1, engine runs 4 (asked for by a frame 1), found 217
+day reads during script: 0, cached 8, selected 0d from today, position 20738.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 0, where they differed 0, most things crossfaded at once 0
+PROBE zoom
+recorded 3.39 s; display frames n=201 mean 16.667 p50 16.667 p99 16.667 max 16.667 ms; nominal 16.67 ms; late (>1.5x) 0
+main run-loop turns busy: n=797 mean 0.962 p50 0.015 p99 5.519 max 12.769 ms
+  gridBuild: n=162 mean 0.112 p50 0.101 p99 0.490 max 0.554 ms
+  hostLayout: n=162 mean 0.653 p50 0.697 p99 1.198 max 2.216 ms
+  pinchStep: n=161 mean 0.123 p50 0.102 p99 0.987 max 0.996 ms
+marks: pinchBegan 1, pinchEnded 1
+  turn at pinchEnded: n=1 mean 1.472 p50 1.472 p99 1.472 max 1.472 ms

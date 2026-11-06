@@ -1,0 +1,63 @@
+PROBE swipes pass 1
+recorded 5.72 s; display frames n=338 mean 16.765 p50 16.667 p99 16.667 max 33.639 ms; nominal 16.67 ms; late (>1.5x) 2
+main run-loop turns busy: n=1294 mean 1.278 p50 0.506 p99 8.898 max 22.426 ms
+  screenBody: n=495 mean 0.037 p50 0.033 p99 0.112 max 0.182 ms
+  gridBuild: n=502 mean 0.077 p50 0.068 p99 0.227 max 0.384 ms
+  hostLayout: n=280 mean 0.701 p50 0.718 p99 2.035 max 3.845 ms
+  applyMove: n=468 mean 0.078 p50 0.063 p99 0.320 max 0.646 ms
+  engine: n=3 mean 0.031 p50 0.031 p99 0.035 max 0.035 ms
+  warmAhead: n=3 mean 0.059 p50 0.055 p99 0.070 max 0.070 ms
+  warmLand: n=3 mean 0.003 p50 0.002 p99 0.005 max 0.005 ms
+  cacheMerge: n=18 mean 0.030 p50 0.024 p99 0.079 max 0.079 ms
+  haptics: n=8 mean 0.156 p50 0.152 p99 0.324 max 0.324 ms
+  blend: n=94 mean 0.123 p50 0.117 p99 4.640 max 4.640 ms
+  outerBody: n=23 mean 0.098 p50 0.089 p99 0.176 max 0.176 ms
+  weekStripBody: n=35 mean 0.022 p50 0.017 p99 0.063 max 0.063 ms
+  summaryBody: n=4 mean 0.009 p50 0.011 p99 0.011 max 0.011 ms
+marks: boundary 8, dayLanded 4, dragBegan 6, released 6, rested 3, selectedDayChanged 4
+  turn at boundary: n=8 mean 12.334 p50 12.056 p99 14.609 max 14.609 ms
+  turn at dayLanded: n=4 mean 5.062 p50 5.521 p99 6.070 max 6.070 ms
+  turn at dragBegan: n=5 mean 11.561 p50 11.075 p99 25.056 max 25.056 ms
+  turn at released: n=6 mean 4.405 p50 3.295 p99 10.631 max 10.631 ms
+  turn at rested: n=3 mean 11.610 p50 10.682 p99 15.237 max 15.237 ms
+  turn at selectedDayChanged: n=4 mean 11.704 p50 11.593 p99 15.237 max 15.237 ms
+  late +0.324s 33.6 ms: busiest turn 15.3 ms (app 7.0, unattributed 8.4) [blend 4.6, hostLayout 3.3, applyMove 0.5, gridBuild 0.2, screenBody 0.1] marks []
+  late +4.007s 33.3 ms: busiest turn 22.4 ms (app 1.2, unattributed 21.2) [applyMove 0.4, gridBuild 0.4, hostLayout 0.3, screenBody 0.3, outerBody 0.2, cacheMerge 0.1, weekStripBody 0.0] marks [dragBegan]
+late frames, summed: app spans 8.2 ms, unattributed 29.6 ms; by kind (inclusive) [blend 4.6, hostLayout 3.6, applyMove 0.9, gridBuild 0.6, screenBody 0.3, outerBody 0.2, cacheMerge 0.1, weekStripBody 0.0]
+late frames near a mark: dragBegan 1
+script swipes zoom 1.00 seconds 11.77
+step cost: mean 0.109 / p50 0.074 / p99 0.418 / max 0.660 ms (n=932)
+step interval: mean 9.648 / p50 9.189 / p99 19.760 / max 49.057 ms (n=928)
+display frames: mean 16.762 / p50 16.667 / p99 16.667 / max 33.639 ms (n=699); late (>1.5x median) 4 of 699
+view build: 0.13/0.10/0.57 ms (n=600)
+partitions: background 9, planned in a frame 1, engine runs 9 (asked for by a frame 1), found 6014
+day reads during script: 8, cached 8, selected 5d from today, position 20743.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 188, where they differed 0, most things crossfaded at once 0
+PROBE swipes pass 2
+recorded 6.05 s; display frames n=360 mean 16.759 p50 16.667 p99 16.667 max 33.333 ms; nominal 16.67 ms; late (>1.5x) 2
+main run-loop turns busy: n=1424 mean 1.007 p50 0.306 p99 5.977 max 14.164 ms
+  screenBody: n=488 mean 0.062 p50 0.044 p99 0.181 max 0.218 ms
+  gridBuild: n=496 mean 0.137 p50 0.106 p99 0.482 max 0.539 ms
+  hostLayout: n=272 mean 0.189 p50 0.169 p99 0.961 max 1.116 ms
+  applyMove: n=464 mean 0.127 p50 0.081 p99 0.386 max 0.613 ms
+  engine: n=2 mean 0.052 p50 0.053 p99 0.053 max 0.053 ms
+  warmAhead: n=2 mean 0.081 p50 0.084 p99 0.084 max 0.084 ms
+  warmLand: n=3 mean 0.002 p50 0.002 p99 0.002 max 0.002 ms
+  cacheMerge: n=18 mean 0.024 p50 0.023 p99 0.049 max 0.049 ms
+  haptics: n=8 mean 0.117 p50 0.102 p99 0.191 max 0.191 ms
+  blend: n=94 mean 0.005 p50 0.004 p99 0.019 max 0.019 ms
+  outerBody: n=22 mean 0.101 p50 0.093 p99 0.227 max 0.227 ms
+  weekStripBody: n=34 mean 0.019 p50 0.016 p99 0.040 max 0.040 ms
+  summaryBody: n=4 mean 0.011 p50 0.012 p99 0.014 max 0.014 ms
+marks: boundary 8, dayLanded 4, dragBegan 6, released 6, rested 3, selectedDayChanged 4
+  turn at boundary: n=8 mean 13.484 p50 14.632 p99 20.650 max 20.650 ms
+  turn at dayLanded: n=4 mean 5.069 p50 5.675 p99 7.439 max 7.439 ms
+  turn at dragBegan: n=5 mean 10.038 p50 4.901 p99 20.650 max 20.650 ms
+  turn at released: n=6 mean 3.529 p50 2.293 p99 11.913 max 11.913 ms
+  turn at rested: n=3 mean 11.630 p50 11.844 p99 13.027 max 13.027 ms
+  turn at selectedDayChanged: n=4 mean 15.815 p50 17.739 p99 20.650 max 20.650 ms
+  late +1.431s 33.3 ms: busiest turn 12.7 ms (app 0.8, unattributed 11.9) [hostLayout 0.5, gridBuild 0.4, applyMove 0.4, outerBody 0.2, screenBody 0.2, haptics 0.2, weekStripBody 0.0, blend 0.0] marks [boundary]
+  late +2.897s 33.3 ms: busiest turn 12.9 ms (app 0.8, unattributed 12.1) [applyMove 0.4, hostLayout 0.3, gridBuild 0.3, screenBody 0.1, haptics 0.1, outerBody 0.1, weekStripBody 0.0, cacheMerge 0.0, summaryBody 0.0] marks [selectedDayChanged boundary dragBegan dayLanded]
+late frames, summed: app spans 1.6 ms, unattributed 24.0 ms; by kind (inclusive) [applyMove 0.8, hostLayout 0.8, gridBuild 0.7, screenBody 0.3, outerBody 0.3, haptics 0.3, weekStripBody 0.1, blend 0.0, cacheMerge 0.0, summaryBody 0.0]
+late frames near a mark: boundary 2, dayLanded 1, dragBegan 1, selectedDayChanged 1

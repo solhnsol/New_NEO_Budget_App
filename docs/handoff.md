@@ -1,35 +1,172 @@
-# Windows 세션 인계
+# 인계 (2026-10-09 종료 시점)
 
-현재 작업 브랜치: `plan/local-first-core`. 원격 저장소는 처음 확인했을 때 빈 상태였다. 현재 변경은 아직 로컬 파일이며 커밋/원격 공개 결정이 필요하다.
+내일은 **먼저 설계를 검토한 뒤 구현**한다. 오늘은 구현을 마쳤고 이 문서만 갱신했다.
+
+## 1. 현재 상태
+
+| 항목 | 값 |
+|---|---|
+| 작업 브랜치 | `feat/account-provider-evidence` (원격에 푸시됨) |
+| 브랜치 계보 | `main` ← `feat/ios-day-timeline` … `feat/inline-activity-expansion` ← `feat/account-resolution` ← `feat/account-provider-evidence` |
+| 오늘 커밋 | `9db79db` 계좌 발견·해소(후보, 명시 규칙), `2423166` 출처·알림 유형·금융 수단을 분리한 계좌 증거와 유형 범위 규칙 |
+| 이전 커밋(참고) | `fa68cfe` 타임라인 일정 제자리 열기, `1e63d08` 탐색/편집 모드, `c40d902` 일정 편집 제스처 |
+| 패키지 테스트 | `swift test` 전체 통과: Swift Testing 497개(90 + 407), 그중 `AccountResolutionTests` 30개 |
+| 앱 / EventKit | 앱 테스트 60개, EventKit 계약 25/27(2개는 설계상 건너뜀). 오늘은 계좌 코드만 바뀌어 다시 돌리지 않았다 |
+| 작업 트리 | 깨끗함. `main`에는 아직 병합하지 않았다 |
+
+오늘의 코드는 `Sources/NEOBudgetCore/Accounts/`에 있고 설계는 `docs/account-resolution.md`에 있다. 앱(iOS)과 원장은 아직 이 계층을 쓰지 않는다.
+
+## 2. 오늘 한 일
+
+1. 실제 알림과 Actual 최종 거래를 대조해 계좌 식별 실패의 원인을 찾았다.
+2. `SourceProviderID`(출처) / `NotificationType`(알림 유형) / `FinancialInstrumentHint`(금융 수단)를 분리했다.
+3. 계좌 후보 → 연결/신규 확정 → 규칙 흐름을 순수 Swift로 구현했다. 사용자 확인 없이 새 계좌를 만들지 않는다.
+4. 제공자별 추출: 현대카드 제품명(MM/체크), 우리은행 마스킹 번호와 잔액, Toss 알림 유형·결제수단·입금 은행, 카카오페이 상대 은행과 끝 4자리, 티머니 subtitle 요금과 body 잔액.
+
+최근 7일(10-02~10-08, 거래 후보 50건) 재검증 결과다. 사용자 확인은 Actual 연결로 대신한 **시뮬레이션**이며 실제 사용자 입력은 0건이다.
+
+| 항목 | 이전 | 이번 |
+|---|---|---|
+| 자동 연결 | 44건 (88%) | 46건 (92%) |
+| 자동 연결 정확도 | 92.9% | 100% (42/42) |
+| 잘못된 계좌로 연결 | 3건 | 0건 |
+| 잘못된 계좌로 "정상" 승격 | 1건 | 0건 |
+
+## 3. 설계 불변식 (깨지 말 것)
+
+계좌 식별
+1. **앱은 계좌가 아니다.** 출처(앱)와 거래가 일어난 금융 수단은 별개다. Toss/Wallet/Kakao는 허브다.
+2. **식별자는 기관 범위다.** 모든 식별자는 `InstrumentKey`(기관 + 식별자)로만 쓴다. 전역 고유 식별자는 없다.
+3. **제품명(MM/체크)은 단서이지 고유 식별자가 아니다.** 같은 제품의 카드가 둘이면 끝 4자리 키가 필요하다.
+4. **강한 키가 있으면 키가 우선이다.** 키가 어디에도 맞지 않으면 후보가 되고 규칙으로 흘러가지 않는다.
+5. **규칙은 출처 + 알림 유형 + 기관 + 수단 종류로 제한한다.** 같은 알림을 낼 수 있는 다른 활성 계좌가 있으면 규칙은 제안만 한다.
+6. **`resolved`가 아니면 자동 승격하지 않는다.** 모호함(여러 계좌, 미등록, 비활성, 종류 불일치)은 항상 사용자 확인으로 간다.
+7. **새 계좌는 사용자 확인 없이 확정하지 않는다.** 후보는 원장에 영향을 주지 않는다. 내부 ID는 표시 이름과 분리한다.
+8. **상대 쪽(counterpart)은 후보를 만들지 않는다.** 송금 상대는 남의 계좌인 경우가 많다. 등록된 키로만 조회한다.
+9. **원장 의미론 유지.** 신용카드는 부채(`CreditInstrument`)에, 체크카드·은행·지갑·교통카드는 `Account`에 묶는다.
+
+파서와 원장
+10. 파서는 사실만 만든다(facts-only). 계좌를 모르고 원장을 쓰지 않는다. 계좌 증거는 별도 추출기가 읽는다.
+11. **금액·근접 시각만으로 서로 다른 알림을 확정 병합하지 않는다.** 구조적 근거(같은 수단 키, 연결되는 양쪽 정보)가 있어야 한다. 근접 시각·금액은 추정 근거일 뿐이다.
+12. **한 원은 한 분석 경로에서 두 번 집계되지 않는다.** 카드 결제와 카드대금 납부, 한 결제에 대한 여러 앱의 알림, 이체 양쪽 다리를 이중 계상하지 않는다.
+13. 환불은 실제 발생일에 기록하고 소비 반환은 원구매 월에 귀속한다. 원거래는 보존한다.
+14. 사용자 수정과 기존 원장 이력은 보존한다. 재평가는 기록을 덮어쓰지 않고 새 판단을 추가한다.
+15. 불확실한 금액은 추정 상태로 유지한다. 잔액 차이 기반 금액 추론은 분석 전용이며 사용자가 명시적으로 켜기 전에는 확정하지 않는다.
+
+데이터
+16. 실제 금융 원문·계좌번호·이름·거래 상대방은 저장소, 로그, 보고서, 커밋에 넣지 않는다. 실제 데이터 분석은 로컬에서만 하고 도구는 저장소 밖에서 실행한다. `data/`는 Git에서 제외돼 있다.
+17. 앱 표시 이름은 기기 언어에 따라 달라진다. 별칭으로 정규화하고 번들 ID가 온다고 가정하지 않는다.
+
+## 4. 알려진 문제와 미구현
+
+계좌 계층
+- 레지스트리를 앱·원장·저장소에 연결하지 않았다. 영속화와 사용자 확인 UI가 없다.
+- 후보 → 사용자 확인 → 이미 쌓인 알림 재평가 경로가 없다.
+- 한국어 기기의 앱 이름(`지갑`, `토스`, `카카오페이`)은 별칭으로 넣었지만 **실제로 확인하지 못했다.** Wallet 알림 문구는 영어 기기 형식뿐이다.
+- 알림 JSON의 `assosicated` 필드(철자 오류)가 전부 비어 있다. 단축어가 번들 ID를 줄 수 있는지는 미확인이다.
+- 수동 앱 이름 구간(`id < 57`)과 iOS 표시 이름 구간(`id ≥ 57`)이 섞여 있다. 평가는 두 구간을 분리해야 한다.
+- 카드 제품 목록은 MM/체크 두 가지뿐이다. 새 제품은 `instrumentKindUnknown`으로 사용자 확인을 거친다.
+
+원장·파서 쪽 (오늘의 검증에서 드러난 것)
+- **출금(`withdrawal`)을 어셈블러가 `unsupportedEvent`로 보류한다.** 7일 Actual 소비 1,768,530원/51건 중 파이프라인이 승격한 것은 407,890원/22건이다. 차이의 대부분은 출금 5건(1,338,140원)과 교통카드 24건(22,500원)이다.
+- ~~**파서가 교통카드 요금을 읽지 못한다.**~~ 고쳤다(2026-10-16). Wallet 교통카드 알림(subtitle `₩1,550 for Metro`, body `Your new balance is ₩…`)을 `transit-fare` 규칙의 `purchase`(금융 수단 `transitCard`, 상호 `Metro`)로 읽는다. 금액은 요금이고 잔액은 금액으로 읽지 않는다. 잔액만 있는 알림과 `no charge` 알림은 `balanceInquiry`로 거래가 아니다. 계좌 쪽 `transitFare`와 같은 모양만 인정한다. 한국어 기기의 Wallet 문구는 아직 확인하지 못해 영어 형식만 읽는다.
+- **이체를 수입으로 계상한다.** 입금 쪽이 수입으로 승격된다(7일 5건, 52,104원). 출금 쪽을 열면 이중 계상된다.
+- **환불 입금이 일반 수입으로 분류된다**(7일 4건, 52,922원). 원거래 연결 단서가 없다.
+- 토스뱅크 입금 알림 중 금액이 title에 있는 변형이 레거시에서 인식되지 않았다(2건). Actual에도 없다.
+- Toss·현대카드·우리은행이 한 결제를 각각 알려 오면, 중복 검사가 **뒤에 오는 쪽을 보류**한다. 어느 쪽이 승격되는지는 도착 순서에 달려 있다. 확정 병합이 아니라 임시 보류다.
+- 표본이 작다(알림 173건, 9일). 위 수치는 방향성으로만 본다. 교통카드 요금은 1,550원 위주로 보인다.
+
+## 5. 내일의 핵심 과제 (설계 검토 후 구현)
+
+### 5.1 Cross-provider Correlator
+- 같은 거래의 여러 알림을 결합한다. 같은 결제가 앱마다 1~4초 간격으로 온다(예: 체크카드 승인 + 은행 출금, Toss 결제 + 카드 앱 승인, 한 결제에 세 곳).
+- 대상: 카드 승인과 은행 출금, Toss/Kakaopay와 은행 알림, 이체 양쪽 다리, 환불과 원거래, 카드 결제와 카드대금.
+- Actual의 대응 모양은 1:1 64, N:1 7, 1:N 12, N:M 19그룹(이체 양쪽)이다.
+- **제약:** 금액·근접 시각만으로 확정 병합하지 않는다(불변식 11). 구조적 근거를 정의해야 한다. 예: 체크카드 제품 키와 은행 계좌 키가 같은 프로필에 묶여 있는가, 카카오 충전계좌의 끝 4자리가 등록된 키와 맞는가.
+- 설계 질문: 확정/추정 결합의 표현, 도착 순서에 의존하지 않는 결과, 결합을 취소·수정하는 방법, 병합 대상 중 어느 증거를 대표로 쓸지.
+
+### 5.2 Recurring Transaction Knowledge
+- 월세, 용돈, 정기 이체 같은 반복 패턴. **오늘 분석한 적 없다.** 9일치 데이터로는 판단할 수 없으니 먼저 데이터 확보 방법을 정해야 한다.
+- 사용자별 규칙과 공통 파싱 규칙을 분리한다. 공통 규칙은 저장소에 두고, 사용자별 규칙은 로컬에만 둔다.
+- 예상 거래와 실제 발생 거래를 구분한다. 예상 거래는 원장 사실이 아니다. 실제 알림이 도착하면 예상과 연결하고, 오지 않으면 누락 신호가 된다.
+- 설계 질문: 반복 주기의 표현, 금액 변동 허용 범위, 예상 거래가 사용자 확인 없이 원장에 들어가지 않도록 하는 방법.
+
+### 5.3 Balance Reconciliation
+- 계좌별 잔액 연쇄를 검증한다. 오늘 결과: 우리은행 계좌 잔액 연쇄 46/50쌍이 정합, 교통카드 요금 알림 22/22가 정합.
+- 불일치 4건은 잔액이 없는 다른 앱 알림의 거래가 사이에 끼어서 생겼고, 1건은 설명되는 단일 거래를 찾지 못했다. 잔액이 없는 알림을 무시하면 연쇄가 끊기는 점을 설계에 반영해야 한다.
+- 목표: 알림 누락·지연 탐지, 이후 도착한 증거로 기존 거래 재평가, 불확실한 금액은 추정 상태 유지, 사용자 수정과 원장 이력 보존.
+- 교통카드 요금이 없는 알림은 잔액 차이로 설명 가능하다(감소분 4건이 모두 같은 요금). 그래도 추정이며, 선행 잔액이 없으면 추론하지 않는다.
+- 설계 질문: 잔액 증거와 거래 사실의 우선순위, 시계열 순서가 뒤바뀐 알림 처리, 재평가가 사용자 수정을 덮어쓰지 않는 보장.
+
+### 5.4 Review Queue
+- 확정할 수 없는 거래를 쌓고 **기본 하루 한 번** 일괄 검토한다.
+- 한 번의 확인으로 여러 거래를 해결한다. 예: 계좌 키 하나를 연결하면 그 키의 대기 알림이 모두 풀리고, 규칙 하나가 같은 유형을 처리하며, 짝 하나가 확인되면 양쪽 알림이 함께 풀린다.
+- 새 증거가 도착하면 대기 중인 항목을 재평가한다. 오늘의 7일 대기열 구성(참고): 검토 대기 13건(출금 11, 이체 미완성 2), 중복 의심 2건, 계좌 미확정 1건.
+- 설계 질문: 대기 항목의 수명과 만료, 하루 한 번 알림 시점, 확인 하나가 영향을 주는 범위를 사용자에게 보여주는 방법, 재평가의 멱등성.
+
+## 6. 내일 시작 순서 제안
+
+1. 이 문서와 `docs/account-resolution.md`를 읽는다.
+2. 5.1의 "구조적 근거" 정의부터 합의한다. 5.3, 5.4가 모두 그 위에 올라간다.
+3. 설계가 합의되면 순수 Swift 도메인과 합성 fixture로 구현하고, 마지막에 실제 데이터로 재검증한다(오늘과 같은 방식).
+4. 그 전에 `feat/account-provider-evidence`를 `main`에 병합할지 정한다. 오늘은 병합하지 않았다.
+
+## 7. 데이터와 도구
+
+- 원본 데이터: `data/raw-notifications-2026-10-09.sqlite`, `data/ground-truth-2026-10-09-final.tar.gz`. 둘 다 Git에서 제외되고 읽기 전용으로만 쓴다.
+- 오늘의 분석 도구(추출 스크립트, 파이프라인 시뮬레이터)는 저장소 밖 세션 임시 폴더에 있다. **저장소에 없고, 세션이 끝나면 사라질 수 있다.** 필요하면 개인정보 없이 재작성해야 한다.
+- 압축 해제본과 중간 산출물은 삭제했다. 재분석 시에는 해제 전 경로 안전성을 검사한다.
+
+## 부록: 이전 인계 (Windows 세션, 2026-10-06 시점)
+
+> 아래는 Windows 세션 종료 시점의 기록이다. 브랜치·테스트 수는 오래됐으니 위 최신 내용을 우선한다.
+
+현재 작업 브랜치: `refactor/ingestion-pipeline`. 기존 parser 구현과 원자 승격 위에 Claude의 parser 계약 문서 및 sanitized test-data 브랜치를 통합하고 ingestion 경계를 재정의했다.
 
 ## 확정된 방향
 
 - 자체 local-first/offline-first 가계부. Actual/FastAPI 실행 의존성 없음.
 - 순수 Swift Package Core. Windows에서 개발하고 이후 iOS가 같은 모듈 사용.
 - 금융 행위와 실제 계좌 잔액 변동 분리. 카드를 별도 가계부 계좌로 만들지 않고 결제 수단/미납 의무로 표현.
-- 같은 금액/가게/시간만으로 거래를 합치지 않음. 명확한 같은 원본 재처리는 한 번만 반영.
+- 강한 ID 부재 자체는 review 사유가 아니다. 같은 금액/방향/근접 시각의 유사 후보가 충돌할 때 dedup이 `needsReview`로 남기며 자동 반영하지 않는다. 명확한 같은 strong evidence나 같은 candidate 재처리는 한 번만 반영.
+- 환불 현금 흐름은 실제 발생 시점에 기록하되 소비 반환은 원구매 월에 귀속. 원거래를 보존하고 연결 조정으로 기록.
 - iOS UI/플랫폼 연동/클라우드/구매/배포는 현재 구현하지 않음.
 - 사용자와 의사결정을 함께 진행하고 결과 예시/비용/대안을 설명. 짧은 긍정으로 새 정책을 임의 확정하지 않음.
 
 ## 코드 상태
 
-Swift Package, Foundation 기반 알림 텍스트 정규화, Swift Testing 테스트 6개. 금융 모델/원장/실제 provider parser/중복/예산은 아직 설계 초안이다. `docs/core-plan.md`, `docs/legacy-analysis.md`, `docs/decisions.md`를 먼저 읽는다.
+Swift Package, 중립 RawNotification, facts-only Draft parser, account resolver/assembler, dedup validator, 원본 저장 protocol/별도 in-memory adapter와 첫 원장 모델이 있다. Parser는 repository/ledger를 의존하지 않고 Draft만 만든다. `CandidateProcessingRepository`가 dedup safety gate, candidate 저장과 ready ledger 승격을 원자 처리하고 non-ready 상태의 자동 승격을 막는다. Swift Testing 총 452개(Core 60 + Calendar 392)가 통과한다(423개는 Windows, D012의 29개 추가분은 Linux Swift 6.0.3에서 통과, Windows 재검증 필요). 별도 순수 Swift target `NEOBudgetCalendar`가 Calendar/Activity/Tag/Area/Person 도메인, 금액 지식·거래 분할·Obligation·Settlement(상계·유일 해 추론·residual), 경제적 정정, 사람별 정산 정책과 공유 지출 component, Spending Nature·Category 5상태(unresolved/confirmedUnknown 분리, D012), 참여자 친밀도, DayTimeline read model, drag/resize 정책, command 계약을 제공한다(`docs/calendar-domain.md`, D010, D011). 실제 iOS/Android 코드와 durable 저장소는 없다. `docs/core-plan.md`, `docs/notification-parser.md`, `docs/decisions.md`, `docs/parser-contract.md`, `docs/redteam-closure.md`, `docs/calendar-domain.md`(특히 §20 머니 플로우 일관성)를 먼저 읽는다. 핵심 원칙: 차액은 미확정 금액을 설명하는 evidence로 먼저 쓰고 residual은 마지막에만 만든다. 불확실한 금액은 obligation/allocation에 그대로 전파하고 자동화 강도만 낮춘다. 정책 반올림 조정은 residual이 아니다. unresolved는 아직 모름, confirmedUnknown은 사용자가 모른다고 확인한 상태이며 같은 evidence로 다시 묻지 않는다. 한 원은 한 분석 경로에서 두 번 집계되지 않는다.
 
 ## 다음 논의
 
-1. 강한 ID 없는 모호한 유사 알림: 확인 후보 보관 vs 별도 거래 반영+중복 의심 표시.
-2. 지난달 구매의 이번 달 환불: 이번 달 소비 상쇄 vs 원구매 월 수정/이월 재계산. 앞서 사용자에게 제시한 질문은 아직 답을 받지 못했다.
-3. 최소 원장 부호/금액 범위, 카드 미납/납부/환불 규약과 in-memory 저장 계약을 예시로 설명하고 구현.
-4. 기준 브랜치/기능 브랜치, commit/push/PR, Windows 검증 방식 합의.
+1. 합성 26개 형식과 parser fixture matrix를 provider별 executable fixture/profile로 확장.
+2. 서로 다른 provider raw가 같은 금융 거래일 때 promotion 전에 evidence를 결합하는 correlator/dedup 단계.
+3. SQLite 등 durable 저장 adapter 선택과 migration/원자성 계약.
+4. 취소 통지와 실제 환급 입금 통지가 같은 반환일 때 중복 상쇄하지 않는 상태 연결.
+4. Windows 검증은 2026-10-06 완료했다. 다음 구현에서도 같은 환경에서 빌드/테스트를 유지한다.
 
 ## 환경 및 검증
 
 기존 Linux JS 알림 테스트: 48개 중 46개 통과, SQLite 관련 2개 skipped. 새로운 Swift Core의 Windows 검증을 뜻하지 않는다.
 
-새 Swift 정규화 테스트: Swift 6.4/Debian 13/aarch64 빌드 성공, 6개 통과. 격리된 도구 환경 때문에 native build system을 사용했으며 상세 명령은 development.md에 기록했다. Windows의 기본 빌드/테스트는 별도 실행 필요.
+기존 플랫폼 경계 테스트를 포함해 ingestion/원장/red-team/원자 처리 총 423개(Core 60 + Calendar 363)는 Swift 6.4/Windows x86_64에서 통과했다. test-data Python 테스트 7개도 통과한다. Developer Mode 활성화 뒤 SwiftPM 심볼릭 링크 경고도 사라졌다. Android 실행은 별도 검증 필요.
 
 Linux 테스트 도구는 `.tooling/`에 격리돼 있으며 Git에서 제외된다. Windows로 가져갈 대상은 소스/테스트/문서이며 이 Linux 도구 폴더는 필요 없다.
 
-브랜치 공개 후 Windows에서 clone하고 공식 Swift Windows 설치 안내를 따라 `swift --version`, `swift build`, `swift test`를 실행한다. 실패하면 실제 출력과 도구 버전을 기록하고 수정한다. Mac/Xcode나 iOS SDK를 설치하는 단계는 없다.
+Windows에서 공식 Swift Windows 설치 안내에 따라 Swift 6.4, Python 3.10, Visual Studio 2022 C++ Build Tools와 Windows 11 SDK를 구성했다. Visual Studio 개발자 환경과 `SDKROOT`를 사용해 `swift --version`, `swift build`, `swift test`를 검증했다. Mac/Xcode나 iOS SDK를 설치하는 단계는 없다.
 
-실제 금융 알림 샘플은 현재 새 저장소에 복사하지 않았다. 기존 테스트/40개 fixture의 형식과 시나리오는 분석했으며, 원문을 가져오기 전에 익명화한다.
+운영 금융 알림 원문은 저장소에 복사하지 않는다. 읽기 전용 도구가 생성한 완전 가상 샘플 26개 형식만 Git에 포함하며 실제 거래 관계와 잔액은 보존하지 않는다.
+
+## GitHub에서 Windows로 이어받기
+
+```powershell
+git clone --branch refactor/platform-neutral-boundaries https://github.com/solhnsol/New_NEO_Budget_App.git
+Set-Location New_NEO_Budget_App
+swift --version
+swift build
+swift test
+```
+
+공식 Swift Windows 설치를 먼저 완료한다. `feat/core-domain-storage`는 아직 로컬 작업이므로 push 전에는 위 기반 브랜치만 clone할 수 있다. clone은 현재 공개 저장소에서 인증 없이 가능하며, Windows에서 이후 push할 때는 해당 환경의 GitHub 인증이 필요하다. Linux의 `.tooling/`이나 인증 정보를 Windows로 복사하지 않는다.
+
+기존 `New_NEO_Budget_App.bundle`은 초기 두 커밋을 보관한 오프라인 백업이며 이후 문서 커밋은 포함하지 않는다. 이어서 작업할 때는 GitHub의 최신 작업 브랜치를 사용한다.

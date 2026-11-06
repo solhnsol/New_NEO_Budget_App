@@ -1,0 +1,9 @@
+[Unit]
+Description=Generate synthetic NEO test coverage from local RPi archives
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 %h/.local/lib/neo-test-data/export.py --ingest-db %h/actual-budget/ingest/ingest.sqlite --inbox-db %h/action-inbox/data/action_inbox.db --output %h/.local/share/neo-test-data/dataset.json
+NoNewPrivileges=true
+TimeoutStartSec=120

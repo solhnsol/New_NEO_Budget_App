@@ -1,0 +1,27 @@
+script swipes zoom 1.00 seconds 11.82
+step cost: mean 0.067 / p50 0.034 / p99 0.298 / max 1.873 ms (n=936)
+step interval: mean 9.605 / p50 9.140 / p99 19.132 / max 85.928 ms (n=932)
+display frames: mean 16.690 / p50 16.667 / p99 16.667 / max 33.333 ms (n=706); late (>1.5x median) 1 of 706
+view build: 0.12/0.09/0.42 ms (n=600)
+partitions: background 9, planned in a frame 1, engine runs 9, found 5044
+day reads during script: 8, cached 8, selected 4d from today, position 20742.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+PROBE swipes
+recorded 11.83 s; display frames n=706 mean 16.690 p50 16.667 p99 16.667 max 33.333 ms; nominal 16.67 ms; late (>1.5x) 1
+main run-loop turns busy: n=2849 mean 0.867 p50 0.187 p99 5.661 max 19.349 ms
+  screenBody: n=981 mean 0.034 p50 0.023 p99 0.117 max 0.222 ms
+  gridBuild: n=1005 mean 0.094 p50 0.067 p99 0.374 max 0.405 ms
+  hostLayout: n=537 mean 0.470 p50 0.333 p99 1.252 max 4.440 ms
+  applyMove: n=936 mean 0.063 p50 0.032 p99 0.280 max 1.873 ms
+  engine: n=6 mean 0.016 p50 0.018 p99 0.041 max 0.041 ms
+  warmAhead: n=6 mean 0.027 p50 0.029 p99 0.060 max 0.060 ms
+  warmLand: n=7 mean 0.001 p50 0.001 p99 0.002 max 0.002 ms
+  cacheMerge: n=36 mean 0.022 p50 0.014 p99 0.090 max 0.090 ms
+  haptics: n=16 mean 0.226 p50 0.125 p99 1.835 max 1.835 ms
+  outerBody: n=48 mean 0.057 p50 0.042 p99 0.190 max 0.190 ms
+  weekStripBody: n=65 mean 0.012 p50 0.011 p99 0.055 max 0.055 ms
+  summaryBody: n=8 mean 0.004 p50 0.004 p99 0.005 max 0.005 ms
+marks: boundary 16, dayLanded 8, dragBegan 12, released 12, rested 6, selectedDayChanged 8
+  late +10.010s 33.3 ms: busiest turn 17.4 ms (app 1.0, unattributed 16.4) [gridBuild 0.5, applyMove 0.4, haptics 0.2, hostLayout 0.2, screenBody 0.2, outerBody 0.1, weekStripBody 0.0] marks [boundary]
+late frames, summed: app spans 1.0 ms, unattributed 16.4 ms; by kind (inclusive) [gridBuild 0.5, applyMove 0.4, haptics 0.2, hostLayout 0.2, screenBody 0.2, outerBody 0.1, weekStripBody 0.0]
+late frames near a mark: boundary 1

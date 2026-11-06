@@ -1,0 +1,21 @@
+script rubber zoom 1.00 seconds 5.98
+step cost: —
+step interval: —
+display frames: mean 16.667 / p50 16.667 / p99 16.667 / max 16.667 ms (n=357); late (>1.5x median) 0 of 357
+view build: 0.05/0.05/0.13 ms (n=82)
+partitions: background 3, planned in a frame 1, engine runs 8 (asked for by a frame 1), found 540
+day reads during script: 0, cached 8, selected 1d from today, position 20739.000
+partitions held while a day was read 0, axis transitions 0; reads dropped as stale 0, failed now 0
+crossfade: frames drawing a day from two decisions 0, where they differed 0, most things crossfaded at once 0
+PROBE rubber
+recorded 5.98 s; display frames n=357 mean 16.667 p50 16.667 p99 16.667 max 16.667 ms; nominal 16.67 ms; late (>1.5x) 0
+main run-loop turns busy: n=1358 mean 0.863 p50 0.017 p99 5.048 max 13.021 ms
+  screenBody: n=4 mean 0.067 p50 0.067 p99 0.093 max 0.093 ms
+  gridBuild: n=329 mean 0.056 p50 0.049 p99 0.281 max 0.332 ms
+  hostLayout: n=214 mean 0.625 p50 0.592 p99 1.765 max 2.592 ms
+  engine: n=4 mean 0.215 p50 0.253 p99 0.465 max 0.465 ms
+  warmAhead: n=4 mean 0.270 p50 0.298 p99 0.549 max 0.549 ms
+  pinchStep: n=240 mean 0.101 p50 0.079 p99 0.577 max 1.148 ms
+marks: pinchBegan 4, pinchEnded 4
+  turn at pinchBegan: n=3 mean 16.542 p50 21.975 p99 22.990 max 22.990 ms
+  turn at pinchEnded: n=4 mean 5.972 p50 6.794 p99 12.277 max 12.277 ms
