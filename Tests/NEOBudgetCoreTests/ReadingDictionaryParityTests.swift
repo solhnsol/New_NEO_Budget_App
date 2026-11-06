@@ -177,3 +177,54 @@ private func appNote(_ app: String, _ title: String?, _ subtitle: String?, _ bod
     #expect(parser.entryID(for: note("은행", nil, "광고 입금")) == "official.promotion")
     #expect(parser.entryID(for: note("은행", nil, "그냥 아무 알림")) == nil)
 }
+
+@Test func aUserTeachesTheAppToReadAnUnreadNotificationFromPickedPieces() throws {
+    let text = "[출금] 묵은지 작업실 150,000원 잔액 2,310,000원 11/05 18:22"
+    let builder = ReadingEntryBuilder(text: text)
+    let ids = builder.tokens.map(\.text)
+    #expect(ids.prefix(4) == ["[", "출금", "]", "묵은지"])
+    let amountIDs = builder.mergedAmountTokenIDs(startingAt: builder.tokens.first { $0.text == "150" }!.id)
+    var picks: [Int: ReadingSlot] = [:]
+    for id in amountIDs { picks[id] = .amount }
+    for token in builder.tokens where ["묵은지", "작업실"].contains(token.text) { picks[token.id] = .accountName }
+    let balanceID = builder.tokens.first { $0.text == "2" }!.id
+    for id in builder.mergedAmountTokenIDs(startingAt: balanceID) { picks[id] = .balance }
+
+    #expect(throws: ReadingEntryBuilder.BuildError.needsName) {
+        try builder.readEntry(name: " ", applicationIdentifier: "toss", kind: .withdrawal, assignments: picks)
+    }
+    #expect(throws: ReadingEntryBuilder.BuildError.needsAmount) {
+        try builder.readEntry(name: "x", applicationIdentifier: "toss", kind: .withdrawal, assignments: [:])
+    }
+    let entry = try builder.readEntry(name: "토스 출금", applicationIdentifier: "toss", kind: .withdrawal, assignments: picks)
+    let parser = ReadingEntryParser(dictionary: ReadingDictionary(userEntries: [entry]))
+    let other = "[입금] 다른통장 9,999원 잔액 100원 12/31 09:00"
+    // 같은 틀이면 같은 알림이다: 숫자·날짜는 달라도 읽고, 글자가 다르면 읽지 않는다.
+    func parse(_ body: String, app: String = "toss") throws -> NotificationParseOutcome {
+        try parser.parse(note(nil, nil, body, app: app), context: ctx())
+    }
+    guard case let .candidate(draft) = try parse("[출금] 묵은지 작업실 7,000원 잔액 1,000원 01/02 03:04") else {
+        Issue.record("same shape must be read"); return
+    }
+    #expect(draft.amount.minorUnits == 7_000)
+    #expect(draft.balanceAfter?.minorUnits == 1_000)
+    #expect(draft.ruleID == entry.id)
+    guard case let .candidate(different) = try parse(other), case let .candidate(otherApp) = try parse("[출금] 묵은지 작업실 7,000원 잔액 1,000원 01/02 03:04", app: "other") else {
+        Issue.record("official entries still read these"); return
+    }
+    #expect(different.ruleID == "deposit")
+    #expect(otherApp.ruleID == "withdrawal")
+}
+
+@Test func anIgnoreEntryKeepsOnlyThePickedPiecesAndAnythingElseMatches() throws {
+    let builder = ReadingEntryBuilder(text: "[광고] 현대카드 M포인트 3,200 점이 소멸돼요 11/30")
+    let fixed = Set(builder.tokens.prefix(3).map(\.id))
+    let entry = try builder.ignoreEntry(name: "현대카드 광고", applicationIdentifier: "hyundai", fixedTokenIDs: fixed)
+    guard case let .frame(_, frame) = entry.conditions[0] else { Issue.record("frame"); return }
+    #expect(frame == "[광고]{*}")
+    #expect(ReadingEntryBuilder.commonExpression(of: frame) == "[광고] 아무 텍스트")
+    let parser = ReadingEntryParser(dictionary: ReadingDictionary(userEntries: [entry]))
+    #expect(try parser.parse(note(nil, nil, "[광고] 아무 내용 입금 5,000원", app: "hyundai"), context: ctx()) == .notTransaction(.unrecognized))
+    // 다른 앱에서는 내 무시 항목이 아니라 공식 항목(광고)이 걸러 낸다.
+    #expect(try parser.parse(note(nil, nil, "[광고] 아무 내용 입금 5,000원", app: "other"), context: ctx()) == .notTransaction(.promotion))
+}
