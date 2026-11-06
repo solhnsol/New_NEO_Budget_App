@@ -1,3 +1,5 @@
+import Foundation
+
 /// What the user has told the app about their accounts: the registry (keys, rules, open candidates) and the ledger
 /// targets confirmed through it. Together with the received notifications it is everything the ledger is derived from.
 public struct IntakeSetup: Codable, Equatable, Sendable {
@@ -179,7 +181,7 @@ public struct NotificationIntake: Sendable {
         var transferCounterpart = observationWithoutID.transferCounterpart
         let waiting = try repository.correlationRecords(near: draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
         let earlier = try repository.storedCandidate(ofNotification: draft.rawNotificationID, eventIndex: draft.eventIndex)
-        if let recorded = earlier?.observation, recorded.draft.ruleID == Self.aliasTransferRuleID {
+        if let recorded = earlier?.observation, Self.rewrittenRuleIDs.contains(recorded.draft.ruleID) {
             recordedDraft = recorded.draft
             transferCounterpart = recorded.transferCounterpart
         } else if earlier == nil, transferCounterpart == nil, case let .account(own)? = binding,
@@ -198,6 +200,13 @@ public struct NotificationIntake: Sendable {
             recordedDraft = recording.draft
             recordedResolution = .resolved(recording.binding)
             binding = recording.binding
+        } else if earlier == nil, case .account? = binding, let person = Self.asTossPersonTransfer(draft, text: NotificationText.joined(notification)) {
+            // A bank withdrawal `토스 <이름>` with no Toss alert to pair with (Toss sends none while its app is open) is the user's own
+            // transfer to that person. The Toss payment pairing above wins when its alert is already here.
+            recordedDraft = person
+        } else if earlier == nil, case .account? = binding, let charge = Self.asPrepaidChargeSpending(draft, text: NotificationText.joined(notification)) {
+            // The user has not registered that prepaid wallet (a registered one is the alias transfer above): the top-up stays spending.
+            recordedDraft = charge
         }
         // A cancellation is booked against the purchase it undoes, found among what is stored (not by an approval number
         // only: bank cancellations carry none). A repeat keeps what it was linked to the first time.
@@ -239,6 +248,48 @@ public struct NotificationIntake: Sendable {
     }
 
     static let aliasTransferRuleID = "alias-transfer"
+    public static let tossPersonTransferRuleID = "toss-person-transfer"
+    static let prepaidChargeSpendingRuleID = "prepaid-charge-spending"
+    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID]
+
+    /// Woori's `[출금] 토스    김의근 10,000원`: the person's name sits between `토스` and the amount.
+    private static let tossPersonPatterns = [
+        #"\[출금\]\s*토스\s+([가-힣]{2,4})\s+[0-9][0-9,]*\s*원"#,
+        // The SMS layout: the name follows the masked account number.
+        #"\*\S*\s+토스\s+([가-힣]{2,4})\s+(?:잔액|잔고|[0-9]{1,2}/)"#,
+    ].map { try! NSRegularExpression(pattern: $0) }
+    private static let kakaoPayWord = try! NSRegularExpression(pattern: #"(?<![가-힣A-Za-z0-9_])카카오페이(?![가-힣A-Za-z0-9_])"#)
+    /// Words that follow `토스` for a service, not a person.
+    private static let tossServiceWords: Set<String> = ["페이", "머니", "뱅크", "증권", "쇼핑", "페이먼츠", "프라임", "보험", "카드", "퀵", "인슈어런스"]
+
+    /// A bank withdrawal to `토스 <사람 이름>` read as the purchase-shaped spending on that person (my transfer is my spending).
+    static func asTossPersonTransfer(_ draft: TransactionCandidateDraft, text: String) -> TransactionCandidateDraft? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              let match = tossPersonPatterns.lazy.compactMap({ $0.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) }).first,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        let name = String(text[range])
+        guard !tossServiceWords.contains(name) else { return nil }
+        return rewritten(draft, ruleID: tossPersonTransferRuleID, counterparty: DraftCounterparty(payeeRaw: name, memoRaw: "토스"))
+    }
+
+    /// A bank-side Kakao Pay top-up reads `[출금] (주)카카오페이 …`. shortcut: Kakao Pay only; add 티머니/캐시비 words when
+    /// their real bank messages are known (checklist §8 of the prepaid top-up record).
+
+    static func asPrepaidChargeSpending(_ draft: TransactionCandidateDraft, text: String) -> TransactionCandidateDraft? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              kakaoPayWord.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return nil }
+        return rewritten(draft, ruleID: prepaidChargeSpendingRuleID, counterparty: DraftCounterparty(merchantRaw: "카카오페이", memoRaw: "충전"))
+    }
+
+    private static func rewritten(_ draft: TransactionCandidateDraft, ruleID: String, counterparty: DraftCounterparty) -> TransactionCandidateDraft? {
+        try? TransactionCandidateDraft(
+            rawNotificationID: draft.rawNotificationID, eventIndex: draft.eventIndex, parserID: draft.parserID,
+            parserVersion: draft.parserVersion, ruleID: ruleID, kind: .purchase, direction: .outflow,
+            amount: draft.amount, balanceAfter: draft.balanceAfter, occurredAt: draft.occurredAt, instrument: draft.instrument,
+            counterparty: counterparty, evidence: draft.evidence, issues: draft.issues.filter { $0 != .merchantMissing },
+            confidence: draft.confidence
+        )
+    }
 
     /// A bank withdrawal or deposit read as the transfer it is; anything else stays as it was.
     private static func asTransfer(_ draft: TransactionCandidateDraft) -> TransactionCandidateDraft? {

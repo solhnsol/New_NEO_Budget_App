@@ -86,6 +86,8 @@ public enum AccountResolutionDecision: Equatable, Sendable {
     public enum Basis: Equatable, Sendable {
         case identifier(AccountIdentifier)
         case exclusiveSourceRule(SourceRuleID)
+        /// A Wallet card tap names only the issuer; the user has registered exactly one active card of it.
+        case onlyCardOfIssuer(InstitutionID)
     }
 
     /// Safe to bind without asking: the identifier matched exactly one active account of the right class, or the
@@ -179,8 +181,13 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
     /// plays no part in which account it is, except as one part of a rule's scope.
     public func resolve(_ evidence: AccountEvidence) -> AccountResolutionDecision {
         guard evidence.type != .unrecognized else { return .needsConfirmation(.unrecognizedNotificationType, suggestion: nil) }
-        guard !evidence.type.isSupplementary else { return .needsConfirmation(.supplementaryNotification, suggestion: nil) }
         let hint = evidence.instrument
+        if evidence.type == .walletCardTap, let issuer = hint.institution {
+            // Wallet names the issuer ("현대카드") but not which card; with one registered card of it there is nothing to guess.
+            let cards = profiles.filter { $0.isActive && ($0.institution == issuer || $0.keys.contains { $0.institution == issuer }) }
+            if cards.count == 1 { return .resolved(cards[0].binding, basis: .onlyCardOfIssuer(issuer)) }
+        }
+        guard !evidence.type.isSupplementary else { return .needsConfirmation(.supplementaryNotification, suggestion: nil) }
         guard let institution = hint.institution else { return .needsConfirmation(.institutionUnknown, suggestion: nil) }
         guard hint.kind != .unknown else { return .needsConfirmation(.instrumentKindUnknown, suggestion: nil) }
 
@@ -385,7 +392,7 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
     /// only account the text points to.
     public func counterpartAlias(in text: String) -> AccountID? {
         let text = NotificationText.normalize(text)
-        let hits = Set(counterpartAliases.compactMap { phrase, account -> AccountID? in
+        let hits = Set(allAliases().compactMap { phrase, account -> AccountID? in
             guard profile(.account(account))?.isActive == true else { return nil }
             var from = text.startIndex
             while let found = text.range(of: phrase, range: from..<text.endIndex) {
@@ -397,6 +404,15 @@ public struct AccountRegistry: Codable, Equatable, Sendable {
             return nil
         })
         return hits.count == 1 ? hits.first : nil
+    }
+
+    /// Seeded words: bank messages say `카카오페이` for a top-up of Kakao Pay money. They count only while the user has exactly one
+    /// active Kakao Pay account registered, so an unregistered wallet is never guessed (the top-up then stays spending).
+    private func allAliases() -> [String: AccountID] {
+        var all = counterpartAliases
+        let kakao = profiles.filter { $0.isActive && $0.institution == .kakaoPay }
+        if kakao.count == 1, case let .account(id) = kakao[0].binding, all["카카오페이"] == nil { all["카카오페이"] = id }
+        return all
     }
 
     private static func aliasKey(_ text: String) -> String { NotificationText.normalize(text) }

@@ -92,10 +92,10 @@ private let living = AccountID(rawValue: "living")
         let paired = try replay([try tossPayment(), draw])
         #expect(paired.ledger.entries.map(\.kind) == [.expense])
         #expect(open(paired).isEmpty)
-        // Without a Toss payment the same withdrawal could be a transfer to a friend: it still asks.
+        // Without a Toss payment it is the user's own transfer to that person (Toss sends no alert while its app is open): spending.
         let alone = try replay([draw])
-        #expect(alone.ledger.entries.isEmpty)
-        #expect(open(alone).count == 1)
+        #expect(alone.ledger.entries.map(\.kind) == [.expense])
+        #expect(open(alone).isEmpty)
     }
 
     @Test func withoutATossNameOrWithAnotherAmountNothingIsLinked() throws {
@@ -155,8 +155,11 @@ private let living = AccountID(rawValue: "living")
             #expect(snapshot.ledger.entries.map(\.kind) == [.expense, .expense])
             #expect(balance(snapshot) == -19_000)
             #expect(open(snapshot).isEmpty)
-            let shops = Set(snapshot.candidates.values.filter { $0.promotedEntryID != nil }.compactMap { $0.candidate.sourceDraft?.counterparty.merchantRaw })
-            #expect(shops == ["가상상점", "가상식당"])
+            // The shop is known when the Toss alert came before the `토스 <이름>` withdrawal; after it, the withdrawal was already
+            // recorded as a transfer to that person and the Toss alert only confirms it.
+            let drafts = snapshot.candidates.values.filter { $0.promotedEntryID != nil }.compactMap(\.candidate.sourceDraft)
+            #expect(drafts.filter { $0.counterparty.merchantRaw == "가상상점" }.count == 1)
+            #expect(drafts.filter { $0.counterparty.merchantRaw == "가상식당" || $0.counterparty.payeeRaw == "홍길동" }.count == 1)
         }
     }
 

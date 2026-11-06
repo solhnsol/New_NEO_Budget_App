@@ -66,10 +66,11 @@ private let received: Int64 = 1_790_936_040_000
         #expect(draft.counterparty.merchantRaw == "가상샐러드가게미아점")
     }
 
-    @Test func aWalletPaymentAloneStillAsksForTheAccount() throws {
+    /// Wallet names only the issuer; with exactly one registered card of it there is nothing to ask.
+    @Test func aWalletPaymentAloneIsRecordedOnTheOnlyRegisteredCardOfTheIssuer() throws {
         let snapshot = try replay([try walletTap("9,900", "가상샐러드가게미아점")])
-        #expect(snapshot.ledger.entries.isEmpty)
-        #expect(open(snapshot) == 1)
+        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+        #expect(open(snapshot) == 0)
     }
 
     @Test func aDifferentShopOrAFarTimeIsNotTheSamePayment() throws {

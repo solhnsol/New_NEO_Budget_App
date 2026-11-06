@@ -103,6 +103,7 @@ public struct NotificationCorrelator: Sendable {
             let partners = committed.filter { record in
                 record.draft.kind == .purchase && record.binding == binding && sameMoney(record, incoming)
                     && record.source != incoming.source
+                    && !Self.isWalletTap(record.draft) && !Self.isWalletTap(incoming.draft)
                     && !records.contains { $0.corroborates == record.candidateID && $0.source == incoming.source }
             }
             if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .sameInstrumentAcrossProviders) }
@@ -116,6 +117,25 @@ public struct NotificationCorrelator: Sendable {
                     && !claimed(record, by: .walletTap, in: records)
             }
             if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .walletTap) }
+        }
+        // The issuer's alert of a payment whose Wallet tap was already recorded on the card (the only card of that issuer).
+        if incoming.draft.kind == .purchase, let binding = incoming.binding, !Self.isWalletTap(incoming.draft) {
+            let partners = committed.filter { record in
+                Self.isWalletTap(record.draft) && record.binding == binding && Self.issuerSource(of: record.draft) == incoming.source
+                    && samePayment(record.draft, incoming.draft, tolerance: walletTapToleranceMilliseconds)
+                    && !claimed(record, by: .walletTap, in: records)
+            }
+            if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .walletTap) }
+        }
+        // A Toss payment arriving after its bank withdrawal was already recorded as the user's transfer to a person (`토스 <이름>`):
+        // the same money. The shop name is lost, the spending is counted once and nothing waits for review.
+        if Self.isUnpairedTossPayment(incoming.draft, incoming.notificationType, incoming.binding) {
+            let partners = committed.filter { record in
+                record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+                    && pairs(record.draft, incoming.draft, within: tossPairToleranceMilliseconds)
+                    && !claimed(record, by: .tossQuickPay, in: records)
+            }
+            if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .tossQuickPay) }
         }
         // A person's Toss transfer and the bank's own deposit alert of it: one deposit, whichever alert arrived first.
         if let partner = depositEchoPartner(of: incoming, in: committed, claimedAgainst: records) {

@@ -30,7 +30,7 @@ public struct DefaultCandidateDeduplicationValidator: CandidateDeduplicationVali
 
         let candidateStrong = strongEvidence(in: draft)
         if let duplicate = collisions.first(where: {
-            !candidateStrong.isDisjoint(with: strongEvidence(in: $0.sourceDraft))
+            !candidateStrong.isDisjoint(with: strongEvidence(in: $0.sourceDraft)) || sameBalance(draft, $0.sourceDraft)
         }) {
             return .duplicate(existingCandidateID: duplicate.id)
         }
@@ -56,10 +56,18 @@ public struct DefaultCandidateDeduplicationValidator: CandidateDeduplicationVali
               lhsDraft.direction == rhsDraft.direction,
               lhsDraft.amount == rhsDraft.amount,
               boundIdentities(in: lhs) == boundIdentities(in: rhs) else { return false }
+        // Same fare, different balance afterwards: two rides, not one alert twice.
+        if let l = lhsDraft.balanceAfter, let r = rhsDraft.balanceAfter, l != r { return false }
         let (difference, overflow) = lhsDraft.occurredAt.unixMilliseconds
             .subtractingReportingOverflow(rhsDraft.occurredAt.unixMilliseconds)
         guard !overflow, difference != Int64.min else { return false }
         return abs(difference) <= similarityWindowMilliseconds
+    }
+
+    /// Both alerts state the same balance after the payment: the same payment, however many times it was delivered.
+    private func sameBalance(_ lhs: TransactionCandidateDraft, _ rhs: TransactionCandidateDraft?) -> Bool {
+        guard let l = lhs.balanceAfter, let r = rhs?.balanceAfter else { return false }
+        return l == r
     }
 
     private func boundIdentities(in candidate: TransactionCandidate) -> Set<String> {
