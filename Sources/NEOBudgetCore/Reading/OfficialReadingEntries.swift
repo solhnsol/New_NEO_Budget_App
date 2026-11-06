@@ -9,7 +9,7 @@ public enum OfficialReadingEntries {
     public static let walletCardPaymentRuleID = "wallet-card-payment"
 
     private static func ignore(_ id: String, _ name: String, _ rank: Int, _ reason: NotTransactionReason, _ terms: [String]) -> ReadingEntry {
-        ReadingEntry(id: "official.\(id)", name: name, rank: rank, conditions: [.contains(.all, terms)], action: .ignore(reason))
+        ReadingEntry(id: "official.\(id)", name: name, rank: rank, conditions: [.contains(.all, terms)], action: .ignore(reason), group: "안내·광고 알림")
     }
 
     private static func read(
@@ -18,7 +18,7 @@ public enum OfficialReadingEntries {
     ) -> ReadingEntry {
         ReadingEntry(
             id: "official.\(id)", name: name, rank: rank, conditions: [.contains(.all, terms)],
-            action: .read(ReadingOutcome(ruleID: ruleID, kind: kind, direction: direction, memoPattern: memo))
+            action: .read(ReadingOutcome(ruleID: ruleID, kind: kind, direction: direction, memoPattern: memo)), group: "은행과 카드 알림"
         )
     }
 
@@ -31,12 +31,14 @@ public enum OfficialReadingEntries {
                 ruleID: "transit-fare", kind: .purchase, direction: .outflow,
                 instrument: .fixed(kind: .transitCard, nameFrom: .title, reportMissing: false),
                 nonPositiveAmount: .skip, evidenceFromText: false
-            ))
+            )),
+            group: "교통카드"
         ),
         // 요금이 없는 교통카드 알림(잔액만, 0원)은 거래가 아니다.
         ReadingEntry(
             id: "official.transit-balance-only", name: "교통카드 잔액 안내", rank: 11,
-            conditions: [.frameContained(.body, "balance is ₩{잔액}")], action: .ignore(.balanceInquiry)
+            conditions: [.frameContained(.body, "balance is ₩{잔액}")], action: .ignore(.balanceInquiry),
+            group: "교통카드"
         ),
         // 월렛 카드 결제: 제목 `현대카드`, 부제 `<상호>, <지역>`, 본문 `₩1,200`
         ReadingEntry(
@@ -45,7 +47,8 @@ public enum OfficialReadingEntries {
             action: .read(ReadingOutcome(
                 ruleID: walletCardPaymentRuleID, kind: .purchase, direction: .outflow,
                 instrument: .fixed(kind: .unknown, nameFrom: .title, reportMissing: true), evidenceFromText: false
-            ))
+            )),
+            group: "월렛 카드"
         ),
 
         ignore("promotion", "광고·혜택", 100, .promotion, ["광고", "혜택", "이벤트", "캐시백 안내"]),

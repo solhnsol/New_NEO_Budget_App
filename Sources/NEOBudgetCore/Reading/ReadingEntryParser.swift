@@ -58,6 +58,13 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
         _ outcome: ReadingOutcome, values: [ReadingSlot: String], notification: RawNotification, view: NotificationView,
         context: NotificationParsingContext
     ) throws -> NotificationParseOutcome? {
+        // 틀에 방향 칸이 있으면 읽은 글자(`출금`)가 종류를 정한다.
+        var kind = outcome.kind
+        var direction = outcome.direction
+        if let word = values[.direction], let mapped = outcome.directionWords?[word] {
+            kind = mapped
+            direction = ReadingEntryBuilder.direction(of: mapped)
+        }
         let amount: Int64
         if let text = values[.amount] {
             guard let parsed = Int64(text.replacingOccurrences(of: ",", with: "")), parsed > 0 else {
@@ -65,7 +72,7 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
             }
             amount = parsed
         } else {
-            switch parseAmount(in: view.lines, kind: outcome.kind) {
+            switch parseAmount(in: view.lines, kind: kind) {
             case let .value(value): amount = value
             case let .failure(failure): return .failed(failure)
             }
@@ -76,7 +83,12 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
         var instrumentUnknown = false
         switch outcome.instrument {
         case .byText:
-            instrument = instrumentHint(view.text)
+            var hint = instrumentHint(view.text)
+            // 사용자가 통장·카드 이름 칸을 골랐으면 그 이름이 이 거래의 계좌·카드 이름이다.
+            if let name = values[.accountName] ?? values[.cardName], !name.isEmpty {
+                hint = InstrumentHint(kind: hint.kind == .unknown ? (values[.cardName] != nil ? .creditCard : .bankAccount) : hint.kind, displayNameRaw: name)
+            }
+            instrument = hint
             instrumentUnknown = instrument.kind == .unknown
         case let .fixed(kind, nameFrom, reportMissing):
             let name = nameFrom.map { view.field($0) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -94,15 +106,15 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
 
         let counterparty: DraftCounterparty
         if let name = outcome.fixedName {
-            counterparty = outcome.direction == .inflow ? DraftCounterparty(payeeRaw: name) : DraftCounterparty(merchantRaw: name)
-        } else if values[.merchant] != nil || values[.payee] != nil || values[.memo] != nil {
+            counterparty = direction == .inflow ? DraftCounterparty(payeeRaw: name) : DraftCounterparty(merchantRaw: name)
+        } else if values[.merchant] != nil || values[.payee] != nil || values[.memo] != nil || values[.custom] != nil {
             counterparty = DraftCounterparty(
                 merchantRaw: values[.merchant].flatMap { $0.isEmpty ? nil : $0 },
                 payeeRaw: values[.payee].flatMap { $0.isEmpty ? nil : $0 },
-                memoRaw: values[.memo].flatMap { $0.isEmpty ? nil : $0 }
+                memoRaw: (values[.memo] ?? values[.custom]).flatMap { $0.isEmpty ? nil : $0 }
             )
         } else {
-            counterparty = parseCounterparty(view.lines, direction: outcome.direction, text: view.text, kind: outcome.kind,
+            counterparty = parseCounterparty(view.lines, direction: direction, text: view.text, kind: kind,
                                              title: view.title.isEmpty ? nil : view.title, memoPattern: outcome.memoPattern)
         }
         if counterparty.merchantRaw == nil, counterparty.payeeRaw == nil { issues.append(.merchantMissing) }
@@ -114,8 +126,8 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
             parserID: context.parserID,
             parserVersion: context.parserVersion,
             ruleID: outcome.ruleID,
-            kind: outcome.kind,
-            direction: outcome.direction,
+            kind: kind,
+            direction: direction,
             amount: try Money(minorUnits: amount, currency: "KRW"),
             balanceAfter: balance,
             occurredAt: timestamp,

@@ -16,11 +16,14 @@ public struct ReadingEntry: Codable, Equatable, Sendable, Identifiable {
     /// 모두 맞아야 이 항목이 알림과 맞는다.
     public var conditions: [ReadingCondition]
     public var action: ReadingAction
+    /// 목록에서 묶는 이름(기관·앱). 없으면 `내 항목`/`공식`으로 묶는다.
+    public var group: String?
 
     public init(
         id: String, name: String, origin: Origin = .official, enabled: Bool = true, rank: Int = 0,
-        applicationIdentifier: String? = nil, conditions: [ReadingCondition], action: ReadingAction
+        applicationIdentifier: String? = nil, conditions: [ReadingCondition], action: ReadingAction, group: String? = nil
     ) {
+        self.group = group
         self.id = id
         self.name = name
         self.origin = origin
@@ -89,11 +92,14 @@ public struct ReadingOutcome: Codable, Equatable, Sendable {
     public var memoPattern: String?
     /// 알림에서 읽지 않고 사용자가 직접 붙인 이름(가맹점 또는 받는 사람).
     public var fixedName: String?
+    /// 방향 칸에서 읽은 글자(`출금`)가 정하는 종류. 틀에 방향 칸이 있을 때만 쓴다.
+    public var directionWords: [String: DraftEventKind]?
 
     public init(
         ruleID: String, kind: DraftEventKind, direction: TransactionDirection,
         instrument: Instrument = .byText, nonPositiveAmount: NonPositiveAmount = .fail,
-        evidenceFromText: Bool = true, memoPattern: String? = nil, fixedName: String? = nil
+        evidenceFromText: Bool = true, memoPattern: String? = nil, fixedName: String? = nil,
+        directionWords: [String: DraftEventKind]? = nil
     ) {
         self.ruleID = ruleID
         self.kind = kind
@@ -103,6 +109,7 @@ public struct ReadingOutcome: Codable, Equatable, Sendable {
         self.evidenceFromText = evidenceFromText
         self.memoPattern = memoPattern
         self.fixedName = fixedName
+        self.directionWords = directionWords
     }
 }
 
@@ -111,12 +118,22 @@ public enum ReadingSlot: String, Codable, Sendable, CaseIterable {
     case amount = "금액", balance = "잔액", merchant = "가맹점", payee = "입금자명"
     case memo = "메모", accountName = "통장이름", accountNumber = "계좌번호"
     case institution = "기관", cardName = "카드이름", cardNumber = "카드번호", approvalNumber = "승인번호"
+    /// 입금·출금·승인·취소 같은 종류 글자. 읽은 글자가 항목의 종류를 정한다.
+    case direction = "방향"
+    /// 날짜·시각 글자(`11/05 18:22`).
+    case time = "시각"
+    /// 사용자가 이름을 직접 붙인 값.
+    case custom = "직접이름"
+    /// 읽지는 않지만 매번 바뀌는 자리.
+    case free = "무시"
 
     var pattern: String {
         switch self {
         case .amount, .balance: return #"[0-9]+(?:,[0-9]{3})*"#
         case .accountNumber, .cardNumber: return #"[0-9*\-]+"#
         case .approvalNumber: return #"[0-9A-Za-z]+"#
+        case .direction: return "(?:" + ReadingEntryBuilder.directionWords.keys.sorted().joined(separator: "|") + ")"
+        case .time: return #"[0-9][0-9/:.\- ]*[0-9]"#
         default: return #".+?"#
         }
     }
