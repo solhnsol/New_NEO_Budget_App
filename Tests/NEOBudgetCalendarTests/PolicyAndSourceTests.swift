@@ -212,3 +212,12 @@ private func ledgerSnapshot(base: Int64 = 0) throws -> (LedgerSnapshot, LedgerEn
     let dec1 = zone.instant(of: try LocalDate(year: 2026, month: 12, day: 1), minuteOfDay: 120)
     #expect(zone.ledgerDate(of: dec1) == (try LocalDate(year: 2026, month: 11, day: 30)))
 }
+
+@Test func weekStripCountsEarlyMorningSpendOnTheLedgerDay() throws {
+    var zone = try DisplayTimeZone(identifier: "Asia/Seoul")
+    zone.ledgerDayStartMinutes = 240
+    let nov4 = try LocalDate(year: 2026, month: 11, day: 4), nov5 = nov4.adding(days: 1)
+    let bounds = zone.ledgerDayBounds(nov4)
+    #expect(bounds.start == zone.instant(of: nov4, minuteOfDay: 240))
+    #expect(bounds.end == zone.instant(of: nov5, minuteOfDay: 240))
+}

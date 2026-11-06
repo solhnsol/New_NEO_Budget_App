@@ -146,7 +146,8 @@ public actor CalendarCommandService {
             timeZone: timeZone,
             events: events,
             life: try repository.snapshot().state,
-            transactions: transactions.transactions(occurringFrom: from, to: to),
+            // The ledger day starts after midnight, so the window slides by the same amount.
+            transactions: transactions.transactions(occurringFrom: timeZone.ledgerDayBounds(first).start, to: timeZone.ledgerDayBounds(first.adding(days: 6)).end),
             reductions: spendReductions
         )
     }

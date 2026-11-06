@@ -51,6 +51,13 @@ public struct DisplayTimeZone: Codable, Hashable, Sendable {
         localDate(of: instant - Int64(ledgerDayStartMinutes) * 60_000)
     }
 
+    /// Half-open bounds of the ledger day `day`: from its start time to the same time next day.
+    public func ledgerDayBounds(_ day: LocalDate) -> (start: Int64, end: Int64) {
+        let shift = Int64(ledgerDayStartMinutes) * 60_000
+        let bounds = dayBounds(day)
+        return (bounds.start + shift, bounds.end + shift)
+    }
+
     private func noon(of day: LocalDate) -> Date {
         calendar.date(from: DateComponents(year: day.year, month: day.month, day: day.day, hour: 12))
             ?? Date(timeIntervalSince1970: Double(day.daysSinceUnixEpoch) * 86_400 + 43_200)
