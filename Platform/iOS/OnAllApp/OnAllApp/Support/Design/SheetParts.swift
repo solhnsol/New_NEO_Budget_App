@@ -470,7 +470,7 @@ struct PanelSheet<Small: View, More: View>: View {
                 )
                 .contentShape(Rectangle())
                 .highPriorityGesture(
-                    DragGesture(minimumDistance: 10, coordinateSpace: .global)
+                    DragGesture(minimumDistance: 4, coordinateSpace: .global)
                         .onChanged { drag in
                             let start = dragStart ?? progress
                             dragStart = start
@@ -522,9 +522,11 @@ struct PanelSheet<Small: View, More: View>: View {
 
     /// Goes down (the panel and the dim), then tells the owner.
     private func dismiss() {
-        withAnimation(spring) { shown = false; dragY = 0 }
+        // An ease-out, not the spring: a finger already moving down hands over its speed, and a spring would start from standstill and stall.
+        // The panel is gone (offscreen and dim cleared) a moment before the owner removes it, so it never pops out mid-slide.
+        withAnimation(.easeOut(duration: 0.24)) { shown = false; dragY = 0 }
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(260))
+            try? await Task.sleep(for: .milliseconds(300))
             close()
         }
     }
