@@ -309,12 +309,12 @@ final class AppModel {
 
     func shift(days: Int) async { await select(selectedDay.adding(days: days)) }
 
-    func goToday() async { await select(dayZone.localDate(of: Self.nowMilliseconds())) }
+    func goToday() async { await select(today) }
 
-    /// Today's date in the display zone.
-    var today: LocalDate { dayZone.localDate(of: Self.nowMilliseconds()) }
+    /// Today's ledger day in the display zone: between midnight and the day start it is still yesterday's date.
+    var today: LocalDate { dayZone.ledgerDate(of: Self.nowMilliseconds()) }
 
-    var isToday: Bool { selectedDay == dayZone.localDate(of: Self.nowMilliseconds()) }
+    var isToday: Bool { selectedDay == today }
 
     // MARK: Loading
 

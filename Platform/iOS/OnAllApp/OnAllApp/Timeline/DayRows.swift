@@ -51,7 +51,7 @@ struct DaySection: View {
             if let timeline {
                 RailTimeline(
                     timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction,
-                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }, onOpenIncome: onOpenIncome, model: model
+                    onCreate: { minute in model.newEventSeed = minute >= 1440 ? (day.adding(days: 1), minute - 1440) : (day, minute); model.creatingEvent = true }, onOpenIncome: onOpenIncome, model: model
                 )
                     .padding(.trailing, Theme.Space.l)
             } else {
@@ -395,7 +395,7 @@ private struct RailTimeline: View {
                 // A hold that starts on a row or an event belongs to that row or event (selecting, opening), not to the empty time under it.
                 guard !plan.touchBands.contains(where: { $0.contains(location) }) else { return }
                 let minute = plan.axis.minute(atY: Double(location.y))
-                let snapped = min(timeline.totalMinutes - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
+                let snapped = min(timeline.railEndMinute - Theme.Motion.dragSnapMinutes, (minute + Theme.Motion.dragSnapMinutes / 2) / Theme.Motion.dragSnapMinutes * Theme.Motion.dragSnapMinutes)
                 onCreate(max(0, snapped))
             })
         .padding(.vertical, RailMetrics.vertical)
