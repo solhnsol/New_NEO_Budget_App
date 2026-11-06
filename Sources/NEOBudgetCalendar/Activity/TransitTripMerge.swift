@@ -63,3 +63,34 @@ public enum TransitTripMerge {
         taps.filter { $0 > start && $0 <= end }.max() ?? start
     }
 }
+
+/// How a trip reads in a list: the group is called by its vehicle (지하철, 버스), the first charge is the 승차, every later one and every no-charge
+/// tap inside the trip is a 하차 (a ₩0 하차 when nothing was charged). Display only: no-charge taps are not ledger entries.
+public struct TransitTripLine: Equatable, Sendable {
+    public enum Kind: String, Sendable { case boarding = "승차", alighting = "하차" }
+    public let kind: Kind
+    public let atUnixMilliseconds: Int64
+    public let minorUnits: Int64
+    /// The charge's ledger entry; `nil` for a no-charge tap.
+    public let entryID: LedgerEntryID?
+
+    public static func lines(of trip: [TransactionMarker], noChargeTaps: [Int64]) -> [TransitTripLine] {
+        guard let first = trip.first, let last = trip.last else { return [] }
+        let charges = trip.enumerated().map { TransitTripLine(kind: $0.offset == 0 ? .boarding : .alighting, atUnixMilliseconds: $0.element.occurredAtUnixMilliseconds, minorUnits: $0.element.amount.minorUnits, entryID: $0.element.id) }
+        // A tap belongs to the trip when it lies between the boarding and the end of the trip's last charge's gap; the same instant as a charge is that charge.
+        let chargeTimes = Set(trip.map(\.occurredAtUnixMilliseconds))
+        let taps = noChargeTaps.filter { $0 > first.occurredAtUnixMilliseconds && $0 <= last.occurredAtUnixMilliseconds && !chargeTimes.contains($0) }
+            .map { TransitTripLine(kind: .alighting, atUnixMilliseconds: $0, minorUnits: 0, entryID: nil) }
+        return (charges + taps).sorted { $0.atUnixMilliseconds < $1.atUnixMilliseconds }
+    }
+}
+
+public enum TransitMode {
+    /// 지하철 for Metro/subway, 버스 for Bus, otherwise 교통 (the card's own word for the vehicle is in the charge's name).
+    public static func groupName(for titles: [String?]) -> String {
+        let text = titles.compactMap { $0 }.joined(separator: " ").lowercased()
+        if text.contains("metro") || text.contains("subway") || text.contains("지하철") { return "지하철" }
+        if text.contains("bus") || text.contains("버스") { return "버스" }
+        return "교통"
+    }
+}
