@@ -18,8 +18,8 @@ public struct RailAxis: Equatable, Sendable {
         public var pastEventStart = 28.0
         public var cardEnd = 56.0
         public var other = 14.0
-        /// How far apart rows that share a minute are drawn (a row and the gap to the next): the axis makes room for the stack.
-        public var stackStep = 38.0
+        /// Row pitch for transactions sharing one minute: that minute is stretched on the axis so each gets its own place inside it.
+        public var sameMinutePitch = 28.0
         /// Room under a past event's start for its name (it stands beside the rail there, 22 high) plus half a row, since the next row is centred on its key.
         public var nameRoom = 40.0
         /// A past event's name is this high; a row at the very minute the event began is drawn under it (`nameHeight` below its start).
@@ -56,11 +56,11 @@ public struct RailAxis: Equatable, Sendable {
         // Rows at the very minute a past event began stand under its name: the minute that follows is that far away.
         for event in events where !event.isCard {
             let count = transactions.filter { $0 == event.start }.count
-            if count > 0 { add(event.start + 1, needs.nameHeight + Double(count) * needs.stackStep) }
+            if count > 0 { add(event.start + 1, needs.nameHeight + Double(count - 1) * needs.sameMinutePitch + needs.transaction) }
         }
-        // Rows that share a minute are stacked; the axis grows by the stack (the design: the time axis is stretched, not the rows moved).
-        for (minute, count) in Dictionary(grouping: transactions, by: { $0 }).mapValues(\.count) where count > 1 {
-            add(minute + 1, Double(count - 1) * needs.stackStep)
+        // k transactions in one minute stretch that minute (not the dots): the next key sits (k-1) pitches further on.
+        for (minute, count) in Dictionary(transactions.map { ($0, 1) }, uniquingKeysWith: +) where count > 1 {
+            add(minute + 1, Double(count - 1) * needs.sameMinutePitch + needs.transaction)
         }
         if let now { add(now, needs.other) }
         func layout() -> (keys: [Int], ys: [Double]) {

@@ -160,12 +160,12 @@ struct RailPlan {
     let past: [EventBlock]
     let cards: [EventBlock]
     let rows: [Row]
-    /// Each row's y: its minute's place on the axis, or a row below the one above when two share a minute, so none sits on another.
+    /// Each row's y: its minute's place on the axis, plus one pitch per earlier row in the same minute (the axis stretched that minute for them).
     let rowYs: [CGFloat]
     let bundles: [Bundle]
     /// For each row, the index of its bundle in `bundles`.
     let rowBundle: [Int?]
-    /// The rail's height, grown if stacked rows ran past the axis.
+    /// The rail's height.
     let height: CGFloat
     let axis: RailAxis
     static let rowHeight: CGFloat = 36
@@ -281,15 +281,15 @@ struct RailPlan {
         if let now { covered.append(now) }
         let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
         let axis = RailAxis(events: events, transactions: order.map { layoutMinute[$0] }, now: now, firstMinute: range.first, lastMinute: range.last)
+        // A dot always sits on its real minute; rows that share a minute step down inside the room the axis stretched for them. A row at the minute
+        // a past event began is drawn under that event's name, not over it.
         var ys = [CGFloat](repeating: 0, count: rows.count)
-        // Rows sharing a minute stack downward; the axis already made room for that (`RailAxis.Needs.stackStep`).
-        var lastY = -CGFloat.infinity
-        // A row at the minute a past event began is drawn under that event's name, not over it.
         let nameStarts = Set(past.map(\.displayStartMinute))
-        for index in order {
-            let under = nameStarts.contains(layoutMinute[index]) ? CGFloat(RailAxis.Needs().nameHeight) : 0
-            ys[index] = max(CGFloat(axis.y(layoutMinute[index])) + under, lastY + Self.rowHeight + 2)
-            lastY = ys[index]
+        for (position, index) in order.enumerated() {
+            let minute = layoutMinute[index]
+            let sameBefore = order[..<position].reversed().prefix { layoutMinute[$0] == minute }.count
+            let under = nameStarts.contains(minute) ? CGFloat(RailAxis.Needs().nameHeight) : 0
+            ys[index] = CGFloat(axis.y(minute)) + under + CGFloat(sameBefore) * CGFloat(RailAxis.Needs().sameMinutePitch)
         }
         for bundle in bundles where !isOpen(bundle.key) { for index in bundle.indices where index != bundle.first { ys[index] = ys[bundle.first] } }
         self.past = past
@@ -301,7 +301,7 @@ struct RailPlan {
         self.axis = axis
         self.nowMinute = now
         self.openReach = reach
-        self.height = max(CGFloat(axis.height), (lastY.isFinite ? lastY : 0) + Self.rowHeight)
+        self.height = max(CGFloat(axis.height), (order.map { ys[$0] }.max() ?? 0) + Self.rowHeight)
     }
 
     /// The row's amount as the design writes it: the number alone, with a minus for money spent and a plus for money coming in.
