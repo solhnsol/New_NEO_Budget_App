@@ -21,9 +21,12 @@ public enum TransitTripMerge {
     /// - Parameters:
     ///   - accountOf: the account or card the entry was charged to; `nil` (unknown) never merges.
     ///   - isTransit: whether the spend is a transit charge.
+    ///   - noChargeTaps: times of `Card Read … no charge` notices. They come at an alighting or a transfer, never at a boarding, so the trip is
+    ///     still going: a tap keeps the trip open for another `gap`, and the surcharge at the very end (a long transfer ride) still joins it.
     // shortcut: a cheaper second boarding right after a dearer one (3,000 bus, then 1,550 subway) still merges, upgrade with learned base fares.
     public static func trips(
-        in markers: [TransactionMarker], accountOf: (LedgerEntryID) -> String?, isTransit: (TransactionMarker) -> Bool
+        in markers: [TransactionMarker], accountOf: (LedgerEntryID) -> String?, isTransit: (TransactionMarker) -> Bool,
+        noChargeTaps: [Int64] = []
     ) -> [TransitTrip] {
         var byAccount: [String: [TransactionMarker]] = [:]
         for marker in markers where marker.flow == .spend {
@@ -41,7 +44,7 @@ public enum TransitTripMerge {
                 guard isTransit(marker) else { close(); continue }
                 if let first = open.first, let last = open.last,
                    marker.amount.currency == first.amount.currency,
-                   marker.occurredAtUnixMilliseconds - last.occurredAtUnixMilliseconds <= gap,
+                   marker.occurredAtUnixMilliseconds - latestActivity(after: last.occurredAtUnixMilliseconds, before: marker.occurredAtUnixMilliseconds, taps: noChargeTaps) <= gap,
                    marker.occurredAtUnixMilliseconds - first.occurredAtUnixMilliseconds <= span,
                    marker.amount.minorUnits < first.amount.minorUnits {
                     open.append(marker)
@@ -53,5 +56,10 @@ public enum TransitTripMerge {
             close()
         }
         return trips
+    }
+
+    /// The last moment of the trip before `end`: its last charge, or a later no-charge tap.
+    private static func latestActivity(after start: Int64, before end: Int64, taps: [Int64]) -> Int64 {
+        taps.filter { $0 > start && $0 <= end }.max() ?? start
     }
 }
