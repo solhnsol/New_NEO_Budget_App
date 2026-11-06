@@ -15,6 +15,8 @@ public enum IntakeStatus: Equatable, Sendable {
     case unreadable(NotificationParseFailure)
     /// Processing threw. The notification is kept and is tried again on the next rebuild.
     case failed
+    /// The user chose to skip this kind of notification.
+    case ignoredByUser
 }
 
 /// "Messages like this one are about which account?" for a notification that never names its account.
@@ -356,6 +358,21 @@ public struct IntakeLedger {
         try rebuild(setup)
     }
 
+    /// Skips every notification of the same kind as this one, the ones already received included.
+    public mutating func ignoreType(of notificationID: String) throws {
+        guard let notification = notification(withID: notificationID) else { return }
+        var setup = self.setup
+        setup.ignoreType(of: notification)
+        try rebuild(setup)
+    }
+
+    /// Undoes `ignoreType`: those notifications are read again.
+    public mutating func stopIgnoring(_ key: String) throws {
+        var setup = self.setup
+        setup.stopIgnoring(key)
+        try rebuild(setup)
+    }
+
     public mutating func dismiss(_ id: AccountCandidateID) throws {
         var setup = self.setup
         try setup.dismiss(id)
@@ -408,6 +425,7 @@ public struct IntakeLedger {
         switch outcome {
         case let .notTransaction(reason): return .notTransaction(reason)
         case let .unreadable(failure): return .unreadable(failure)
+        case .ignoredByUser: return .ignoredByUser
         case let .processed(candidateID):
             guard let stored = repository.storedCandidate(candidateID) else { return .failed }
             if let entry = stored.promotedEntryID { return .recorded(entry) }
@@ -459,6 +477,7 @@ public struct IntakeLedger {
     }
 
     private mutating func ingest(_ notification: RawNotification) {
+        if setup.ignores(notification) { outcomes[notification.id] = .ignoredByUser; return }
         if let outcome = try? intake.ingest(notification, setup: &setup, repository: &repository) {
             outcomes[notification.id] = switch outcome {
             case let .notTransaction(reason): .notTransaction(reason)
@@ -482,6 +501,7 @@ public struct IntakeLedgerSnapshot: Codable, Equatable, Sendable {
         case notTransaction(NotTransactionReason)
         case unreadable(NotificationParseFailure)
         case processed(TransactionCandidateID)
+        case ignoredByUser
     }
 
     public let format: Int

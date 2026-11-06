@@ -932,6 +932,20 @@ final class AppModel {
     /// Messages like the question's belong to `binding`, or to a new account. `false` if it could not be applied (for
     /// one, when another account at the same institution could have sent the same message).
     @discardableResult
+    func ignoreType(of notificationID: String) async -> Bool {
+        guard (try? await ledger.ignoreType(of: notificationID)) != nil else { return false }
+        await ledgerDidChange()
+        return true
+    }
+
+    func stopIgnoring(_ key: String) async -> Bool {
+        guard (try? await ledger.stopIgnoring(key)) != nil else { return false }
+        await ledgerDidChange()
+        return true
+    }
+
+    func ignoredTypes() async -> [IgnoredType] { await ledger.ignoredTypes() }
+
     func answer(_ question: RuleQuestion, binding: ResolvedLedgerBinding?, newAccount: (name: String, kind: NewTargetKind)?) async -> Bool {
         do {
             try await ledger.answer(question, binding: binding, newAccount: newAccount)

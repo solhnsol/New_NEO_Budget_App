@@ -13,13 +13,14 @@ enum IntakeText {
         case .coveredByImport: "가져온 기록에 이미 있음"
         case .unreadable: "금액을 읽지 못함"
         case .failed: "처리하지 못함"
+        case .ignoredByUser: "무시하는 알림"
         }
     }
 
     /// Nothing for the user to do.
     static func isSettled(_ status: IntakeStatus) -> Bool {
         switch status {
-        case .recorded, .sameActAs, .notTransaction, .coveredByImport: true
+        case .recorded, .sameActAs, .notTransaction, .coveredByImport, .ignoredByUser: true
         case .waiting, .unreadable, .failed: false
         }
     }
