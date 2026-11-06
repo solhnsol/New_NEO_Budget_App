@@ -326,6 +326,9 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
     /// `쿠팡에서 76,570원 결제`: with no line of its own, the shop is what stands before the amount.
     private static let shopBeforeAmount = try! NSRegularExpression(pattern: #"^(?:\[[^\]]*\]\s*)?(.+?)\s*(?:에서|에)?\s*[0-9][0-9,]*\s*원"#)
 
+    /// Woori's `[입금] 차유진        67,035원 1002-967-767***계좌 잔액 …`: the name sits between the tag and the amount.
+    private static let nameAfterTag = try! NSRegularExpression(pattern: #"\[(?:입금|이체입금)\]\s*(.+?)\s+[0-9][0-9,]*\s*원"#)
+
     private func parseCounterparty(
         _ lines: [String], direction: TransactionDirection, text: String, kind: DraftEventKind, title: String? = nil
     ) -> DraftCounterparty {
@@ -342,7 +345,10 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             candidate = lines.lazy.compactMap { Self.captures(Self.shopBeforeAmount, $0)?.first?.trimmingCharacters(in: .whitespaces) }
                 .first { !$0.isEmpty && $0.rangeOfCharacter(from: .letters) != nil && !markerLines.contains($0) }
         }
-        if direction == .inflow, kind != .refund, kind != .cancellation,
+        if direction == .inflow, let name = lines.lazy.compactMap({ Self.captures(Self.nameAfterTag, $0)?.first?.trimmingCharacters(in: .whitespaces) }).first,
+           !name.isEmpty, name.rangeOfCharacter(from: .letters) != nil {
+            candidate = name
+        } else if direction == .inflow, kind != .refund, kind != .cancellation,
            let line = lines.first(where: { $0.contains("원") && $0.contains("*") }),
            let name = Self.captures(Self.afterMaskedAccount, line)?.first.map({ $0.trimmingCharacters(in: .whitespaces) }),
            !name.isEmpty, name.rangeOfCharacter(from: .letters) != nil, !name.contains("원") {

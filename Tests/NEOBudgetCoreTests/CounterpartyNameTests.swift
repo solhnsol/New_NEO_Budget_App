@@ -31,3 +31,8 @@ private func draft(title: String?, body: String) throws -> TransactionCandidateD
     let nameless = try draft(title: "결제 완료", body: "76,570원 결제")
     #expect(nameless.counterparty.merchantRaw == nil)
 }
+
+@Test func wooriTaggedDepositNamesTheSender() throws {
+    let d = try draft(title: "우리WON뱅킹 입출금알림", body: "[입금] 차유진        67,035원 1002-967-767***계좌 잔액 1,454,422원 11/04 09:15:00")
+    #expect(d.counterparty.payeeRaw == "차유진")
+}
