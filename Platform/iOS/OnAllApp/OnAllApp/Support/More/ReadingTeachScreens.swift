@@ -58,6 +58,8 @@ final class TeachDraft {
         let text = NotificationText.joined(notification)
         self.text = text
         builder = ReadingEntryBuilder(text: text)
+        // 앱이 확실히 아는 것(종류 글자, 금액, 날짜·시각)은 처음부터 칠해 둔다. 누르면 칠이 풀린다.
+        assignments = builder.suggestions()
     }
 
     var appName: String { notification.source.displayName ?? "알 수 없는 앱" }
@@ -93,7 +95,7 @@ final class TeachDraft {
     func setCuts(_ next: Set<Int>) {
         cuts = next
         builder = ReadingEntryBuilder(text: text, cuts: next)
-        assignments = [:]
+        assignments = builder.suggestions()
         selected = []
     }
 
@@ -454,7 +456,10 @@ func commonExpressionText(_ frame: String) -> Text {
 
 /// 이 항목이 지난 알림에서 읽는 결과: 읽혀요 N건, 읽지 못해요 N건(같은 앱에서 같은 고정 글자가 있는데 맞지 않는 알림).
 struct ReadingPastCounts {
+    struct Sample { let time: Int64; let signedAmount: Int64; let sub: String }
     var matched = 0
+    /// 읽힌 지난 알림 중 최근 두 건: 읽은 결과를 거래처럼 보여 준다.
+    var samples: [Sample] = []
     var missed: [InboxItem] = []
 }
 
@@ -471,12 +476,26 @@ func countPast(model: AppModel, entry: ReadingEntry, ignoring currentID: String?
     }
     var counts = ReadingPastCounts()
     for item in items {
-        if parser.entryID(for: item.notification) == entry.id { counts.matched += 1; continue }
+        if parser.entryID(for: item.notification) == entry.id {
+            counts.matched += 1
+            if counts.samples.count < 2, let sample = sample(of: item.notification, parser: parser, zone: model.dayZone.identifier) { counts.samples.append(sample) }
+            continue
+        }
         guard item.notification.source.applicationIdentifier == entry.applicationIdentifier, !literals.isEmpty else { continue }
         let text = NotificationText.joined(item.notification)
         if literals.allSatisfy({ text.contains($0) }) { counts.missed.append(item) }
     }
     return counts
+}
+
+@MainActor
+private func sample(of notification: RawNotification, parser: ReadingEntryParser, zone: String) -> ReadingPastCounts.Sample? {
+    guard let context = try? NotificationParsingContext(timeZoneIdentifier: zone, referenceTimeUnixMilliseconds: 0, parserID: "probe", parserVersion: "1"),
+          case let .candidate(draft)? = try? parser.parse(notification, context: context) else { return nil }
+    let who = draft.counterparty.merchantRaw ?? draft.counterparty.payeeRaw ?? draft.instrument.displayNameRaw
+    let sub = [draft.kind.label, who].compactMap { $0 }.joined(separator: " · ")
+    let amount = draft.amount.minorUnits
+    return .init(time: draft.occurredAt.unixMilliseconds, signedAmount: draft.direction == .inflow ? amount : -amount, sub: sub)
 }
 
 private struct ReadingConfirmScreen: View {
@@ -486,6 +505,7 @@ private struct ReadingConfirmScreen: View {
     @State private var showMissed = false
     @State private var entryID = UUID().uuidString
 
+    private var zone: String { draft.model.dayZone.identifier }
     private var entry: ReadingEntry? { try? draft.entry(id: entryID) }
 
     var body: some View {
@@ -509,8 +529,16 @@ private struct ReadingConfirmScreen: View {
                 }
             }
             SSection(title: "읽은 값") {
-                if let kind = draft.effectiveKind { SRow(dot: ReadingSlot.direction.tint, title: "종류", value: kind.label) }
-                ForEach(draft.readValues, id: \.slot) { value in SRow(dot: value.slot.tint, title: value.slot.title, value: value.text) }
+                if counts.samples.isEmpty {
+                    if let kind = draft.effectiveKind { SRow(title: "종류", value: kind.label) }
+                    ForEach(draft.readValues, id: \.slot) { value in SRow(title: value.slot.title, value: value.text) }
+                }
+                ForEach(Array(counts.samples.enumerated()), id: \.offset) { _, sample in
+                    SRow(
+                        title: "\(Formatting.shortDate(sample.time, zoneIdentifier: zone)) \(Formatting.time(sample.time, zoneIdentifier: zone))",
+                        sub: sample.sub, value: Formatting.money(sample.signedAmount, currency: "KRW")
+                    )
+                }
             }
             if let message = draft.message {
                 Text(message).font(Theme.Typo.label).foregroundStyle(Theme.danger).padding(.horizontal, 28).padding(.top, 12)
