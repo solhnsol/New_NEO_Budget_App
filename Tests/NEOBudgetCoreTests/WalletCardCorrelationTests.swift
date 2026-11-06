@@ -66,11 +66,10 @@ private let received: Int64 = 1_790_936_040_000
         #expect(draft.counterparty.merchantRaw == "가상샐러드가게미아점")
     }
 
-    /// Wallet names only the issuer; with exactly one registered card of it there is nothing to ask.
-    @Test func aWalletPaymentAloneIsRecordedOnTheOnlyRegisteredCardOfTheIssuer() throws {
+    @Test func aWalletPaymentAloneStillAsksForTheAccount() throws {
         let snapshot = try replay([try walletTap("9,900", "가상샐러드가게미아점")])
-        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
-        #expect(open(snapshot) == 0)
+        #expect(snapshot.ledger.entries.isEmpty)
+        #expect(open(snapshot) == 1)
     }
 
     @Test func aDifferentShopOrAFarTimeIsNotTheSamePayment() throws {
@@ -84,14 +83,15 @@ private let received: Int64 = 1_790_936_040_000
         }
     }
 
-    @Test func aSameAmountRepeatInTheSameAppStillWaitsForReviewAndOnlyOneWalletAlertIsAbsorbed() throws {
+    /// Each Wallet tap is evidence of its own alert, also of the repeat that waits for review (so only that alert is left to confirm).
+    @Test func aSameAmountRepeatInTheSameAppStillWaitsForReviewAndEachWalletAlertIsAbsorbedByItsOwnPayment() throws {
         let first = try appAlert("4,500", "가상카페", time: "7:13:30 PM")
         let firstTap = try walletTap("4,500", "가상카페", time: "7:13:41 PM")
         let second = try appAlert("4,500", "가상카페", time: "7:15:30 PM")
         let secondTap = try walletTap("4,500", "가상카페", time: "7:15:41 PM")
         let snapshot = try replay([first, firstTap, second, secondTap])
         #expect(snapshot.ledger.entries.count == 1)
-        #expect(open(snapshot) == 2)
-        #expect(snapshot.candidates.values.filter { $0.corroborates?.rule == .walletTap }.count == 1)
+        #expect(open(snapshot) == 1)
+        #expect(snapshot.candidates.values.filter { $0.corroborates?.rule == .walletTap }.count == 2)
     }
 }

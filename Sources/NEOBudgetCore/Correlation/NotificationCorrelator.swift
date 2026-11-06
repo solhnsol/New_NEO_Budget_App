@@ -89,6 +89,7 @@ public struct NotificationCorrelator: Sendable {
     // MARK: The incoming notification is evidence of an act already recorded
 
     private func corroboration(of incoming: CorrelationObservation, in records: [CorrelationRecord]) -> CorrelationMatch? {
+        let open = records
         let committed = records.filter { $0.entryID != nil && $0.corroborates == nil }
         // A bank withdrawal of a check card payment already recorded from the card's approval.
         if incoming.draft.kind == .withdrawal, case let .account(account)? = incoming.binding {
@@ -103,25 +104,16 @@ public struct NotificationCorrelator: Sendable {
             let partners = committed.filter { record in
                 record.draft.kind == .purchase && record.binding == binding && sameMoney(record, incoming)
                     && record.source != incoming.source
-                    && !Self.isWalletTap(record.draft) && !Self.isWalletTap(incoming.draft)
                     && !records.contains { $0.corroborates == record.candidateID && $0.source == incoming.source }
             }
             if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .sameInstrumentAcrossProviders) }
         }
         // A Wallet card payment (no account of its own) of a payment the card issuer's app already reported.
+        // The issuer's alert may still be waiting for review (its card not registered yet): the tap is evidence of it all the same.
         if Self.isWalletTap(incoming.draft), let issuer = Self.issuerSource(of: incoming.draft) {
-            let partners = committed.filter { record in
+            let partners = open.filter { $0.corroborates == nil }.filter { record in
                 record.draft.kind == .purchase && !Self.isWalletTap(record.draft)
                     && (record.source == issuer || records.contains { $0.corroborates == record.candidateID && $0.source == issuer })
-                    && samePayment(record.draft, incoming.draft, tolerance: walletTapToleranceMilliseconds)
-                    && !claimed(record, by: .walletTap, in: records)
-            }
-            if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .walletTap) }
-        }
-        // The issuer's alert of a payment whose Wallet tap was already recorded on the card (the only card of that issuer).
-        if incoming.draft.kind == .purchase, let binding = incoming.binding, !Self.isWalletTap(incoming.draft) {
-            let partners = committed.filter { record in
-                Self.isWalletTap(record.draft) && record.binding == binding && Self.issuerSource(of: record.draft) == incoming.source
                     && samePayment(record.draft, incoming.draft, tolerance: walletTapToleranceMilliseconds)
                     && !claimed(record, by: .walletTap, in: records)
             }

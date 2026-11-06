@@ -63,20 +63,12 @@ private let card = AccountID(rawValue: "check-card")
         try note("Wallet", title: "현대카드", subtitle: "\(shop), 서울특별시", body: "₩\(amount)", time: time)
     }
 
-    @Test func aWalletTapOfTheOnlyRegisteredCardIsRecordedOnThatCard() throws {
-        let snapshot = try replay([try walletTap("2,800", "가상카페")], hyundaiCard: true)
-        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
-        #expect(balance(snapshot, card) == -2_800)
-    }
-
-    @Test func theCardAlertAfterTheRecordedTapIsEvidenceOfIt() throws {
-        let tap = try walletTap("2,800", "가상카페")
-        let app = try appAlert("2,800", "가상카페")
-        for order in [[tap, app], [app, tap]] {
-            let snapshot = try replay(order, hyundaiCard: true)
-            #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
-            #expect(open(snapshot) == 0)
-        }
+    @Test func aWalletTapAloneStaysUnknownAndAnUnregisteredCardAlertAbsorbsIt() throws {
+        #expect(try open(replay([try walletTap("2,800", "가상카페")], hyundaiCard: true)) == 1)
+        // The card is not registered: its alert waits for review, and the tap is evidence of it, not a second item.
+        let snapshot = try replay([try appAlert("2,800", "가상카페"), try walletTap("2,800", "가상카페")])
+        #expect(snapshot.ledger.entries.isEmpty)
+        #expect(open(snapshot) == 1)
     }
 
     // MARK: 2. Kakao Pay top-up
