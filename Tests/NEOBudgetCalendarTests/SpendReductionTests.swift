@@ -33,3 +33,14 @@ import NEOBudgetCore
     )
     #expect(week.first { $0.day == today }?.netSpend.first?.minorUnits == 36_000)
 }
+
+@Test func noChargeTapsKeepATransferTripOpen() {
+    let board = marker("board", at: at(today, 8, 0), amount: 1_550, title: "지하철")
+    let end = marker("end", at: at(today, 10, 0), amount: 100, title: "버스")
+    let all = [board, end]
+    func trips(_ taps: [Int64]) -> [TransitTrip] {
+        TransitTripMerge.trips(in: all, accountOf: { _ in "tmoney" }, isTransit: { _ in true }, noChargeTaps: taps)
+    }
+    #expect(trips([]).isEmpty)                                   // 2h apart: more than the 90 min gap
+    #expect(trips([at(today, 9, 0), at(today, 9, 40)]).map(\.legs) == [[txID("board"), txID("end")]])
+}

@@ -114,6 +114,15 @@ actor AppLedger {
         inbox().last { if case let .recorded(id) = $0.status { id == entry } else { false } }?.notification
     }
 
+    /// When the transit card said "no charge for this transaction" (an alighting or a transfer); `TransitTripMerge` keeps the trip open across them.
+    func noChargeTapTimes() -> [Int64] {
+        inbox().compactMap { item in
+            let text = NotificationText.joined(item.notification)
+            guard text.contains("no charge for this transaction") else { return nil }
+            return item.notification.notificationAtUnixMilliseconds ?? item.notification.capturedAtUnixMilliseconds
+        }
+    }
+
     /// Received notifications, newest first, with where each ended up. Empty outside the real ledger.
     func inbox() -> [InboxItem] {
         guard case let .live(ledger, _) = backing else { return [] }
