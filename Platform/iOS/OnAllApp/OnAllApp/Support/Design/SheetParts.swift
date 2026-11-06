@@ -404,34 +404,11 @@ extension SheetFormat {
 
 /// The create sheet as the design draws it: a white panel resting on the keyboard, the screen dimmed above it. It is drawn over the screen
 /// (an overlay, not a system sheet: a short system sheet jumps to full height when the keyboard comes up and hides the screen behind it).
-/// `small` is what shows at rest; `more` is under it and is uncovered as the panel is pulled up: the panel's height follows the finger the whole way
-/// (`progress` 0 to 1) and settles by a spring when let go. Pulled down from rest, or a tap outside, it goes away.
+/// `small` is what shows at rest; `more` is under it and is uncovered as the panel is pulled up. Pulled down from rest, or a tap outside, it goes away.
+///
+/// The panel is UIKit-driven so it moves like a system sheet: its content is laid out once at full height inside a hosting controller, a pan
+/// recognizer moves the container's transform directly (no SwiftUI pass per touch), and on release a spring takes over with the finger's own speed.
 struct PanelSheet<Small: View, More: View>: View {
-    @Binding var isOpen: Bool
-    var canOpen = true
-    let close: () -> Void
-    var shouldClose: () -> Bool = { true }
-    var appearsShown = false
-    @ViewBuilder let small: () -> Small
-    @ViewBuilder let more: () -> More
-
-    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, appearsShown: Bool = false, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
-        _isOpen = isOpen
-        self.canOpen = canOpen
-        self.close = close
-        self.shouldClose = shouldClose
-        self.appearsShown = appearsShown
-        small = content
-        self.more = more
-    }
-
-    /// The finger-driven state lives in `PanelMotion`, so a drag redraws only the moving panel and not the sheet's content (its text field, pickers).
-    var body: some View {
-        PanelMotion(isOpen: $isOpen, canOpen: canOpen, close: close, shouldClose: shouldClose, appearsShown: appearsShown, small: small(), more: more())
-    }
-}
-
-private struct PanelMotion<Small: View, More: View>: View {
     @Binding var isOpen: Bool
     var canOpen = true
     let close: () -> Void
@@ -441,124 +418,279 @@ private struct PanelMotion<Small: View, More: View>: View {
     var appearsShown = false
     let small: Small
     let more: More
-    @State private var shown = false
-    /// How far the panel is open: 0 at rest, 1 nearly the whole screen. It follows the finger.
-    @State private var progress: CGFloat = 0
-    /// How far a finger has carried the panel down past rest (down is positive).
-    @State private var dragY: CGFloat = 0
-    @State private var dragStart: CGFloat?
-    @State private var smallHeight: CGFloat = 0
-    /// What `more` needs when laid out whole: the panel opens that far, at most 55% of the screen (the design: `min(scrollHeight, innerHeight * .55)`).
-    @State private var moreHeight: CGFloat = 0
-    private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
-    init(isOpen: Binding<Bool>, canOpen: Bool, close: @escaping () -> Void, shouldClose: @escaping () -> Bool, appearsShown: Bool, small: Small, more: More) {
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, appearsShown: Bool = false, @ViewBuilder content: () -> Small, @ViewBuilder more: () -> More) {
         _isOpen = isOpen
-        self.appearsShown = appearsShown
-        _shown = State(initialValue: appearsShown)
         self.canOpen = canOpen
         self.close = close
         self.shouldClose = shouldClose
-        self.small = small
-        self.more = more
+        self.appearsShown = appearsShown
+        small = content()
+        self.more = more()
     }
 
     var body: some View {
-        GeometryReader { screen in
-            let openHeight = smallHeight + (moreHeight > 0 ? min(moreHeight, screen.size.height * 0.55) : screen.size.height - 70 - smallHeight)
-            let range = max(1, openHeight - smallHeight)
-            // The panel is laid out once at its fullest and only moved: pulling it up slides it, so nothing is laid out again while the finger moves.
-            let panelHeight = canOpen ? smallHeight + range : smallHeight
-            let hidden = panelHeight - smallHeight - range * max(0, min(1, progress)) * (canOpen ? 1 : 0)
-            ZStack(alignment: .bottom) {
-                Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
-                    .contentShape(Rectangle()).onTapGesture(perform: attemptDismiss)
-                VStack(spacing: 0) {
-                    VStack(spacing: 0) {
-                        Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
-                        small
-                    }
-                    .padding(.bottom, Theme.Space.l)
-                    .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
-                    if canOpen {
-                        ScrollView { more.background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: range)
-                            // At rest the panel's lower part hangs into the home-indicator strip, so `more` stays unseen until the panel is pulled.
-                            .opacity(progress > 0 ? 1 : 0)
-                    }
-                }
-                .padding(.horizontal, Theme.Space.xl)
-                .frame(maxWidth: .infinity, alignment: .top)
-                .frame(height: smallHeight > 0 ? panelHeight : nil, alignment: .top)
-                .background(
-                    UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.sheet, topTrailingRadius: Theme.Radius.sheet, style: .continuous)
-                        .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
-                )
-                .contentShape(Rectangle())
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 4, coordinateSpace: .global)
-                        .onChanged { drag in
-                            let start = dragStart ?? progress
-                            dragStart = start
-                            let travelled = drag.translation.height
-                            if travelled < 0 {
-                                guard canOpen else { return }
-                                progress = min(1, start - travelled / range)
-                                dragY = 0
-                            } else {
-                                // Down: the panel closes up as far as it is open, and past rest it goes down whole.
-                                let left = start - travelled / range
-                                progress = max(0, left)
-                                dragY = left < 0 ? -left * range : 0
-                            }
-                        }
-                        .onEnded { drag in
-                            let start = dragStart ?? progress
-                            dragStart = nil
-                            let v = drag.velocity.height
-                            if start == 0, progress <= 0.001, dragY > 120 || (dragY > 0 && v > 600) { attemptDismiss(); return }
-                            let target: CGFloat = v < -600 ? 1 : v > 600 ? 0 : (progress > 0.5 ? 1 : 0)
-                            settle(to: canOpen ? target : 0)
-                        }
-                )
-                // Comes up from the bottom edge of the screen, whole; hidden until measured so it never shows its first, unsized layout.
-                .offset(y: smallHeight > 0 ? (shown ? hidden + dragY : screen.size.height) : screen.size.height)
-                .opacity(smallHeight > 0 ? 1 : 0)
+        PanelHost(sheet: self).ignoresSafeArea()
+    }
+}
+
+private struct PanelHost<Small: View, More: View>: UIViewControllerRepresentable {
+    let sheet: PanelSheet<Small, More>
+
+    func makeUIViewController(context: Context) -> PanelController<Small, More> { PanelController(sheet: sheet) }
+    func updateUIViewController(_ controller: PanelController<Small, More>, context: Context) { controller.update(sheet) }
+}
+
+/// Whether `more` is drawn: at rest it hangs below the panel into the home-indicator strip, where it must stay unseen.
+@MainActor private final class PanelFlags: ObservableObject {
+    @Published var moreVisible = false
+}
+
+/// The panel's content at its full open height. It reports what it needs (`small`, and how far `more` opens) and is moved from outside.
+private struct PanelRoot<Small: View, More: View>: View {
+    let canOpen: Bool
+    let small: Small
+    let more: More
+    let dismiss: PanelDismiss
+    @ObservedObject var flags: PanelFlags
+    let onMetrics: (CGFloat, CGFloat) -> Void
+    @State private var smallHeight: CGFloat = 0
+    @State private var moreHeight: CGFloat = 0
+
+    /// What `more` opens by: its own height, at most 55% of the screen (the design: `min(scrollHeight, innerHeight * .55)`).
+    private func extent(_ more: CGFloat) -> CGFloat { canOpen && more > 0 ? min(more, UIScreen.main.bounds.height * 0.55) : 0 }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
+                small
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .padding(.bottom, Theme.Space.l)
+            .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
+            if canOpen {
+                ScrollView { more.background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }
+                    .scrollIndicators(.hidden).frame(height: extent(moreHeight))
+                    .opacity(flags.moreVisible ? 1 : 0)
+            }
         }
-        .onPreferenceChange(PanelSmallHeightKey.self) { smallHeight = $0 }
-        .onPreferenceChange(PanelMoreHeightKey.self) { moreHeight = $0 }
+        .padding(.horizontal, Theme.Space.xl)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.sheet, topTrailingRadius: Theme.Radius.sheet, style: .continuous).fill(Theme.surface))
+        .onPreferenceChange(PanelSmallHeightKey.self) { value in smallHeight = value; onMetrics(value, extent(moreHeight)) }
+        .onPreferenceChange(PanelMoreHeightKey.self) { value in moreHeight = value; onMetrics(smallHeight, extent(value)) }
         .tint(Theme.accent)
-        .environment(\.panelDismiss, PanelDismiss(run: { dismiss() }))
-        // Rises once its height is known, so the slide starts from below the screen with the panel already laid out.
-        .onChange(of: smallHeight) { _, height in if height > 0, !shown { withAnimation(spring) { shown = true } } }
-        .onChange(of: isOpen) { _, open in if (progress > 0.5) != open { withAnimation(spring) { progress = open ? 1 : 0 } } }
+        .environment(\.panelDismiss, dismiss)
+    }
+}
+
+@MainActor private final class PanelController<Small: View, More: View>: UIViewController, UIGestureRecognizerDelegate {
+    private var sheet: PanelSheet<Small, More>
+    private let flags = PanelFlags()
+    private let dim = UIView()
+    private let panel = UIView()
+    private let skirt = UIView()
+    private var host: UIHostingController<PanelRoot<Small, More>>?
+    private var heightConstraint: NSLayoutConstraint?
+    private var smallHeight: CGFloat = 0
+    /// How far the panel's lower part hangs below the screen at rest (what `more` needs).
+    private var extent: CGFloat = 0
+    /// Where the panel was last told to rest: 0 small, 1 open.
+    private var resting: CGFloat = 0
+    private var presented = false
+    private var closing = false
+    private var animator: UIViewPropertyAnimator?
+    private var panStartY: CGFloat = 0
+
+    init(sheet: PanelSheet<Small, More>) {
+        self.sheet = sheet
+        super.init(nibName: nil, bundle: nil)
     }
 
-    private func settle(to target: CGFloat) {
-        withAnimation(spring) { progress = target; dragY = 0 }
-        if (target == 1) != isOpen { isOpen = target == 1 }
+    @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .clear
+        dim.backgroundColor = UIColor(red: 25 / 255, green: 31 / 255, blue: 40 / 255, alpha: 0.42)
+        dim.alpha = 0
+        dim.frame = view.bounds
+        dim.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        dim.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(tappedOutside)))
+        view.addSubview(dim)
+
+        panel.translatesAutoresizingMaskIntoConstraints = false
+        panel.alpha = 0
+        view.addSubview(panel)
+        let height = panel.heightAnchor.constraint(equalToConstant: 1)
+        heightConstraint = height
+        NSLayoutConstraint.activate([
+            panel.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            panel.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            panel.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            height,
+        ])
+
+        // The white that fills the strip under the panel (home indicator) and whatever hangs below while it is pushed down.
+        skirt.translatesAutoresizingMaskIntoConstraints = false
+        skirt.backgroundColor = UIColor(Theme.surface)
+        panel.addSubview(skirt)
+        NSLayoutConstraint.activate([
+            skirt.topAnchor.constraint(equalTo: panel.bottomAnchor),
+            skirt.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            skirt.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+            skirt.heightAnchor.constraint(equalToConstant: 800),
+        ])
+
+        let host = UIHostingController(rootView: makeRoot())
+        self.host = host
+        addChild(host)
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        host.view.backgroundColor = .clear
+        panel.addSubview(host.view)
+        NSLayoutConstraint.activate([
+            host.view.topAnchor.constraint(equalTo: panel.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: panel.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: panel.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: panel.trailingAnchor),
+        ])
+        host.didMove(toParent: self)
+
+        let pan = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
+        pan.delegate = self
+        panel.addGestureRecognizer(pan)
+        panel.transform = CGAffineTransform(translationX: 0, y: view.bounds.height)
     }
 
-    /// The user closes it: the owner may refuse (and settle back to rest).
-    private func attemptDismiss() {
-        if shouldClose() { dismiss() } else { withAnimation(spring) { dragY = 0 } }
+    private func makeRoot() -> PanelRoot<Small, More> {
+        PanelRoot(canOpen: sheet.canOpen, small: sheet.small, more: sheet.more, dismiss: PanelDismiss(run: { [weak self] in self?.dismiss() }), flags: flags,
+                  onMetrics: { [weak self] small, extent in self?.metrics(small: small, extent: extent) })
+    }
+
+    func update(_ new: PanelSheet<Small, More>) {
+        sheet = new
+        host?.rootView = makeRoot()
+        guard presented, !closing else { return }
+        // The owner opened or closed it (not by a finger): follow.
+        if (resting > 0.5) != new.isOpen, new.canOpen { settle(to: new.isOpen ? 1 : 0, velocity: 0) }
+    }
+
+    // MARK: Placement
+
+    private var restY: CGFloat { extent * (1 - resting) }
+    private var offscreenY: CGFloat { (heightConstraint?.constant ?? 0) + view.safeAreaInsets.bottom + 8 }
+
+    private func metrics(small: CGFloat, extent newExtent: CGFloat) {
+        guard small > 0 else { return }
+        smallHeight = small
+        extent = newExtent
+        heightConstraint?.constant = small + newExtent
+        view.layoutIfNeeded()
+        if !presented {
+            presented = true
+            if sheet.appearsShown {
+                panel.transform = CGAffineTransform(translationX: 0, y: restY)
+                panel.alpha = 1
+                dim.alpha = 1
+            } else {
+                panel.transform = CGAffineTransform(translationX: 0, y: offscreenY)
+                panel.alpha = 1
+                animate(to: restY, velocity: 0, dim: 1)
+            }
+        } else if !closing, animator?.isRunning != true {
+            panel.transform = CGAffineTransform(translationX: 0, y: restY)
+        }
+    }
+
+    /// Moves to `y` by a spring that starts at the finger's speed (points per second, down positive), and the dim with it.
+    private func animate(to y: CGFloat, velocity: CGFloat, dim target: CGFloat, completion: (() -> Void)? = nil) {
+        animator?.stopAnimation(true)
+        let distance = y - panel.transform.ty
+        let relative = abs(distance) > 1 ? max(-20, min(20, velocity / distance)) : 0
+        let timing = UISpringTimingParameters(dampingRatio: 0.86, initialVelocity: CGVector(dx: relative, dy: relative))
+        let animator = UIViewPropertyAnimator(duration: 0.42, timingParameters: timing)
+        animator.addAnimations { [panel, dim] in
+            panel.transform = CGAffineTransform(translationX: 0, y: y)
+            dim.alpha = target
+        }
+        animator.addCompletion { _ in completion?() }
+        self.animator = animator
+        animator.startAnimation()
+    }
+
+    private func settle(to target: CGFloat, velocity: CGFloat) {
+        resting = sheet.canOpen ? target : 0
+        if resting > 0 { flags.moreVisible = true }
+        if (resting == 1) != sheet.isOpen, sheet.canOpen { sheet.isOpen = resting == 1 }
+        let goal = resting
+        animate(to: restY, velocity: velocity, dim: 1) { [weak self] in
+            guard let self, self.resting == goal, goal == 0 else { return }
+            self.flags.moreVisible = false
+        }
+    }
+
+    // MARK: Closing
+
+    @objc private func tappedOutside() { attemptDismiss() }
+
+    /// The user closes it: the owner may refuse (and the panel settles back).
+    private func attemptDismiss(velocity: CGFloat = 0) {
+        if sheet.shouldClose() { dismiss() } else { settle(to: resting, velocity: velocity) }
     }
 
     /// Goes down (the panel and the dim), then tells the owner.
     private func dismiss() {
-        // An ease-out, not the spring: a finger already moving down hands over its speed, and a spring would start from standstill and stall.
-        // The panel is gone (offscreen and dim cleared) a moment before the owner removes it, so it never pops out mid-slide.
-        withAnimation(.easeOut(duration: 0.24)) { shown = false; dragY = 0 }
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(300))
-            close()
+        guard !closing else { return }
+        closing = true
+        animator?.stopAnimation(true)
+        UIView.animate(withDuration: 0.24, delay: 0, options: [.curveEaseOut, .beginFromCurrentState, .allowUserInteraction]) {
+            self.panel.transform = CGAffineTransform(translationX: 0, y: self.offscreenY)
+            self.dim.alpha = 0
+        } completion: { _ in
+            self.sheet.close()
+        }
+    }
+
+    // MARK: Finger
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, !closing else { return true }
+        let v = pan.velocity(in: view)
+        return abs(v.y) > abs(v.x)
+    }
+
+    @objc private func panned(_ pan: UIPanGestureRecognizer) {
+        switch pan.state {
+        case .began:
+            if animator?.isRunning == true { animator?.stopAnimation(true) }
+            // `stopAnimation(true)` leaves the model value where the animation was headed; take where it is on screen.
+            if let presentation = panel.layer.presentation() { panel.transform = CGAffineTransform(translationX: 0, y: presentation.affineTransform().ty) }
+            panStartY = panel.transform.ty
+            pan.setTranslation(.zero, in: view)
+            flags.moreVisible = true
+        case .changed:
+            var y = panStartY + pan.translation(in: view).y
+            if !sheet.canOpen { y = max(restY, y) }
+            panel.transform = CGAffineTransform(translationX: 0, y: max(0, y))
+            let belowRest = max(0, panel.transform.ty - extent)
+            dim.alpha = 1 - min(1, belowRest / 500)
+        case .ended, .cancelled:
+            let v = pan.velocity(in: view).y
+            let y = panel.transform.ty
+            let belowRest = y - extent
+            let startedAtRest = abs(panStartY - extent) < 1 || !sheet.canOpen
+            if startedAtRest, belowRest > 0, belowRest > 120 || v > 600 { attemptDismiss(velocity: v); return }
+            let opened: CGFloat = extent > 0 ? max(0, min(1, 1 - y / extent)) : 0
+            let target: CGFloat = v < -600 ? 1 : v > 600 ? 0 : (opened > 0.5 ? 1 : 0)
+            settle(to: target, velocity: v)
+        default:
+            break
         }
     }
 }
 
 extension PanelSheet where More == EmptyView {
-    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: @escaping () -> Small) {
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: () -> Small) {
         self.init(isOpen: isOpen, canOpen: canOpen, close: close, content: content, more: { EmptyView() })
     }
 }
