@@ -3,14 +3,16 @@ import SwiftUI
 
 /// The sizes and calendar arithmetic of the month that unfolds out of the header.
 enum MonthUnfold {
-    /// A week of the month: the number row and the dots (the week strip's own) and, once the month is open, what was spent under them.
+    /// A week of the month: the number row, the event bars (two lanes), the dots for the events with no bar, and what was spent. The week strip has
+    /// the same rows, without the bars until the month opens.
     static let numberRow: CGFloat = 36
-    static let dotsRow: CGFloat = 9
+    static let barsRow: CGFloat = MonthWeekBars.height
+    static let dotsRow: CGFloat = EventDots.height
     static let spendRow: CGFloat = 14
-    static let rowHeight: CGFloat = numberRow + dotsRow + spendRow
+    static let rowHeight: CGFloat = numberRow + barsRow + dotsRow + spendRow
     /// The weekday names over the weeks and the title bar (month and arrows) over those.
     static let labelRow: CGFloat = 15
-    static let titleRow: CGFloat = 40
+    static let titleRow: CGFloat = 0
     /// What the strip has under its dots and the month does not.
     static let stripBottomPadding: CGFloat = 6
 
@@ -36,22 +38,22 @@ enum MonthUnfold {
 
     /// How far the header's bottom edge travels between closed and open: the finger moves the same distance, so the edge follows it.
     static func travel(rows: Int) -> CGFloat {
-        let closed = labelRow + numberRow + dotsRow + stripBottomPadding
+        let closed = labelRow + numberRow + dotsRow + spendRow + stripBottomPadding
         return titleRow + labelRow + CGFloat(rows) * rowHeight - closed
     }
 
     /// The height of the strip at `unfold` (its weekday names folded away, a line for what was spent opened).
     static func stripHeight(unfold: CGFloat) -> CGFloat {
-        labelRow * (1 - unfold) + numberRow + dotsRow + spendRow * unfold + stripBottomPadding * (1 - unfold)
+        labelRow * (1 - unfold) + numberRow + barsRow * unfold + dotsRow + spendRow + stripBottomPadding * (1 - unfold)
     }
 
     /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550). Nil when nothing was spent that day.
     static func spendText(of cell: WeekStripDay?) -> String? {
         guard let money = cell?.netSpend.first(where: { $0.currency == "KRW" }) ?? cell?.netSpend.first, money.minorUnits > 0 else { return nil }
         let won = money.minorUnits
-        guard won >= 10_000 else { return Formatting.grouped(won) }
+        guard won >= 10_000 else { return "−" + Formatting.grouped(won) }
         let tenThousands = Double(won) / 10_000
-        return (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
+        return "−" + (tenThousands >= 100 ? String(format: "%.0f", tenThousands) : String(format: "%.1f", tenThousands)).replacingOccurrences(of: ".0", with: "") + "만"
     }
 
     /// 0 until `from`, 1 from `to`, a straight line between.
@@ -179,6 +181,8 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     let state: MonthUnfoldState
     let today: LocalDate
     let cells: (LocalDate) -> WeekStripDay?
+    /// A calendar's colour, for the bars and dots.
+    let color: (CalendarID) -> Color
     /// The list has a rule under the strip; the grid's column titles carry theirs.
     let showsRule: Bool
     let onSelect: (LocalDate) -> Void
@@ -205,18 +209,27 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
         let unfold = min(1, p)
         return VStack(spacing: 0) {
             top()
-            titleBar(month: month, p: p)
-            weekdayLabels(month: month, p: p)
-            weeks(0..<before, month: month, p: p, nearestLast: true)
-            strip(unfold)
-                .frame(height: presence < 1 ? MonthUnfold.stripHeight(unfold: unfold) * presence : nil, alignment: .top)
-                .clipped()
-                .opacity(presence)
-                .allowsHitTesting(presence > 0.5)
-            weeks((rowCount - after)..<rowCount, month: month, p: p, nearestLast: false)
-            if showsRule { Divider() } else if p > 0 { Divider().opacity(min(1, p * 3)).frame(height: min(1, p * 3)) }
+            // The month (or the week strip) is the top of the design's white card; the day's card carries on under it.
+            VStack(spacing: 0) {
+                titleBar(month: month, p: p)
+                weekdayLabels(month: month, p: p)
+                weeks(0..<before, month: month, p: p, nearestLast: true)
+                strip(unfold)
+                    .frame(height: presence < 1 ? MonthUnfold.stripHeight(unfold: unfold) * presence : nil, alignment: .top)
+                    .clipped()
+                    .opacity(presence)
+                    .allowsHitTesting(presence > 0.5)
+                weeks((rowCount - after)..<rowCount, month: month, p: p, nearestLast: false)
+                // The handle that pulls the month back up.
+                Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.vertical, 10)
+                    .frame(height: 24 * p, alignment: .top).clipped().opacity(MonthUnfold.ramp(p, from: 0.5, to: 1))
+            }
+            .padding(.top, Theme.Space.s)
+            .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
+            .padding(.horizontal, Theme.cardMargin)
+            .padding(.top, Theme.Space.m)
         }
-        .background { TopBarBackground().ignoresSafeArea(edges: .top) }
+        .background(alignment: .top) { Theme.background.ignoresSafeArea(edges: .top) }
         .simultaneousGesture(
             DragGesture(minimumDistance: 10)
                 .onChanged { state.drag($0.translation, selected: selected) }
@@ -245,10 +258,10 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
         let start = MonthUnfold.gridStart(of: month)
         return HStack(spacing: 0) {
             ForEach(0..<7, id: \.self) { column in
-                Text(Formatting.weekdayShort(start.adding(days: column))).font(.system(.caption2)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
+                Text(Formatting.weekdayShort(start.adding(days: column))).font(.onAll(size: 12)).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 4)
         .frame(height: MonthUnfold.labelRow, alignment: .top)
         .frame(height: MonthUnfold.labelRow * p, alignment: .top)
         .clipped()
@@ -264,10 +277,16 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
             ForEach(Array(rows), id: \.self) { row in
                 let distance = nearestLast ? rows.upperBound - row : row - rows.lowerBound + 1
                 let shown = max(0, min(1, (open - CGFloat(distance - 1) * MonthUnfold.rowHeight) / MonthUnfold.rowHeight))
+                let days = (0..<7).map { start.adding(days: row * 7 + $0) }
+                let read = days.compactMap(cells)
+                // A week not read yet has no bars (its days draw blank until it is).
+                let layout = read.count == 7 ? MonthWeekLayout(week: read, lanes: MonthWeekBars.lanes) : nil
                 HStack(spacing: 0) {
-                    ForEach(0..<7, id: \.self) { column in dayCell(start.adding(days: row * 7 + column), month: month) }
+                    ForEach(0..<7, id: \.self) { column in dayCell(days[column], month: month, overflow: layout?.overflow[column]) }
                 }
-                .padding(.horizontal, 8)
+                .overlay(alignment: .topLeading) { if let layout { MonthWeekBars(layout: layout, color: color).padding(.top, MonthUnfold.numberRow) } }
+                .padding(.horizontal, 4)
+                .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
                 .frame(height: MonthUnfold.rowHeight)
                 .opacity(shown)
             }
@@ -277,23 +296,22 @@ struct MonthUnfoldHeader<Top: View, Strip: View>: View {
     }
 
     /// Made like the strip's day, so the week that is the strip and the weeks around it read as one.
-    private func dayCell(_ day: LocalDate, month: LocalDate) -> some View {
+    private func dayCell(_ day: LocalDate, month: LocalDate, overflow: [WeekStripEvent]?) -> some View {
         let info = cells(day)
         let spent = MonthUnfold.spendText(of: info)
         return Button { if state.allowsTap { onSelect(day) } } label: {
             VStack(spacing: 0) {
                 Text("\(day.day)")
-                    .font(.callout.monospacedDigit())
-                    .foregroundStyle(day == today ? Theme.accent : Theme.textPrimary)
+                    .font(.onAll(size: 16, weight: day == today || day == selected ? .semibold : .regular).monospacedDigit())
+                    .foregroundStyle(day == today || day == selected ? Theme.accentStrong : Theme.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .background(day == today || day == selected ? Theme.accentSoft : .clear, in: Circle())
                     .frame(maxWidth: .infinity, minHeight: MonthUnfold.numberRow, maxHeight: MonthUnfold.numberRow)
-                HStack(spacing: 3) {
-                    Circle().fill((info?.eventCount ?? 0) > 0 ? Theme.accent : .clear).frame(width: 5, height: 5)
-                    Circle().fill((info?.unlinkedTransactionCount ?? 0) > 0 ? Theme.caution : .clear).frame(width: 5, height: 5)
-                }
-                .frame(height: MonthUnfold.dotsRow)
+                Color.clear.frame(height: MonthUnfold.barsRow)
+                EventDots(events: overflow ?? [], color: color)
                 Text(spent ?? " ")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.textTertiary)
+                    .font(.onAll(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Theme.accent)
                     .lineLimit(1).minimumScaleFactor(0.6)
                     .frame(height: MonthUnfold.spendRow)
             }

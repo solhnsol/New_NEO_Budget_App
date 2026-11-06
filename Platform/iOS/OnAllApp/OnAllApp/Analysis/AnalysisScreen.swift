@@ -6,7 +6,8 @@ import SwiftUI
 /// taken out in advance and shown as "정산 대기 중". Each group opens to the transactions behind it.
 struct AnalysisScreen: View {
     let model: AppModel
-    let onClose: () -> Void
+    /// Nil when shown as a tab (nothing to close).
+    var onClose: (() -> Void)?
     @State private var snapshot: AnalysisSnapshot?
     @State private var failed = false
     @State private var month: AnalysisMonth?
@@ -15,7 +16,7 @@ struct AnalysisScreen: View {
         NavigationStack {
             Group {
                 if let snapshot {
-                    AnalysisHome(model: model, snapshot: snapshot, month: Binding(get: { month ?? AnalysisMonth(snapshot.today) }, set: { month = $0 }))
+                    AnalysisWidgetBoard(model: model, snapshot: snapshot, month: Binding(get: { month ?? AnalysisMonth(snapshot.today) }, set: { month = $0 }))
                 } else if failed {
                     ContentUnavailableView("거래를 불러오지 못했어요", systemImage: "exclamationmark.circle", description: Text("잠시 뒤에 다시 열어 주세요."))
                 } else {
@@ -24,9 +25,7 @@ struct AnalysisScreen: View {
             }
             .background(Theme.background)
             .tint(Theme.accent)
-            .navigationTitle("분석")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } }
+            .toolbar { if let onClose { ToolbarItem(placement: .topBarLeading) { Button("닫기", action: onClose) } } }
         }
         .task(id: [model.dataGeneration, model.overrideRevision, model.recurringRevision]) {
             if let loaded = await AnalysisSnapshot.load(model) { snapshot = loaded } else if snapshot == nil { failed = true }
@@ -34,7 +33,8 @@ struct AnalysisScreen: View {
     }
 }
 
-private struct AnalysisHome: View {
+/// 모든 분석: every analysis of the chosen month, the page the widgets open.
+struct AnalysisHome: View {
     let model: AppModel
     let snapshot: AnalysisSnapshot
     @Binding var month: AnalysisMonth
@@ -67,6 +67,7 @@ private struct AnalysisHome: View {
         }
         .scrollIndicators(.hidden)
         .animation(.snappy(duration: 0.28), value: month)
+        .navigationTitle("모든 분석").navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: Month

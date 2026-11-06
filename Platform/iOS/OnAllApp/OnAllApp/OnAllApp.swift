@@ -8,6 +8,8 @@ struct OnAllApp: App {
     /// Bumped to rebuild the model after the user switched modes.
     @State private var generation = 0
 
+    init() { PretendardFonts.register() }
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -19,7 +21,12 @@ struct OnAllApp: App {
                 } else if ProcessInfo.processInfo.arguments.contains("-render-grid") || ProcessInfo.processInfo.arguments.contains("-render-continuous") {
                     RenderGridScreen()
                 } else if let model {
-                    RootTabs(model: model)
+                    if let index = ProcessInfo.processInfo.arguments.firstIndex(of: "-more-screen"),
+                       let screen = MoreGallery.screen(ProcessInfo.processInfo.arguments[index + 1], model: model) {
+                        screen
+                    } else {
+                        RootTabs(model: model)
+                    }
                 } else if let startFailure {
                     LaunchFailureView(detail: startFailure)
                 } else {
@@ -35,6 +42,7 @@ struct OnAllApp: App {
                 }
                 #endif
             }
+            .preferredColorScheme(.light)
             .environment(\.switchAppMode, { mode in
                 AppMode.save(mode)
                 model = nil

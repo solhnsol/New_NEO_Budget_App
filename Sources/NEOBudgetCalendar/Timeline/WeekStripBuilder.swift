@@ -9,6 +9,17 @@ public struct WeekStripDay: Equatable, Sendable {
     public let unlinkedTransactionCount: Int
     /// Net spending of all of this day's transactions per currency.
     public let netSpend: [Money]
+    /// The events that touch this day: all-day first, then by start. The month grid joins a multi-day event's days into one bar by `key`.
+    public let events: [WeekStripEvent]
+}
+
+/// One event as the week strip and the month grid need it: enough to draw a bar or a dot, nothing more.
+public struct WeekStripEvent: Equatable, Sendable {
+    public let key: CalendarEventKey
+    public let title: String
+    public let isAllDay: Bool
+    public let startUnixMilliseconds: Int64
+    public let endUnixMilliseconds: Int64
 }
 
 /// Builds the seven days around a selected day. Pure, like the day timeline.
@@ -27,7 +38,15 @@ public enum WeekStripBuilder {
         return (0..<7).map { index in
             let current = first.adding(days: index)
             let bounds = timeZone.dayBounds(current)
-            let eventCount = events.filter { $0.time.overlaps(from: bounds.start, to: bounds.end, in: timeZone) }.count
+            let dayEvents = events.filter { $0.time.overlaps(from: bounds.start, to: bounds.end, in: timeZone) }.map { event -> WeekStripEvent in
+                switch event.time {
+                case let .timed(range):
+                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: false, startUnixMilliseconds: range.startUnixMilliseconds, endUnixMilliseconds: range.endUnixMilliseconds)
+                case let .allDay(range):
+                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: true, startUnixMilliseconds: timeZone.startOfDay(range.firstDay), endUnixMilliseconds: timeZone.startOfDay(range.lastDay.adding(days: 1)))
+                }
+            }.sorted { ($0.isAllDay ? 0 : 1, $0.startUnixMilliseconds, $0.title) < ($1.isAllDay ? 0 : 1, $1.startUnixMilliseconds, $1.title) }
+            let eventCount = dayEvents.count
             let dayTransactions = transactions.filter {
                 $0.occurredAtUnixMilliseconds >= bounds.start && $0.occurredAtUnixMilliseconds < bounds.end
             }
@@ -39,7 +58,8 @@ public enum WeekStripBuilder {
                 unlinkedTransactionCount: dayTransactions.filter { transaction in
                     !(life.allocationSet(for: transaction.id)?.allocations.contains { $0.activityID != nil } ?? false)
                 }.count,
-                netSpend: byCurrency.keys.sorted().compactMap { try? Money(minorUnits: byCurrency[$0] ?? 0, currency: $0) }
+                netSpend: byCurrency.keys.sorted().compactMap { try? Money(minorUnits: byCurrency[$0] ?? 0, currency: $0) },
+                events: dayEvents
             )
         }
     }

@@ -27,6 +27,8 @@ final class AppModel {
     }
 
     private(set) var phase: Phase = .loading
+    /// The new-event panel is open. Drawn by `RootTabs`, over the tab bar, so it can rest on the keyboard.
+    var creatingEvent = false
     private(set) var selectedDay: LocalDate
     /// The first of the two days on screen. `selectedDay` is its date.
     var timeline: DayTimeline? { cache[selectedDay] }
@@ -156,6 +158,7 @@ final class AppModel {
     func start() async {
         if let prepare { await prepare() }
         loadOverrides()
+        loadOpenEndMarks()
         loadRecurring()
         observeLedger()
         if eventKit != nil {
@@ -563,6 +566,37 @@ final class AppModel {
         }
     }
 
+    /// Events saved without an end (종료 미정): the calendar holds a short placeholder end, this holds the fact. A file, except in the demo.
+    private(set) var openEndMarks = OpenEndMarks()
+    private var openEndURL: URL? { isDemo ? nil : URL.applicationSupportDirectory.appending(path: "open-end-marks.json") }
+
+    func loadOpenEndMarks() {
+        guard let url = openEndURL, let data = try? Data(contentsOf: url), let marks = try? JSONDecoder().decode(OpenEndMarks.self, from: data) else { return }
+        openEndMarks = marks
+    }
+
+    /// Creates the event the new-event sheet describes (all-day, open end or timed; `NewEventInput.plan`). `nil` on success, else what to tell the person.
+    func createEvent(_ input: NewEventInput, location: String? = nil, notes: String? = nil, people: [PersonID] = []) async -> String? {
+        guard let plan = try? input.plan(in: dayZone) else { return "종료 시각이 시작보다 늦어야 해요." }
+        let draft = CalendarEventDraft(
+            calendarID: plan.draft.calendarID, title: plan.draft.title, time: plan.draft.time, timeZoneIdentifier: plan.draft.timeZoneIdentifier,
+            location: location, notes: notes
+        )
+        switch await perform(.createEvent(CreateEventInput(draft: draft))) {
+        case let .applied(applied)?, let .partiallyApplied(applied, _)?:
+            if plan.isOpenEnd, let event = applied.event {
+                openEndMarks.mark(event.key)
+                if let url = openEndURL, let data = try? JSONEncoder().encode(openEndMarks) { try? data.write(to: url, options: .atomic) }
+            }
+            if let event = applied.event {
+                // One after another: each edit reloads the days, and two at once would read each other's half-written state.
+                for person in people { _ = await perform(ActivityEditing.setParticipant(person, on: true, event: event.key, now: nowMilliseconds)) }
+            }
+            return nil
+        default: return "일정을 만들지 못했어요. 잠시 뒤에 다시 해 주세요."
+        }
+    }
+
     /// What the user changed about transactions for display. Kept in a file, except in the demo (a restart gives the demo back unchanged).
     private(set) var transactionOverrides = TransactionOverrideStore()
     /// Moves with every edit, so the ledger tab reloads.
@@ -587,6 +621,23 @@ final class AppModel {
     func removeManual(_ id: LedgerEntryID) {
         transactionOverrides.manual.removeAll { $0.id == id.rawValue }
         transactionOverrides[id] = nil
+        saveOverrides()
+    }
+
+    /// Changes the same thing on several transactions at once (selection mode), saving and reloading once.
+    func editMany(_ ids: [LedgerEntryID], _ change: (inout TransactionOverride) -> Void) {
+        for id in ids {
+            var override = transactionOverrides[id] ?? TransactionOverride()
+            change(&override)
+            transactionOverrides[id] = override
+        }
+        saveOverrides()
+    }
+
+    /// Deletes several typed-in transactions at once; ledger ones are left alone.
+    func removeManuals(_ ids: Set<LedgerEntryID>) {
+        transactionOverrides.manual.removeAll { ids.contains(LedgerEntryID(rawValue: $0.id)) }
+        for id in ids { transactionOverrides[id] = nil }
         saveOverrides()
     }
 

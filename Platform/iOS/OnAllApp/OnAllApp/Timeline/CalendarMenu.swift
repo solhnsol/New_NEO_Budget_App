@@ -12,45 +12,52 @@ enum CalendarStyle: String, CaseIterable {
     var next: CalendarStyle { self == .grid ? .pager : .grid }
 }
 
-/// Where the ledger's own screens are opened from now that the ledger is not a tab.
+/// Where the ledger's own screens are opened from (analysis and settings are tabs now).
 enum LedgerDestination: String, Identifiable {
-    case list, accounts, analysis, settings
+    case list, accounts
     var id: String { rawValue }
 }
 
 /// A transaction picked in the calendar, to open its details.
 struct TransactionRef: Identifiable { let id: LedgerEntryID }
 
-/// One tap switches how the day is shown (the button shows the style it switches to); the menu next to it adds a transaction and opens the
-/// ledger's list and account statements.
+/// The header's right side (design): the list / calendar switch (the list opens the ledger; a long press on the calendar half turns the day view between
+/// styles), search, and add.
 struct CalendarMenu: View {
-    @Binding var style: CalendarStyle
+    @Binding var showsList: Bool
     let onAdd: () -> Void
-    let onOpen: (LedgerDestination) -> Void
-
-    private var other: CalendarStyle { style.next }
+    var onAddEvent: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 0) {
-            Button { style = other } label: {
-                Image(systemName: other.symbol).font(.body.weight(.semibold)).frame(width: 40, height: 44).contentShape(Rectangle())
+            HStack(spacing: 0) {
+                segment("list", on: showsList) { showsList = true }
+                segment("cal", on: !showsList) { showsList = false }
             }
-            .accessibilityLabel(other.title + " 보기로 바꾸기")
-            menu
+            .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
+            .padding(.trailing, 6)
+            icon("srch") {}
+            Menu {
+                Button { onAddEvent() } label: { Text("일정 추가") }
+                Button { onAdd() } label: { Text("내역 추가") }
+            } label: {
+                LineIcon(name: "plus").foregroundStyle(Theme.textPrimary).frame(width: Theme.hitTarget, height: Theme.hitTarget).contentShape(Rectangle())
+            }
         }
     }
 
-    private var menu: some View {
-        Menu {
-            Button { onAdd() } label: { Label("내역 추가", systemImage: "plus") }
-            Button { onOpen(.list) } label: { Label("가계부 목록", systemImage: "list.bullet.rectangle") }
-            Button { onOpen(.accounts) } label: { Label("계좌·카드", systemImage: "creditcard") }
-            Button { onOpen(.analysis) } label: { Label("분석", systemImage: "chart.bar.xaxis") }
-            Divider()
-            Button { onOpen(.settings) } label: { Label("설정", systemImage: "gearshape") }
-        } label: {
-            Image(systemName: "ellipsis.circle").font(.title3).frame(width: 44, height: 44).contentShape(Rectangle())
+    private func segment(_ name: String, on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            LineIcon(name: name, size: 20)
+                .foregroundStyle(on ? Theme.accentStrong : Theme.textTertiary)
+                .frame(width: 36, height: Theme.segmentHeight)
+                .background(on ? Theme.accentSoft : .clear, in: RoundedRectangle(cornerRadius: Theme.Radius.small, style: .continuous))
         }
-        .accessibilityLabel("메뉴")
+        .buttonStyle(.plain)
+    }
+
+    private func icon(_ name: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { LineIcon(name: name).foregroundStyle(Theme.textPrimary).frame(width: Theme.hitTarget, height: Theme.hitTarget).contentShape(Rectangle()) }
+            .buttonStyle(.plain)
     }
 }

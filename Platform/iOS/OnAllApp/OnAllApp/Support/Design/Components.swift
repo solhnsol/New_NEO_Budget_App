@@ -180,3 +180,26 @@ struct CountStepper: View {
         .disabled(!enabled)
     }
 }
+
+/// A tappable row or card: its background turns #F4F5F7 for 120ms while pressed (`Theme.Motion.press`).
+struct RowPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(configuration.isPressed ? Theme.fill : Color.clear)
+            .animation(Theme.Motion.press, value: configuration.isPressed)
+    }
+}
+
+extension ButtonStyle where Self == RowPressStyle {
+    static var onAllRow: RowPressStyle { RowPressStyle() }
+}
+
+extension View {
+    /// The one look of every bottom sheet: 24 corners, grabber, white surface.
+    func onAllSheet(detents: Set<PresentationDetent> = [.medium, .large]) -> some View {
+        presentationDetents(detents)
+            .presentationCornerRadius(Theme.Radius.sheet)
+            .presentationDragIndicator(.visible)
+            .presentationBackground(Theme.surface)
+    }
+}
