@@ -358,6 +358,8 @@ final class AppModel {
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state); nettedSpending = state.nettedSpending() }
             phase = .ready
             reloadsFinished += 1
+            // Read ahead: the transaction sheet and the ledger tab then open on a list that is already built.
+            Task { _ = await ledgerSections() }
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == dataGeneration else { return }
             phase = .denied
@@ -825,6 +827,24 @@ final class AppModel {
     /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
     /// transactions are still listed, without allocations.
     func ledgerSections() async -> [LedgerDaySection]? {
+        // Building the list reads the whole ledger, and opening one transaction asks for it three times: kept until something it is built from moves.
+        let key = SectionsKey(generation: dataGeneration, overrides: overrideRevision, surplus: SurplusSetting.current().rawValue, dayStart: dayZone.ledgerDayStartMinutes)
+        if let cached = sectionsCache, cached.key == key { return cached.value }
+        guard let built = await buildLedgerSections() else { return nil }
+        sectionsCache = (key, built)
+        return built
+    }
+
+    private struct SectionsKey: Equatable {
+        let generation: Int
+        let overrides: Int
+        let surplus: String
+        let dayStart: Int
+    }
+
+    @ObservationIgnored private var sectionsCache: (key: SectionsKey, value: [LedgerDaySection])?
+
+    private func buildLedgerSections() async -> [LedgerDaySection]? {
         let overrides = transactionOverrides.lookup
         guard let ledgerTransactions = try? await ledger.transactions() else { return nil }
         let transactions = ledgerTransactions + transactionOverrides.manualMarkers
