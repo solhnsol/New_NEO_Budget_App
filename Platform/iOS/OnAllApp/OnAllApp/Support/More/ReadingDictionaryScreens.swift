@@ -1,7 +1,7 @@
 import NEOBudgetCore
 import SwiftUI
 
-/// 읽기 사전 목록 (design-v2/settings/shapes-v1.html): 공식 항목과 내 항목, 무시 항목. 끄고 켜고, 항목을 열어 읽는 법을 본다.
+/// 읽기 사전 목록 (design-v2/settings/shapes-v1.html): 기관별로 묶은 항목, 칩(전체·내 항목·무시·공식), 항목마다 켜고 끄기.
 struct ReadingDictionaryScreen: View {
     let model: AppModel
     @State private var dictionary = ReadingDictionary.official
@@ -10,6 +10,7 @@ struct ReadingDictionaryScreen: View {
     @State private var busy = false
     @State private var failed = false
     @State private var selected: String?
+    @State private var adding = false
 
     private var entries: [ReadingEntry] {
         // 공식 항목은 고친 것이 있으면 고친 모양으로 보인다.
@@ -18,21 +19,21 @@ struct ReadingDictionaryScreen: View {
     }
 
     private var mine: [ReadingEntry] { entries.filter { $0.origin == .user && !$0.action.isIgnore } }
-    private var ignored: [ReadingEntry] { entries.filter(\.action.isIgnore) }
-    private var official: [ReadingEntry] { entries.filter { $0.origin == .official && !$0.action.isIgnore } }
+    private var ignored: [ReadingEntry] { entries.filter { $0.origin == .user && $0.action.isIgnore } }
+    private var official: [ReadingEntry] { entries.filter { $0.origin == .official } }
 
     var body: some View {
-        SettingsPage(title: "읽기 사전") {
-            SChipRow(titles: ["전체 \(entries.count)", "내 항목 \(entries.filter { $0.origin == .user }.count)", "무시 \(ignored.count)", "공식 \(entries.filter { $0.origin == .official }.count)"], selection: $filter)
-                .padding(.top, 8)
+        SettingsPage(title: "읽기 사전", action: ("추가", { adding = true })) {
+            SChipRow(titles: ["전체 \(entries.count)", "내 항목 \(mine.count)", "무시 \(ignored.count)", "공식 \(official.count)"], selection: $filter)
             if failed {
                 Text("지금은 바꿀 수 없어요. 잠시 뒤에 다시 해 주세요.").font(Theme.Typo.label).foregroundStyle(Theme.danger)
                     .padding(.horizontal, 28).padding(.top, 12)
             }
-            if filter == 0 || filter == 1, !mine.isEmpty { group("내 항목", mine) }
-            if filter == 0 || filter == 2, !ignored.isEmpty { group("무시", ignored) }
-            if filter == 0 || filter == 3, !official.isEmpty { group("공식", official) }
+            if filter == 0 || filter == 1 { groups(mine, fallback: "내 항목") }
+            if filter == 0 || filter == 2, !ignored.isEmpty { section("무시", ignored) }
+            if filter == 0 || filter == 3 { groups(official, fallback: "공식") }
         }
+        .navigationDestination(isPresented: $adding) { IntakeInboxView(model: model) }
         .navigationDestination(item: $selected) { id in
             if let entry = entries.first(where: { $0.id == id }) {
                 ReadingEntryScreen(
@@ -49,7 +50,17 @@ struct ReadingDictionaryScreen: View {
         .allowsHitTesting(!busy)
     }
 
-    private func group(_ title: String, _ list: [ReadingEntry]) -> some View {
+    /// 기관(앱)별로 묶는다. 묶음 이름이 없으면 `fallback`.
+    @ViewBuilder
+    private func groups(_ list: [ReadingEntry], fallback: String) -> some View {
+        let names = list.reduce(into: [String]()) { names, entry in
+            let name = entry.group ?? fallback
+            if !names.contains(name) { names.append(name) }
+        }
+        ForEach(names, id: \.self) { name in section(name, list.filter { ($0.group ?? fallback) == name }) }
+    }
+
+    private func section(_ title: String, _ list: [ReadingEntry]) -> some View {
         SSection(title: title) {
             ForEach(list) { entry in
                 HStack(spacing: 12) {
@@ -58,9 +69,12 @@ struct ReadingDictionaryScreen: View {
                             STile(icon: entry.action.isIgnore ? "file" : "bank", tone: entry.action.isIgnore ? .neutral : (entry.origin == .user ? .purple : .orange))
                             VStack(alignment: .leading, spacing: 0) {
                                 Text(entry.name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                                Text(sub(entry)).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary)
+                                if let sub = sub(entry) { Text(sub).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary) }
                             }
                             Spacer(minLength: 8)
+                            if entry.origin == .user, let count = counts[entry.id], count > 0 {
+                                Text("\(count)건").font(.onAll(size: 15)).foregroundStyle(Theme.textTertiary)
+                            }
                         }
                         .contentShape(Rectangle())
                     }
@@ -73,8 +87,9 @@ struct ReadingDictionaryScreen: View {
         }
     }
 
-    private func sub(_ entry: ReadingEntry) -> String {
-        var parts = [entry.origin == .official ? (dictionary.officialOverrides[entry.id] != nil ? "공식 · 수정됨" : "공식") : "내 항목"]
+    private func sub(_ entry: ReadingEntry) -> String? {
+        guard entry.origin == .official else { return nil }
+        var parts = [dictionary.officialOverrides[entry.id] != nil ? "공식 · 수정됨" : "공식"]
         if let count = counts[entry.id], count > 0 { parts.append("지난 알림 \(count)건") }
         return parts.joined(separator: " · ")
     }
@@ -121,7 +136,7 @@ struct ReadingDictionaryScreen: View {
     }
 }
 
-/// 항목 하나: 어떤 알림을 어떻게 읽는지. 공식 항목은 켜고 끄기와 되돌리기만, 내 항목은 지우기도 된다.
+/// 항목 하나: 공용 표현과 읽는 값. 공식 항목은 켜고 끄기와 되돌리기, 내 항목은 지우기도 된다.
 struct ReadingEntryScreen: View {
     let entry: ReadingEntry
     let overridden: Bool
@@ -144,67 +159,67 @@ struct ReadingEntryScreen: View {
         _on = State(initialValue: enabled)
     }
 
+    private var pillText: String { entry.origin == .official ? (overridden ? "공식 · 수정됨" : "공식") : "내 항목" }
+
+    /// 틀에서 읽는 칸들(중복 없이, 나온 순서).
+    private var slots: [ReadingSlot] {
+        var result: [ReadingSlot] = []
+        for condition in entry.conditions {
+            guard case let .frame(_, frame) = condition else { continue }
+            for case let .slot(name) in ReadingEntryBuilder.pieces(of: frame) {
+                if let slot = ReadingSlot.named(name), slot != .free, !result.contains(slot) { result.append(slot) }
+            }
+        }
+        return result
+    }
+
     var body: some View {
         SettingsPage(title: entry.name) {
-            SSection(title: "이런 알림이에요") {
-                if let app = entry.applicationIdentifier { SField(label: "받은 앱", value: app) } else { SField(label: "받은 앱", value: "모든 앱") }
-                ForEach(Array(entry.conditions.enumerated()), id: \.offset) { _, condition in
-                    SField(label: condition.label, value: condition.value)
+            HStack { SPill(text: pillText, accent: entry.origin == .official); Spacer() }
+                .padding(.horizontal, 28).padding(.top, 12)
+            SSection(title: "공용 표현") {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let app = entry.applicationIdentifier { Text(app).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary) }
+                    ForEach(Array(entry.conditions.enumerated()), id: \.offset) { _, condition in condition.expression }
                 }
+                .font(.onAll(size: 15)).foregroundStyle(Theme.textPrimary).lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 14)
             }
-            SSection(title: "읽은 뒤") {
+            SSection(title: "읽는 값") {
                 switch entry.action {
-                case let .ignore(reason): SField(label: "처리", value: "기록하지 않아요 · \(reason.label)")
+                case let .ignore(reason): SRow(title: "처리", value: "기록하지 않아요 · \(reason.label)")
                 case let .read(outcome):
-                    SField(label: "종류", value: outcome.kind.label)
-                    SField(label: "방향", value: outcome.direction.label)
-                    if let name = outcome.fixedName { SField(label: "이름", value: name) }
+                    SRow(dot: ReadingSlot.direction.tint, title: "종류", value: outcome.directionWords != nil ? "방향 글자가 정해요" : outcome.kind.label)
+                    ForEach(slots.filter { $0 != .direction }, id: \.self) { slot in SRow(dot: slot.tint, title: slot.title, value: slot.area) }
+                    if let name = outcome.fixedName { SRow(title: "이름", value: name) }
                 }
             }
+            if entry.origin == .official, overridden { SButton(title: "공식대로 되돌리기", light: true) { revert(entry) } }
             SSection {
                 SToggleRow(title: "이 항목 켜기", isOn: Binding(get: { on }, set: { on = $0; toggle(entry, $0) }))
             }
-            if entry.origin == .official, overridden { SButton(title: "공식대로 되돌리기", light: true) { revert(entry) } }
             if entry.origin == .user { SButton(title: "이 항목 지우기", light: true) { delete(entry) } }
         }
     }
 }
 
-private extension ReadingAction {
+extension ReadingCondition {
+    /// 공용 표현에 보일 한 줄: 틀은 칸 이름을 색으로, 말 목록은 이어서.
+    @ViewBuilder
+    var expression: some View {
+        switch self {
+        case let .frame(_, frame), let .frameContained(_, frame): commonExpressionText(frame)
+        case let .contains(_, terms): Text(terms.joined(separator: " · "))
+        case .notEmpty: Text("비어 있지 않아요").foregroundStyle(Theme.textTertiary)
+        }
+    }
+}
+
+extension ReadingAction {
     var isIgnore: Bool { if case .ignore = self { true } else { false } }
 }
 
-private extension ReadingField {
-    var label: String {
-        switch self {
-        case .title: "제목"
-        case .subtitle: "부제"
-        case .body: "본문"
-        case .all: "알림 전체"
-        }
-    }
-}
-
-private extension ReadingCondition {
-    var label: String {
-        switch self {
-        case let .contains(field, _): "\(field.label)에 이 말이 있으면"
-        case let .frame(field, _): "\(field.label)이 이 모양이면"
-        case let .frameContained(field, _): "\(field.label)에 이 모양이 있으면"
-        case let .notEmpty(field): "\(field.label)이 있으면"
-        }
-    }
-
-    var value: String {
-        switch self {
-        case let .contains(_, terms): terms.joined(separator: " · ")
-        case let .frame(_, frame), let .frameContained(_, frame): frame.replacingOccurrences(of: #"\{re:[^}]*\}"#, with: "…", options: .regularExpression)
-        case .notEmpty: "비어 있지 않아요"
-        }
-    }
-}
-
-private extension DraftEventKind {
+extension DraftEventKind {
     var label: String {
         switch self {
         case .purchase: "결제"
@@ -223,7 +238,7 @@ private extension DraftEventKind {
     }
 }
 
-private extension TransactionDirection {
+extension TransactionDirection {
     var label: String {
         switch self {
         case .outflow: "나가는 돈"
@@ -233,7 +248,7 @@ private extension TransactionDirection {
     }
 }
 
-private extension NotTransactionReason {
+extension NotTransactionReason {
     var label: String {
         switch self {
         case .promotion: "광고"
