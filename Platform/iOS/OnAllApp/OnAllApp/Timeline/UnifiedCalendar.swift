@@ -81,6 +81,8 @@ struct CalendarCard: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * max(0, min(1.03, p)), alignment: .top)
                 .clipped()
+                // The rows above and below the visible band are laid out beyond the clip; without this they still took the touches over the header buttons.
+                .contentShape(Rectangle())
                 handle
             }
             .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
@@ -113,6 +115,13 @@ struct CalendarCard: View {
 
     private func tap(_ day: LocalDate) {
         guard state.allowsTap else { return }
+        // Belt and braces: a day whose row is outside the visible band cannot have been what the finger meant.
+        let start = MonthUnfold.gridStart(of: first)
+        let row = (day.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        let selectedRow = (selected.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        let p = max(0, min(1.03, state.progress))
+        let top = CGFloat(row) * rowHeight - CGFloat(selectedRow) * rowHeight * (1 - state.progress)
+        guard top + rowHeight > 0, top < stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * p else { return }
         onSelect(day)
     }
 
