@@ -253,6 +253,20 @@ actor AppLedger {
         try await change { try $0.answer(question, binding: binding, newAccount: newAccount, at: now, makeID: { "account-\(UUID().uuidString)" }) }
     }
 
+    func ignoreType(of notificationID: String) async throws {
+        try await change { try $0.ignoreType(of: notificationID) }
+    }
+
+    func stopIgnoring(_ key: String) async throws {
+        try await change { try $0.stopIgnoring(key) }
+    }
+
+    /// The kinds of notification the user skips, for undoing it.
+    func ignoredTypes() -> [IgnoredType] {
+        guard case let .live(ledger, _) = backing else { return [] }
+        return ledger.setup.ignoredTypes
+    }
+
     private func change(_ apply: (inout IntakeLedger) throws -> Void) async throws {
         try await completeHistoryOrThrow()
         guard case .live(var ledger, let store) = backing else { throw AppLedgerError.notLive }

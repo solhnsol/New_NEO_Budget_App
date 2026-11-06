@@ -8,15 +8,18 @@ public struct IntakeSetup: Codable, Equatable, Sendable {
     /// Balance breaks the user confirmed as real money (see `ConfirmedGap`), and the ones they chose to leave alone.
     public private(set) var confirmedGaps: [ConfirmedGap]
     public private(set) var acknowledgedBreaks: Set<String>
+    /// Kinds of notification the user chose to skip: matching ones are never read, now or later.
+    public private(set) var ignoredTypes: [IgnoredType]
 
     public init(registry: AccountRegistry = AccountRegistry(), configuration: LedgerConfiguration = LedgerConfiguration()) {
         self.registry = registry
         self.configuration = configuration
         self.confirmedGaps = []
         self.acknowledgedBreaks = []
+        self.ignoredTypes = []
     }
 
-    private enum CodingKeys: String, CodingKey { case registry, configuration, confirmedGaps, acknowledgedBreaks }
+    private enum CodingKeys: String, CodingKey { case registry, configuration, confirmedGaps, acknowledgedBreaks, ignoredTypes }
 
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
@@ -25,7 +28,22 @@ public struct IntakeSetup: Codable, Equatable, Sendable {
         // A setup saved before balance breaks existed has neither.
         confirmedGaps = try values.decodeIfPresent([ConfirmedGap].self, forKey: .confirmedGaps) ?? []
         acknowledgedBreaks = try values.decodeIfPresent(Set<String>.self, forKey: .acknowledgedBreaks) ?? []
+        ignoredTypes = try values.decodeIfPresent([IgnoredType].self, forKey: .ignoredTypes) ?? []
     }
+
+    public func ignores(_ notification: RawNotification) -> Bool {
+        let key = IgnoredType.key(of: notification)
+        return ignoredTypes.contains { $0.key == key }
+    }
+
+    public mutating func ignoreType(of notification: RawNotification) {
+        let key = IgnoredType.key(of: notification)
+        if !ignoredTypes.contains(where: { $0.key == key }) {
+            ignoredTypes.append(IgnoredType(key: key, appName: notification.source.displayName, sample: NotificationText.joined(notification)))
+        }
+    }
+
+    public mutating func stopIgnoring(_ key: String) { ignoredTypes.removeAll { $0.key == key } }
 
     public mutating func confirm(_ gap: ConfirmedGap) {
         if !confirmedGaps.contains(where: { $0.key == gap.key }) { confirmedGaps.append(gap) }
@@ -106,6 +124,21 @@ public struct IntakeSetup: Codable, Equatable, Sendable {
 }
 
 /// What became of one received notification.
+/// One kind of notification to skip: same app, same wording once digits and spaces are left out (amounts, balances,
+/// times and card numbers change between messages of one kind; merchants and names do too, so only the start counts).
+public struct IgnoredType: Codable, Equatable, Identifiable, Sendable {
+    public let key: String
+    public let appName: String?
+    /// The notification it was made from, to show the user what they chose.
+    public let sample: String
+    public var id: String { key }
+
+    public static func key(of notification: RawNotification) -> String {
+        let shape = NotificationText.joined(notification).filter { !$0.isNumber && !$0.isWhitespace }
+        return notification.source.applicationIdentifier + "|" + String(shape.prefix(16))
+    }
+}
+
 public enum NotificationIntakeOutcome: Equatable, Sendable {
     /// Not a financial act (an ad, a login code, a balance notice...). Kept as raw input only.
     case notTransaction(NotTransactionReason)

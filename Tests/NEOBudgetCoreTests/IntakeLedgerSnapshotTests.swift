@@ -58,6 +58,22 @@ import NEOBudgetInMemoryStorage
         }
     }
 
+    @Test func ignoringATypeSkipsItsNotificationsNowAndLaterAndCanBeUndone() throws {
+        let ad = try note("Toss", "이번 주 혜택 3개를 확인해 보세요", minute: 1)
+        let sameKind = try note("Toss", "이번 주 혜택 7개를 확인해 보세요", minute: 2)
+        var ledger = try IntakeLedger(notifications: [], setup: IntakeSetup(), intake: intake)
+        try ledger.receive([ad])
+        try ledger.ignoreType(of: ad.id)
+        try ledger.receive([sameKind])
+        #expect(ledger.status(of: ad.id) == .ignoredByUser)
+        #expect(ledger.status(of: sameKind.id) == .ignoredByUser)
+        let restored = try JSONDecoder().decode(IntakeSetup.self, from: JSONEncoder().encode(ledger.setup))
+        #expect(restored.ignoredTypes.count == 1)
+        try ledger.stopIgnoring(try #require(ledger.setup.ignoredTypes.first).key)
+        #expect(ledger.status(of: ad.id) != .ignoredByUser)
+        #expect(ledger.status(of: sameKind.id) != .ignoredByUser)
+    }
+
     @Test func aSnapshotMadeUnderOtherInputsIsRefused() throws {
         let all = try stream()
         let saved = try settled(Array(all[..<4]))

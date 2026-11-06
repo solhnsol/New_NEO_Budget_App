@@ -10,6 +10,7 @@ struct IntakeInboxView: View {
     @State private var items: [InboxItem]?
     @State private var imported: [PendingImport] = []
     @State private var questions: [AccountQuestion] = []
+    @State private var ignoredTypes: [IgnoredType] = []
     @State private var answering: AccountQuestion?
     @State private var filter = 0
 
@@ -29,7 +30,7 @@ struct IntakeInboxView: View {
     static func bucket(_ status: IntakeStatus) -> Bucket {
         switch status {
         case .recorded, .sameActAs, .coveredByImport: .recorded
-        case .notTransaction: .ignored
+        case .notTransaction, .ignoredByUser: .ignored
         case .waiting, .unreadable, .failed: .needsCheck
         }
     }
@@ -49,6 +50,22 @@ struct IntakeInboxView: View {
             if !imported.isEmpty {
                 SSection(title: "가져온 기록 중 정리할 것") {
                     ForEach(imported) { item in ImportedRow(item: item, zoneIdentifier: model.dayZone.identifier) }
+                }
+            }
+            if filter == 3, !ignoredTypes.isEmpty {
+                SSection(title: "무시하는 알림") {
+                    ForEach(ignoredTypes) { type in
+                        HStack(spacing: 8) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(type.appName ?? "알 수 없는 앱").font(.onAll(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                                Text(type.sample).font(.onAll(size: 14)).foregroundStyle(Theme.textSecondary).lineLimit(2)
+                            }
+                            Spacer(minLength: 0)
+                            Button("해제") { Task { if await model.stopIgnoring(type.key) { await load() } } }
+                                .font(Theme.Typo.button).foregroundStyle(Theme.accentStrong)
+                        }
+                        .padding(.horizontal, 16).padding(.vertical, 12).rowDivider(inset: 16)
+                    }
                 }
             }
             ForEach(sections, id: \.title) { section in
@@ -84,6 +101,7 @@ struct IntakeInboxView: View {
         items = await model.inbox()
         imported = await model.pendingImports()
         questions = await model.accountQuestions()
+        ignoredTypes = await model.ignoredTypes()
     }
 }
 
@@ -143,6 +161,16 @@ struct InboxDetailScreen: View {
     let item: InboxItem
     @State private var choosingAccount: RuleQuestion?
     @State private var makingRule = false
+    @State private var failed = false
+    @Environment(\.dismiss) private var dismiss
+
+    private func toggleIgnore(stop: Bool) {
+        Task {
+            let key = IgnoredType.key(of: item.notification)
+            let done = stop ? await model.stopIgnoring(key) : await model.ignoreType(of: item.id)
+            if done { dismiss() } else { failed = true }
+        }
+    }
 
     var body: some View {
         let notification = item.notification
@@ -164,8 +192,14 @@ struct InboxDetailScreen: View {
                 SButton(title: "계좌 정하기", light: true) { Task { choosingAccount = await model.ruleQuestion(for: item.id) } }
             }
             SButton(title: "이 알림으로 새 규칙 만들기", top: 10) { makingRule = true }
+            if case .ignoredByUser = item.status {
+                SButton(title: "이 유형 알림 다시 받기", light: true, top: 10) { toggleIgnore(stop: true) }
+            } else {
+                SButton(title: "이 유형 알림 무시하기", light: true, top: 10) { toggleIgnore(stop: false) }
+            }
         }
         .sheet(item: $choosingAccount) { question in RuleAnswerSheet(model: model, question: question) }
+        .alert("바꾸지 못했어요", isPresented: $failed) { Button("확인", role: .cancel) {} }
         .navigationDestination(isPresented: $makingRule) { RuleEditScreen(rule: nil, sample: IntakeText.preview(notification)) }
     }
 }
