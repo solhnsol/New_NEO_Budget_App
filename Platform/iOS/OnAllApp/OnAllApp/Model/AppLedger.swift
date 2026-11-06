@@ -52,7 +52,8 @@ actor AppLedger {
         // A history that cannot be read is left out rather than keeping the whole ledger from opening.
         let history = try? store.history()
         let notifications = try store.notifications()
-        let intake = NotificationIntake(timeZoneIdentifier: zone.identifier)
+        // 읽기 사전이 바뀌면 저장해 둔 장부가 맞지 않아 처음부터 다시 읽는다(규칙 키에 사전이 들어 있다).
+        let intake = NotificationIntake(timeZoneIdentifier: zone.identifier, readingDictionary: (try? store.readingDictionary()) ?? .official)
         let ledger: IntakeLedger
         // The saved ledger plus the notifications after it, when it still fits; otherwise (no file, damaged, other rules,
         // history or setup) everything is replayed as before.

@@ -139,7 +139,7 @@ public struct IntakeLedger {
     }
 
     private static func rulesKey(_ intake: NotificationIntake) -> String {
-        [NotificationIntake.parserID, NotificationIntake.parserVersion, intake.policyVersion, intake.timeZoneIdentifier, String(rulesRevision)]
+        [NotificationIntake.parserID, NotificationIntake.parserVersion, intake.policyVersion, intake.timeZoneIdentifier, String(rulesRevision), intake.readingKey]
             .joined(separator: "/")
     }
 

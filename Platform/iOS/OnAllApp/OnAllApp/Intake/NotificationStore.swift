@@ -46,6 +46,24 @@ struct NotificationStore: Sendable {
 
     func save(setup: IntakeSetup) throws { try write(setup, to: "setup.json") }
 
+    /// 읽기 사전: 공식 항목은 앱에 들어 있고, 여기에는 내가 만든 항목·끈 항목·고친 공식 항목만 저장한다.
+    func readingDictionary() throws -> ReadingDictionary {
+        var dictionary = ReadingDictionary.official
+        if let saved = try read(SavedReadingDictionary.self, from: "reading-dictionary.json") {
+            dictionary.userEntries = saved.userEntries
+            dictionary.disabledOfficialIDs = saved.disabledOfficialIDs
+            dictionary.officialOverrides = saved.officialOverrides
+        }
+        return dictionary
+    }
+
+    func save(readingDictionary dictionary: ReadingDictionary) throws {
+        try write(SavedReadingDictionary(
+            userEntries: dictionary.userEntries, disabledOfficialIDs: dictionary.disabledOfficialIDs,
+            officialOverrides: dictionary.officialOverrides
+        ), to: "reading-dictionary.json")
+    }
+
     private func read<Value: Decodable>(_ type: Value.Type, from name: String) throws -> Value? {
         let url = directory.appendingPathComponent(name)
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
@@ -62,4 +80,10 @@ struct NotificationStore: Sendable {
             options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
         )
     }
+}
+
+private struct SavedReadingDictionary: Codable {
+    var userEntries: [ReadingEntry]
+    var disabledOfficialIDs: Set<String>
+    var officialOverrides: [String: ReadingEntry]
 }

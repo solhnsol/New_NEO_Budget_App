@@ -79,3 +79,42 @@ private let handWritten: [RawNotification] = [
     }
     #expect(all.count > 40)
 }
+
+private func ctx() throws -> NotificationParsingContext {
+    try NotificationParsingContext(timeZoneIdentifier: "Asia/Seoul", referenceTimeUnixMilliseconds: 0, parserID: "p", parserVersion: "1")
+}
+
+@Test func aUserIgnoreEntryForOneAppBeatsTheOfficialEntriesAndStaysInThatApp() throws {
+    let ignore = ReadingEntry(
+        id: "user.mukeunji", name: "묵은지 작업실 통장", origin: .user, applicationIdentifier: "viva.republica.toss",
+        conditions: [.contains(.all, ["묵은지 작업실"])], action: .ignore(.unrecognized)
+    )
+    let parser = ReadingEntryParser(dictionary: ReadingDictionary(userEntries: [ignore]))
+    let text = "묵은지 작업실 통장 출금 10,000원"
+    #expect(try parser.parse(note("토스", nil, text, app: "viva.republica.toss"), context: ctx()) == .notTransaction(.unrecognized))
+    guard case .candidate = try parser.parse(note("토스", nil, text, app: "other.app"), context: ctx()) else {
+        Issue.record("the ignore entry must not reach other apps"); return
+    }
+}
+
+@Test func aUserFrameEntryReadsItsSlotsAndAnOfficialEntryCanBeSwitchedOff() throws {
+    let entry = ReadingEntry(
+        id: "user.frame", name: "쿠폰 결제", origin: .user, applicationIdentifier: "my.app",
+        conditions: [.frame(.body, "{가맹점}에서 {금액}원 결제")],
+        action: .read(ReadingOutcome(ruleID: "user.frame", kind: .purchase, direction: .outflow))
+    )
+    let parser = ReadingEntryParser(dictionary: ReadingDictionary(userEntries: [entry]))
+    guard case let .candidate(draft) = try parser.parse(note(nil, nil, "카페 모아에서 4,500원 결제", app: "my.app"), context: ctx()) else {
+        Issue.record("frame entry must read"); return
+    }
+    #expect(draft.amount.minorUnits == 4_500)
+    #expect(draft.counterparty.merchantRaw == "카페 모아")
+    #expect(draft.ruleID == "user.frame")
+
+    let off = ReadingEntryParser(dictionary: ReadingDictionary(disabledOfficialIDs: ["official.promotion"]))
+    guard case .candidate = try off.parse(note(nil, nil, "광고 출금 1,000원"), context: ctx()) else {
+        Issue.record("switching an official ignore entry off must read the notification"); return
+    }
+    #expect(NotificationIntake(timeZoneIdentifier: "Asia/Seoul").readingKey
+        != NotificationIntake(timeZoneIdentifier: "Asia/Seoul", readingDictionary: ReadingDictionary(userEntries: [entry])).readingKey)
+}

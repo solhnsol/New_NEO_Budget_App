@@ -143,6 +143,15 @@ public struct NotificationIntake: Sendable {
         self.correlator = correlator
     }
 
+    /// 읽기 사전 내용의 지문. 사전이 달라지면 저장한 장부를 다시 읽어야 한다.
+    public var readingKey: String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in (try? encoder.encode(parser.dictionary)) ?? Data() { hash = (hash ^ UInt64(byte)) &* 0x100_0000_01b3 }
+        return String(hash, radix: 16)
+    }
+
     public func ingest<Repository: CandidateProcessingRepository>(
         _ notification: RawNotification,
         setup: inout IntakeSetup,
