@@ -334,6 +334,10 @@ public struct LegacyKoreanParser: TransactionCandidateParser, Sendable {
     /// Woori's `[입금] 차유진        67,035원 1002-967-767***계좌 잔액 …`: the name sits between the tag and the amount.
     private static let nameAfterTag = try! NSRegularExpression(pattern: #"\[(?:입금|이체입금)\]\s*(.+?)\s+[0-9][0-9,]*\s*원"#)
 
+    private static func hasWonAmount(_ line: String) -> Bool {
+        line.range(of: #"[0-9][0-9,]*\s*원"#, options: .regularExpression) != nil
+    }
+
     private func parseCounterparty(
         _ lines: [String], direction: TransactionDirection, text: String, kind: DraftEventKind, title: String? = nil
     ) -> DraftCounterparty {
@@ -341,7 +345,7 @@ public struct LegacyKoreanParser: TransactionCandidateParser, Sendable {
         // A bare status headline names nobody: `결제 완료` as the name of a purchase.
         let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제", "결제 완료", "결제완료", "승인 완료", "승인완료", "이체 완료", "이체완료", "송금 완료", "송금완료", "출금 완료", "입금 완료", "충전 완료"]
         let candidates = lines.filter {
-            !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0) && !Self.matches(Self.issuerApprovalHeader, $0)
+            !Self.hasWonAmount($0) && !labels.contains(where: $0.contains) && !markerLines.contains($0) && !Self.matches(Self.issuerApprovalHeader, $0)
                 && !$0.hasPrefix("[Web발신]")
         }
         // The app's own title line (`우리WON뱅킹 입출금알림`) names the sender of nothing; use it only when no other line can be the name.

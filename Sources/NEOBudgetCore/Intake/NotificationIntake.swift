@@ -189,11 +189,13 @@ public struct NotificationIntake: Sendable {
         var recordedResolution = resolution
         var binding = observationWithoutID.binding
         var transferCounterpart = observationWithoutID.transferCounterpart
+        var cardInstrument: CreditInstrumentID?
         let waiting = try repository.correlationRecords(near: draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
         let earlier = try repository.storedCandidate(ofNotification: draft.rawNotificationID, eventIndex: draft.eventIndex)
         if let recorded = earlier?.observation, Self.rewrittenRuleIDs.contains(recorded.draft.ruleID) {
             recordedDraft = recorded.draft
             transferCounterpart = recorded.transferCounterpart
+            if recorded.draft.ruleID == Self.cardBillRuleID { cardInstrument = Self.cardInstrument(for: recorded.draft, in: setup.configuration.creditInstruments) }
         } else if earlier == nil, transferCounterpart == nil, case let .account(own)? = binding,
                   let wallet = setup.registry.counterpartAlias(in: NotificationText.joined(notification)), wallet != own,
                   let transfer = Self.asTransfer(draft) {
@@ -220,6 +222,13 @@ public struct NotificationIntake: Sendable {
             // A bank withdrawal `토스 <이름>` with no Toss alert to pair with (Toss sends none while its app is open) is the user's own
             // transfer to that person. The Toss payment pairing above wins when its alert is already here.
             recordedDraft = person
+        } else if earlier == nil, case let .account(own)? = binding, let bill = Self.asCardBillPayment(draft, text: NotificationText.joined(notification), cards: setup.configuration.creditInstruments),
+                  !waiting.contains(where: { $0.draft.kind == .purchase && $0.binding == .account(own) && $0.draft.amount == draft.amount }) {
+            // `[출금] 현대카드 1,069,690원` with no card approval of that money: the monthly bill, paid from this account.
+            recordedDraft = bill.draft
+            cardInstrument = bill.card
+        } else if earlier == nil, case .account? = binding, let premium = Self.asHealthInsurance(draft, text: NotificationText.joined(notification)) {
+            recordedDraft = premium
         } else if earlier == nil, case .account? = binding, let charge = Self.asPrepaidChargeSpending(draft, text: NotificationText.joined(notification)) {
             // The user has not registered that prepaid wallet (a registered one is the alias transfer above): the top-up stays spending.
             recordedDraft = charge
@@ -244,6 +253,7 @@ public struct NotificationIntake: Sendable {
         let candidate = try assembler.assemble(recordedDraft, resolution: recordedResolution, context: CandidateAssemblyContext(
             timeZoneIdentifier: timeZoneIdentifier,
             transferCounterpartAccountID: transferCounterpart,
+            cardPaymentInstrumentID: cardInstrument,
             cancelledPurchase: cancelled,
             policyVersion: policyVersion
         ))
@@ -260,17 +270,26 @@ public struct NotificationIntake: Sendable {
         if case .promoted = result, recordedDraft.kind == .purchase {
             try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
         }
+        try settleStaleWithdrawals(at: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
+        // A withdrawal booked as spending a moment ago may be what a waiting cancellation was for.
+        if recordedDraft.kind == .withdrawal {
+            try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
+        }
         return .processed(candidateID: candidate.id, result: result)
     }
 
     static let aliasTransferRuleID = "alias-transfer"
     public static let tossPersonTransferRuleID = "toss-person-transfer"
     static let prepaidChargeSpendingRuleID = "prepaid-charge-spending"
-    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID]
+    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID, cardBillRuleID, healthInsuranceRuleID]
+    static let healthInsuranceRuleID = "health-insurance-withdrawal"
+    private static let healthInsurancePattern = try! NSRegularExpression(pattern: #"\[출금\]\s*건강[가-힣]{2,4}\s+[0-9]"#)
+    static let cardBillRuleID = "card-bill-withdrawal"
+    private static let cardBillPattern = try! NSRegularExpression(pattern: #"\[출금\]\s*([가-힣]*카드)\s+[0-9][0-9,]*\s*원"#)
 
     /// Woori's `[출금] 토스    김의근 10,000원`: the person's name sits between `토스` and the amount.
     private static let tossPersonPatterns = [
-        #"\[출금\]\s*토스\s+([가-힣]{2,4})\s+[0-9][0-9,]*\s*원"#,
+        #"\[출금\]\s*토스\s+([가-힣]{2,4})[（(]?\s+[0-9][0-9,]*\s*원"#,
         // The SMS layout: the name follows the masked account number.
         #"\*\S*\s+토스\s+([가-힣]{2,4})\s+(?:잔액|잔고|[0-9]{1,2}/)"#,
     ].map { try! NSRegularExpression(pattern: $0) }
@@ -297,10 +316,33 @@ public struct NotificationIntake: Sendable {
         return rewritten(draft, ruleID: prepaidChargeSpendingRuleID, counterparty: DraftCounterparty(merchantRaw: "카카오페이", memoRaw: "충전"))
     }
 
-    private static func rewritten(_ draft: TransactionCandidateDraft, ruleID: String, counterparty: DraftCounterparty) -> TransactionCandidateDraft? {
+    /// A bank withdrawal named after a registered card (`[출금] 현대카드 …`) is that card's bill. shortcut: a bill arriving before
+    /// the approval of a same-money check-card purchase would be booked as a bill; none seen, since approvals precede the bank alert.
+    static func asCardBillPayment(_ draft: TransactionCandidateDraft, text: String, cards: [CreditInstrument]) -> (draft: TransactionCandidateDraft, card: CreditInstrumentID)? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              let match = cardBillPattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text),
+              let card = cards.first(where: { $0.name.contains(String(text[range])) }),
+              let bill = rewritten(draft, ruleID: cardBillRuleID, counterparty: DraftCounterparty(merchantRaw: card.name, memoRaw: "카드 대금"), kind: .cardBillPayment)
+        else { return nil }
+        return (bill, card.id)
+    }
+
+    /// The bank prints the health insurance auto-debit as `[출금] 건강<이름> …`: spending, not a transfer.
+    static func asHealthInsurance(_ draft: TransactionCandidateDraft, text: String) -> TransactionCandidateDraft? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              healthInsurancePattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return nil }
+        return rewritten(draft, ruleID: healthInsuranceRuleID, counterparty: DraftCounterparty(merchantRaw: "건강보험료"))
+    }
+
+    private static func cardInstrument(for draft: TransactionCandidateDraft, in cards: [CreditInstrument]) -> CreditInstrumentID? {
+        cards.first(where: { $0.name == draft.counterparty.merchantRaw })?.id
+    }
+
+    private static func rewritten(_ draft: TransactionCandidateDraft, ruleID: String, counterparty: DraftCounterparty, kind: DraftEventKind = .purchase) -> TransactionCandidateDraft? {
         try? TransactionCandidateDraft(
             rawNotificationID: draft.rawNotificationID, eventIndex: draft.eventIndex, parserID: draft.parserID,
-            parserVersion: draft.parserVersion, ruleID: ruleID, kind: .purchase, direction: .outflow,
+            parserVersion: draft.parserVersion, ruleID: ruleID, kind: kind, direction: .outflow,
             amount: draft.amount, balanceAfter: draft.balanceAfter, occurredAt: draft.occurredAt, instrument: draft.instrument,
             counterparty: counterparty, evidence: draft.evidence, issues: draft.issues.filter { $0 != .merchantMissing },
             confidence: draft.confidence
@@ -353,6 +395,31 @@ public struct NotificationIntake: Sendable {
                 },
                 policyVersion: policyVersion
             ))
+            let revisions = try repository.revisions()
+            _ = try repository.process(
+                candidate, observation: observation, correlator: correlator,
+                expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger
+            )
+        }
+    }
+
+    /// How long a bank withdrawal waits before it is booked as spending: none. A later alert that explains it corrects the booking.
+    public static let withdrawalWaitMilliseconds: Int64 = 0
+
+    /// A bank withdrawal nothing has explained yet is spending: named after whom it went to, with no
+    /// category or shop, which the user is asked for later. `now` is the time of the newest notification (or the clock).
+    public func settleStaleWithdrawals<Repository: CandidateProcessingRepository>(at now: Int64, repository: inout Repository) throws {
+        let waiting = try repository.correlationRecords(near: now, within: Self.withdrawalWaitMilliseconds * 4).filter {
+            $0.entryID == nil && $0.corroborates == nil && ($0.draft.kind == .withdrawal || $0.draft.kind == .transferOut) && $0.draft.direction == .outflow
+                && $0.draft.occurredAt.unixMilliseconds + Self.withdrawalWaitMilliseconds <= now
+        }.sorted { ($0.draft.occurredAt.unixMilliseconds, $0.candidateID.rawValue) < ($1.draft.occurredAt.unixMilliseconds, $1.candidateID.rawValue) }
+        for record in waiting {
+            guard case .account? = record.binding else { continue }
+            let candidate = try assembler.assemble(record.draft, resolution: .resolved(record.binding!), context: CandidateAssemblyContext(
+                timeZoneIdentifier: timeZoneIdentifier, bookWithdrawalAsSpending: true, policyVersion: policyVersion
+            ))
+            guard candidate.status == .ready else { continue }
+            let observation = record.observation(cancels: nil)
             let revisions = try repository.revisions()
             _ = try repository.process(
                 candidate, observation: observation, correlator: correlator,
