@@ -45,6 +45,18 @@ import NEOBudgetCore
     #expect(trips([at(today, 9, 0), at(today, 9, 40)]).map(\.legs) == [[txID("board"), txID("end")]])
 }
 
+@Test func aSingleBoardingWithAnExitTapIsATripWithAZeroWonAlighting() {
+    let board = marker("board", at: at(today, 8, 24), amount: 1_550, title: "Metro")
+    let coffee = marker("coffee", at: at(today, 9, 30), amount: 4_500, title: "커피")
+    func trips(_ taps: [Int64]) -> [TransitTrip] {
+        TransitTripMerge.trips(in: [board, coffee], accountOf: { _ in "tmoney" }, isTransit: { $0.id == txID("board") }, noChargeTaps: taps)
+    }
+    #expect(trips([]).isEmpty)
+    let trip = trips([at(today, 9, 2), at(today, 12, 0)])
+    #expect(trip.map(\.legs) == [[txID("board")]])
+    #expect(trip.first?.exitTaps == [at(today, 9, 2)])
+}
+
 @Test func aTripReadsAsBoardingAndAlightingLines() {
     let board = marker("board", at: at(today, 8, 24), amount: 1_550, title: "Metro")
     let end = marker("end", at: at(today, 9, 2), amount: 100, title: "Metro")

@@ -245,11 +245,26 @@ struct RailPlan {
         rows.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
 
         // Bundles: a group the user made, else a transit trip (a boarding and the charges that followed).
-        let keys = TransactionBundling.keys(
+        let (keys, exits) = TransactionBundling.keys(
             rows.map { TransactionBundling.Candidate(id: $0.transactionID, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncome && !$0.isIncoming) },
             dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf, noChargeTaps: noChargeTaps
         )
         for index in rows.indices { rows[index].bundleKey = keys[index] }
+        // A trip's no-charge exit taps are its ₩0 하차 legs, at their own time.
+        for (key, taps) in exits {
+            guard let boarding = rows.first(where: { $0.bundleKey == key }) else { continue }
+            for tap in taps {
+                let minute = Int((tap - timeline.dayStartUnixMilliseconds) / 60_000)
+                guard minute >= 0, minute < timeline.railEndMinute else { continue }
+                var leg = Row(
+                    id: "t/\(tap)", transactionID: TransactionBundling.tapID(tap), minute: minute, title: "하차", category: boarding.category,
+                    amountText: RailPlan.railAmount(Formatting.money(0, currency: "KRW"), incoming: false), isIncoming: false, colorHex: boarding.colorHex
+                )
+                leg.bundleKey = key
+                rows.append(leg)
+            }
+        }
+        rows.sort { ($0.minute, $0.id) < ($1.minute, $1.id) }
         var bundles: [Bundle] = []
         var rowBundle = [Int?](repeating: nil, count: rows.count)
         for (key, indices) in Dictionary(grouping: rows.indices.filter { rows[$0].bundleKey != nil }, by: { rows[$0].bundleKey! }).sorted(by: { $0.value[0] < $1.value[0] }) {
@@ -258,7 +273,7 @@ struct RailPlan {
             var title = rows[ordered[0]].title + " 외 \(ordered.count - 1)건"
             if key.hasPrefix("a:") {
                 // A trip: called by its vehicle, its first charge the 승차 and the rest 하차.
-                title = TransitMode.groupName(for: ordered.map { rows[$0].title })
+                title = TransitMode.groupName(for: ordered.filter { !TransactionBundling.isTap(rows[$0].transactionID) }.map { rows[$0].title })
                 for (position, index) in ordered.enumerated() { rows[index].title = position == 0 ? "승차" : "하차" }
             }
             for index in ordered { rowBundle[index] = bundles.count }
@@ -387,6 +402,7 @@ private struct RailTimeline: View {
                         selected: pickedState(index, bundle, plan),
                         selecting: model?.selection.isActive ?? false,
                         onTap: {
+                            if TransactionBundling.isTap(row.transactionID) { return }
                             if row.isIncome { return onOpenIncome(row.transactionID) }
                             guard !HapticHold.justHeld(row.id) else { return }
                             guard let model else { return onOpenTransaction(row.transactionID) }
@@ -400,7 +416,7 @@ private struct RailTimeline: View {
                         },
                         onCollapse: { if let bundle { toggleOpen(bundle) } },
                         onLongPress: {
-                            guard !row.isIncome, let model else { return }
+                            guard !row.isIncome, !TransactionBundling.isTap(row.transactionID), let model else { return }
                             withAnimation(Theme.Motion.selectSlide) {
                                 if let bundle, !isOpen { model.selection.begin(withAll: ids(of: bundle, plan)) } else { model.selection.begin(with: row.transactionID) }
                             }
@@ -422,7 +438,9 @@ private struct RailTimeline: View {
         .padding(.vertical, RailMetrics.vertical)
     }
 
-    private func ids(of bundle: RailPlan.Bundle, _ plan: RailPlan) -> [LedgerEntryID] { bundle.indices.map { plan.rows[$0].transactionID } }
+    private func ids(of bundle: RailPlan.Bundle, _ plan: RailPlan) -> [LedgerEntryID] {
+        bundle.indices.map { plan.rows[$0].transactionID }.filter { !TransactionBundling.isTap($0) }
+    }
 
     private func toggleOpen(_ bundle: RailPlan.Bundle) {
         guard let model else { return }
@@ -603,7 +621,7 @@ private struct TransactionRailRow: View {
         ZStack(alignment: .topLeading) {
             dotView(dot)
             HStack(spacing: 0) {
-                SelectCheckSlot(selecting: selecting && !row.isIncome, picked: selected)
+                SelectCheckSlot(selecting: selecting && !row.isIncome && !TransactionBundling.isTap(row.transactionID), picked: selected)
                 tile
                 nameView.padding(.leading, 8)
                 Spacer(minLength: Theme.Space.s)
@@ -625,7 +643,7 @@ private struct TransactionRailRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .hapticLongPress(id: row.id, enabled: !selecting && !row.isIncome, pressing: $pressing, perform: onLongPress)
+        .hapticLongPress(id: row.id, enabled: !selecting && !row.isIncome && !TransactionBundling.isTap(row.transactionID), pressing: $pressing, perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)
@@ -772,8 +790,14 @@ enum TransactionBundling {
         let eligible: Bool
     }
 
-    /// A key per candidate (`u:` a user's group, `a:` a transit trip), nil when it is in no bundle of two or more.
-    static func keys(_ items: [Candidate], dayStart: Int64, groupOf: (LedgerEntryID) -> String?, noChargeTaps: [Int64] = []) -> [String?] {
+    /// A no-charge exit tap drawn as a ₩0 하차 leg. It is not a ledger entry, so it opens and selects nothing.
+    static func tapID(_ unixMilliseconds: Int64) -> LedgerEntryID { LedgerEntryID(rawValue: "tap/\(unixMilliseconds)") }
+    static func isTap(_ id: LedgerEntryID) -> Bool { id.rawValue.hasPrefix("tap/") }
+
+    /// A key per candidate (`u:` a user's group, `a:` a transit trip), nil when it is in no bundle of two or more; and the exit taps of each trip
+    /// by key (a boarding and its ₩0 하차 are a bundle of two).
+    static func keys(_ items: [Candidate], dayStart: Int64, groupOf: (LedgerEntryID) -> String?, noChargeTaps: [Int64] = []) -> (keys: [String?], exits: [String: [Int64]]) {
+        var exits: [String: [Int64]] = [:]
         var keys = items.map { $0.eligible ? groupOf($0.id).map { "u:" + $0 } : nil }
         let loose = items.indices.filter { keys[$0] == nil && items[$0].eligible }
         let markers = loose.compactMap { index -> TransactionMarker? in
@@ -785,8 +809,10 @@ enum TransactionBundling {
         let transit = Dictionary(loose.map { (items[$0].id, CategoryIcon.symbol(for: items[$0].category) == "car") }, uniquingKeysWith: { first, _ in first })
         for trip in TransitTripMerge.trips(in: markers, accountOf: { _ in "day" }, isTransit: { transit[$0.id] ?? false }, noChargeTaps: noChargeTaps) {
             for index in loose where trip.legs.contains(items[index].id) { keys[index] = "a:" + trip.boarding.rawValue }
+            if !trip.exitTaps.isEmpty { exits["a:" + trip.boarding.rawValue] = trip.exitTaps }
         }
         let counts = Dictionary(keys.compactMap { $0 }.map { ($0, 1) }, uniquingKeysWith: +)
-        return keys.map { key in key.flatMap { counts[$0, default: 0] > 1 ? $0 : nil } }
+        let kept = keys.map { key in key.flatMap { counts[$0, default: 0] + exits[$0, default: []].count > 1 ? $0 : nil } }
+        return (kept, exits.filter { key, _ in kept.contains(key) })
     }
 }
