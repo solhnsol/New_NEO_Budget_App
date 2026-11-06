@@ -20,6 +20,9 @@ public struct WeekStripEvent: Equatable, Sendable {
     public let isAllDay: Bool
     public let startUnixMilliseconds: Int64
     public let endUnixMilliseconds: Int64
+    /// What was spent on the transactions linked to this event (known amounts, minor units of whatever currency; 0 when none). The month grid lists a past
+    /// day's events by it.
+    public var linkedSpend: Int64 = 0
 }
 
 /// Builds the seven days around a selected day. Pure, like the day timeline.
@@ -36,15 +39,22 @@ public enum WeekStripBuilder {
     ) -> [WeekStripDay] {
         let offset = ((day.weekday - firstWeekday) % 7 + 7) % 7
         let first = day.adding(days: -offset)
+        let activityByEvent = life.activitiesByEvent()
+        var spendByActivity: [ActivityID: Int64] = [:]
+        for transaction in transactions where transaction.flow == .spend {
+            for allocation in life.allocationSet(for: transaction.id)?.allocations ?? [] {
+                if let id = allocation.activityID { spendByActivity[id, default: 0] += allocation.amount.knowledge.bounds.lower }
+            }
+        }
         return (0..<7).map { index in
             let current = first.adding(days: index)
             let bounds = timeZone.dayBounds(current)
             let dayEvents = events.filter { $0.time.overlaps(from: bounds.start, to: bounds.end, in: timeZone) }.map { event -> WeekStripEvent in
                 switch event.time {
                 case let .timed(range):
-                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: false, startUnixMilliseconds: range.startUnixMilliseconds, endUnixMilliseconds: range.endUnixMilliseconds)
+                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: false, startUnixMilliseconds: range.startUnixMilliseconds, endUnixMilliseconds: range.endUnixMilliseconds, linkedSpend: activityByEvent[event.key].flatMap { spendByActivity[$0.id] } ?? 0)
                 case let .allDay(range):
-                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: true, startUnixMilliseconds: timeZone.startOfDay(range.firstDay), endUnixMilliseconds: timeZone.startOfDay(range.lastDay.adding(days: 1)))
+                    return WeekStripEvent(key: event.key, title: event.title, isAllDay: true, startUnixMilliseconds: timeZone.startOfDay(range.firstDay), endUnixMilliseconds: timeZone.startOfDay(range.lastDay.adding(days: 1)), linkedSpend: activityByEvent[event.key].flatMap { spendByActivity[$0.id] } ?? 0)
                 }
             }.sorted { ($0.isAllDay ? 0 : 1, $0.startUnixMilliseconds, $0.title) < ($1.isAllDay ? 0 : 1, $1.startUnixMilliseconds, $1.title) }
             let eventCount = dayEvents.count
