@@ -16,11 +16,16 @@ public enum LedgerTimelineProjection {
         public var titles: [LedgerEntryID: String]
         public var timePrecisions: [LedgerEntryID: TimePrecision]
         public var transitEntries: Set<LedgerEntryID>
+        /// Entries that were later found to be one leg of a transfer between the user's own accounts (a spending on a person that
+        /// turned out to be a transfer, and the cancellation that undid it). Transfers are never listed, so neither are these.
+        public var hidden: Set<LedgerEntryID>
 
-        public init(titles: [LedgerEntryID: String] = [:], timePrecisions: [LedgerEntryID: TimePrecision] = [:], transitEntries: Set<LedgerEntryID> = []) {
+        public init(titles: [LedgerEntryID: String] = [:], timePrecisions: [LedgerEntryID: TimePrecision] = [:],
+                    transitEntries: Set<LedgerEntryID> = [], hidden: Set<LedgerEntryID> = []) {
             self.titles = titles
             self.timePrecisions = timePrecisions
             self.transitEntries = transitEntries
+            self.hidden = hidden
         }
 
         public static let none = EntryDetails()
@@ -31,7 +36,7 @@ public enum LedgerTimelineProjection {
     public static func transactions(in ledger: LedgerSnapshot, details: EntryDetails = .none) -> [TransactionMarker] {
         let titles = details.titles
         return ledger.entries.compactMap { entry -> TransactionMarker? in
-            guard let impact = entry.budgetImpact else { return nil }
+            guard let impact = entry.budgetImpact, !details.hidden.contains(entry.id) else { return nil }
             let flow: TransactionFlow
             switch (entry.kind, impact.kind) {
             case (.expense, .expense): flow = .spend
@@ -63,6 +68,9 @@ public enum LedgerTimelineProjection {
     public static func details(from snapshot: CandidateProcessingSnapshot) -> EntryDetails {
         var details = EntryDetails()
         for stored in snapshot.candidates.values {
+            if let spent = stored.promotedEntryID, let cancellation = stored.reversalEntryID {
+                details.hidden.formUnion([spent, cancellation])
+            }
             guard let entryID = stored.promotedEntryID, let draft = stored.candidate.sourceDraft else { continue }
             if let title = title(of: draft.counterparty) { details.titles[entryID] = title }
             details.timePrecisions[entryID] = timePrecision(of: draft.occurredAt)
