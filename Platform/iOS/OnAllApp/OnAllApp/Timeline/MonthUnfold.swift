@@ -1,5 +1,6 @@
 import NEOBudgetCalendar
 import SwiftUI
+import UIKit
 
 /// The sizes and calendar arithmetic of the month that unfolds out of the header.
 enum MonthUnfold {
@@ -79,10 +80,53 @@ final class MonthUnfoldState {
     func lockTaps() { tapsLockedUntil = .distantFuture }
     func unlockTapsSoon() { tapsLockedUntil = Date().addingTimeInterval(0.25) }
 
-    /// The design's `expand`: response 0.42, damping 0.88.
-    private static let spring = Animation.spring(response: 0.42, dampingFraction: 0.88)
+    @ObservationIgnored private var link: CADisplayLink?
+    @ObservationIgnored private var target: CGFloat = 0
+    @ObservationIgnored private var velocity: CGFloat = 0
+
+    /// The design's `expand` (response 0.42, damping 0.88) as a spring stepped here, so a finger can take hold of it mid-flight and hand its speed on.
+    private static let stiffness: CGFloat = 223.8, damping: CGFloat = 26.3
 
     func toggle() { isOpen && progress > 0.5 ? close() : open() }
-    func open() { withAnimation(Self.spring) { progress = 1 } }
-    func close() { withAnimation(Self.spring) { progress = 0 } }
+    func open() { settle(to: 1) }
+    func close() { settle(to: 0) }
+
+    /// Springs to `target` (0 or 1) from the current progress, starting at `velocity` (progress per second).
+    func settle(to target: CGFloat, velocity: CGFloat = 0) {
+        self.target = target
+        self.velocity = max(-12, min(12, velocity))
+        guard link == nil else { return }
+        let proxy = LinkProxy { [weak self] in self?.step() }
+        let link = CADisplayLink(target: proxy, selector: #selector(LinkProxy.fire))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        self.link = link
+    }
+
+    /// A finger took hold: whatever was moving stops where it is.
+    func stop() {
+        link?.invalidate()
+        link = nil
+    }
+
+    private func step() {
+        guard let link else { return }
+        let dt = min(1.0 / 30, link.targetTimestamp - link.timestamp)
+        let sub = 4
+        for _ in 0..<sub {
+            let h = dt / CGFloat(sub)
+            velocity += (-Self.stiffness * (progress - target) - Self.damping * velocity) * h
+            progress += velocity * h
+        }
+        if abs(progress - target) < 0.0005, abs(velocity) < 0.01 {
+            progress = target
+            stop()
+        }
+    }
+}
+
+private final class LinkProxy: NSObject {
+    let tick: () -> Void
+    init(_ tick: @escaping () -> Void) { self.tick = tick }
+    @objc func fire() { tick() }
 }

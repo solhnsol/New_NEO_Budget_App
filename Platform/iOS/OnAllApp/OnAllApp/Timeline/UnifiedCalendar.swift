@@ -68,26 +68,25 @@ struct CalendarCard: View {
 
     var body: some View {
         let rows = rows
-        ProgressDriven(value: state.progress) { p in
-            VStack(spacing: 0) {
+        let p = state.progress
+        VStack(spacing: 0) {
                 dayNames
                 ZStack(alignment: .topLeading) {
-                    CalendarPage(sel: selected, p: p, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: tap).equatable().offset(x: dragX)
+                    CalendarPage(sel: selected, state: state, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: tap).equatable().offset(x: dragX)
                     if paging {
-                        CalendarPage(sel: step(-1), p: p, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: { _ in }).equatable().offset(x: dragX - width)
-                        CalendarPage(sel: step(1), p: p, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: { _ in }).equatable().offset(x: dragX + width)
+                        CalendarPage(sel: step(-1), state: state, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: { _ in }).equatable().offset(x: dragX - width)
+                        CalendarPage(sel: step(1), state: state, today: today, version: dataVersion, cells: cells, color: color, income: income, onTap: { _ in }).equatable().offset(x: dragX + width)
                     }
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * max(0, min(1.03, p)), alignment: .top)
                 .clipped()
                 handle
-            }
-            .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
         }
+        .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
         .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
         .background(GeometryReader { proxy in Color.clear.onAppear { width = proxy.size.width }.onChange(of: proxy.size.width) { _, new in width = new } })
-        .simultaneousGesture(drag)
+        .modifier(CardPan(changed: panChanged, ended: panEnded))
         .modifier(HoldToCreate(enabled: state.progress > 0.5) { phase in holdChanged(phase) })
         .task(id: first) {
             await loadMonth(first)
@@ -175,58 +174,54 @@ struct CalendarCard: View {
 
     // MARK: Gestures
 
-    private var drag: some Gesture {
-        DragGesture(minimumDistance: 6, coordinateSpace: .global)
-            .onChanged { value in
-                guard hold == nil else { return }
-                if axis == nil {
-                    guard hypot(value.translation.width, value.translation.height) >= 6 else { return }
-                    axis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
-                    startProgress = state.progress
-                    state.lockTaps()
-                    if axis == .horizontal {
-                        paging = true
-                        let current = first
-                        Task {
-                            await loadMonth(MonthUnfold.shifted(current, by: -1))
-                            await loadMonth(MonthUnfold.shifted(current, by: 1))
-                        }
-                    }
-                }
-                switch axis {
-                case .horizontal: dragX = value.translation.width
-                case .vertical:
-                    let range = CGFloat(rows) * rowHeight - stripHeight
-                    var next = startProgress + value.translation.height / range
-                    // Past either end the pull is rubber (the design: a quarter of the finger).
-                    if next > 1 { next = 1 + (next - 1) * 0.25 } else if next < 0 { next *= 0.25 }
-                    state.progress = next
-                case nil: break
+    /// The finger on the card (first call of a touch: it takes hold of a month that is still settling; `translation` is from where the touch began).
+    private func panChanged(_ translation: CGSize) {
+        guard hold == nil else { return }
+        if axis == nil {
+            guard hypot(translation.width, translation.height) >= 6 else { return }
+            axis = abs(translation.width) > abs(translation.height) ? .horizontal : .vertical
+            state.stop()
+            startProgress = state.progress
+            state.lockTaps()
+            if axis == .horizontal {
+                paging = true
+                let current = first
+                Task {
+                    await loadMonth(MonthUnfold.shifted(current, by: -1))
+                    await loadMonth(MonthUnfold.shifted(current, by: 1))
                 }
             }
-            .onEnded { value in
-                defer { axis = nil; state.unlockTapsSoon() }
-                switch axis {
-                case .horizontal: finishPaging(value)
-                case .vertical: finishPull(value)
-                case nil: break
-                }
-            }
+        }
+        switch axis {
+        case .horizontal: dragX = translation.width
+        case .vertical:
+            let range = CGFloat(rows) * rowHeight - stripHeight
+            var next = startProgress + translation.height / range
+            // Past either end the pull is rubber (the design: a quarter of the finger).
+            if next > 1 { next = 1 + (next - 1) * 0.25 } else if next < 0 { next *= 0.25 }
+            state.progress = next
+        case nil: break
+        }
     }
 
-    private func finishPull(_ value: DragGesture.Value) {
+    private func panEnded(_ translation: CGSize, _ velocity: CGSize) {
+        defer { axis = nil; state.unlockTapsSoon() }
+        switch axis {
+        case .horizontal: finishPaging(dx: translation.width, vx: velocity.width)
+        case .vertical: finishPull(v: velocity.height)
+        case nil: break
+        }
+    }
+
+    private func finishPull(v: CGFloat) {
         let range = CGFloat(rows) * rowHeight - stripHeight
-        let v = value.velocity.height
         let p = state.progress
-        let target: CGFloat = v > 500 ? 1 : v < -500 ? 0 : (p > 0.5 ? 1 : 0)
-        let remaining = target - p
-        let initial = abs(remaining) > 0.02 ? max(-6, min(8, v / (range * remaining))) : 0
-        withAnimation(.interpolatingSpring(mass: 1, stiffness: 223.8, damping: 26.3, initialVelocity: initial)) { state.progress = target }
+        // The finger's speed goes on into the spring: the month keeps moving the way the hand was.
+        state.settle(to: v > 500 ? 1 : v < -500 ? 0 : (p > 0.5 ? 1 : 0), velocity: v / range)
     }
 
-    private func finishPaging(_ value: DragGesture.Value) {
+    private func finishPaging(dx: CGFloat, vx: CGFloat) {
         let w = max(1, width)
-        let dx = value.translation.width, vx = value.velocity.width
         let go = abs(dx) > w * 0.25 || abs(vx) > 400
         let direction = (dx < 0 || vx < -400) ? 1 : -1
         let target: CGFloat = go ? -CGFloat(direction) * w : 0
@@ -250,7 +245,7 @@ struct CalendarCard: View {
 /// One page of the grid: the month of `sel`, every week at its own row, held so that `sel`'s week is at the top while `p` is 0.
 private struct CalendarPage: View, Equatable {
     let sel: LocalDate
-    let p: CGFloat
+    let state: MonthUnfoldState
     let today: LocalDate
     let version: Int
     let cells: (LocalDate) -> WeekStripDay?
@@ -260,7 +255,7 @@ private struct CalendarPage: View, Equatable {
 
     /// Redrawn only when the page, how far it is open, or what the days hold changes: a page that is only being carried sideways is left as it is.
     nonisolated static func == (lhs: CalendarPage, rhs: CalendarPage) -> Bool {
-        lhs.sel == rhs.sel && lhs.p == rhs.p && lhs.today == rhs.today && lhs.version == rhs.version
+        lhs.sel == rhs.sel && lhs.state === rhs.state && lhs.today == rhs.today && lhs.version == rhs.version
     }
 
     var body: some View {
@@ -271,13 +266,13 @@ private struct CalendarPage: View, Equatable {
         VStack(spacing: 0) {
             ForEach(0..<rowCount, id: \.self) { row in
                 CalendarWeekRow(
-                    days: (0..<7).map { start.adding(days: row * 7 + $0) }, month: first, sel: sel, p: p, today: today,
+                    days: (0..<7).map { start.adding(days: row * 7 + $0) }, month: first, sel: sel, state: state, today: today,
                     cells: cells, color: color, income: income, onTap: onTap
                 )
                 .frame(height: rowHeight)
             }
         }
-        .offset(y: -CGFloat(selectedRow) * rowHeight * (1 - p))
+        .modifier(ByProgress(state: state, y: { -CGFloat(selectedRow) * rowHeight * (1 - $0) }))
         .frame(maxWidth: .infinity, alignment: .top)
     }
 }
@@ -286,7 +281,7 @@ private struct CalendarWeekRow: View {
     let days: [LocalDate]
     let month: LocalDate
     let sel: LocalDate
-    let p: CGFloat
+    let state: MonthUnfoldState
     let today: LocalDate
     let cells: (LocalDate) -> WeekStripDay?
     let color: (CalendarID) -> Color
@@ -297,20 +292,18 @@ private struct CalendarWeekRow: View {
         let infos = days.map(cells)
         let read = infos.compactMap { $0 }
         let layout = read.count == 7 ? MonthWeekLayout(week: read, lanes: MonthWeekBars.lanes) : nil
-        // The month's layer (bars, amounts) is there from a third of the way and fully at the end; the week's (dots, amount) is gone by 40%.
-        let monthLayer = max(0, p * 2 - 0.7)
         ZStack(alignment: .topLeading) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
                     CalendarDay(
                         day: days[column], info: infos[column], inMonth: days[column].month == month.month, isSelected: days[column] == sel, today: today,
-                        p: p, color: color, income: income(days[column]), overflow: layout?.overflow[column], onTap: onTap
+                        state: state, color: color, income: income(days[column]), overflow: layout?.overflow[column], onTap: onTap
                     )
                 }
             }
             if let layout {
                 MonthWeekBars(layout: layout, color: color).padding(.top, MonthUnfold.numberRow)
-                    .opacity(monthLayer).offset(y: -(1 - p) * 6)
+                    .modifier(ByProgress(state: state, opacity: monthLayer, y: { -(1 - $0) * 6 }))
             }
         }
         .padding(.horizontal, 4)
@@ -323,7 +316,7 @@ private struct CalendarDay: View {
     let inMonth: Bool
     let isSelected: Bool
     let today: LocalDate
-    let p: CGFloat
+    let state: MonthUnfoldState
     let color: (CalendarID) -> Color
     let income: Int64
     let overflow: [WeekStripEvent]?
@@ -333,7 +326,6 @@ private struct CalendarDay: View {
         let past = day < today
         let spent = past ? MonthUnfold.spendText(of: info) : nil
         let came = past && income > 0 ? MonthUnfold.amountText(income) : nil
-        let weekLayer = max(0, 1 - p * 2.5), monthLayer = max(0, p * 2 - 0.7)
         ZStack(alignment: .top) {
             Text("\(day.day)")
                 .font(.onAll(size: 16, weight: isSelected || day == today ? .semibold : .regular).monospacedDigit())
@@ -351,15 +343,15 @@ private struct CalendarDay: View {
                 }
             }
             .frame(height: 16).padding(.top, 40)
-            .opacity(weekLayer).offset(y: -p * 4)
+            .modifier(ByProgress(state: state, opacity: { Double(max(0, 1 - $0 * 2.5)) }, y: { -$0 * 4 }))
             // The month's layer: the amounts at the foot of the cell, and the events the bars had no room for.
             if inMonth {
                 EventDots(events: came != nil && spent != nil ? [] : (overflow ?? []), color: color)
                     .padding(.top, 70).frame(maxHeight: .infinity, alignment: .top)
-                    .opacity(monthLayer).offset(y: -(1 - p) * 6)
+                    .modifier(ByProgress(state: state, opacity: monthLayer, y: { -(1 - $0) * 6 }))
                 AmountLines(spent: spent, income: came, open: 1)
                     .frame(maxHeight: .infinity, alignment: .bottom).padding(.bottom, 2)
-                    .opacity(monthLayer).offset(y: -(1 - p) * 6)
+                    .modifier(ByProgress(state: state, opacity: monthLayer, y: { -(1 - $0) * 6 }))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -371,22 +363,71 @@ private struct CalendarDay: View {
     }
 }
 
-/// Draws `content` from a number that SwiftUI interpolates frame by frame, so everything built from it moves as one.
-private struct ProgressDriven<Content: View>: View, Animatable {
-    var value: CGFloat
-    let content: (CGFloat) -> Content
+/// The month's layer (bars, amounts) is there from a third of the way and fully at the end; the week's (dots, amount) is gone by 40%.
+private func monthLayer(_ p: CGFloat) -> Double { Double(max(0, p * 2 - 0.7)) }
 
-    init(value: CGFloat, @ViewBuilder content: @escaping (CGFloat) -> Content) {
-        self.value = value
-        self.content = content
+/// An opacity and a shift taken from how far the month is open. The progress is read here and nowhere above, so a finger moving it re-evaluates these
+/// small modifiers and nothing else: the days themselves (their text, their bars) are not laid out again.
+private struct ByProgress: ViewModifier {
+    let state: MonthUnfoldState
+    var opacity: (CGFloat) -> Double = { _ in 1 }
+    var y: (CGFloat) -> CGFloat = { _ in 0 }
+
+    func body(content: Content) -> some View {
+        let p = state.progress
+        content.opacity(opacity(p)).offset(y: y(p))
+    }
+}
+
+/// The drag of the card. From iOS 18 a UIKit pan, so a finger moving does not pass through SwiftUI's gesture state on every frame; before, a DragGesture.
+private struct CardPan: ViewModifier {
+    let changed: (CGSize) -> Void
+    let ended: (CGSize, CGSize) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.gesture(PanRepresentable(changed: changed, ended: ended))
+        } else {
+            content.simultaneousGesture(
+                DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                    .onChanged { changed($0.translation) }
+                    .onEnded { ended($0.translation, $0.velocity) }
+            )
+        }
+    }
+}
+
+@available(iOS 18.0, *)
+private struct PanRepresentable: UIGestureRecognizerRepresentable {
+    let changed: (CGSize) -> Void
+    let ended: (CGSize, CGSize) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        /// Beside the hold-to-create and the day taps.
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
     }
 
-    nonisolated var animatableData: CGFloat {
-        get { value }
-        set { value = newValue }
+    func makeCoordinator(converter: CoordinateSpaceConverter) -> Coordinator { Coordinator() }
+
+    func makeUIGestureRecognizer(context: Context) -> UIPanGestureRecognizer {
+        let pan = UIPanGestureRecognizer()
+        pan.maximumNumberOfTouches = 1
+        pan.delegate = context.coordinator
+        return pan
     }
 
-    var body: some View { content(value) }
+    func handleUIGestureRecognizerAction(_ pan: UIPanGestureRecognizer, context: Context) {
+        let t = pan.translation(in: pan.view)
+        let translation = CGSize(width: t.x, height: t.y)
+        switch pan.state {
+        case .began, .changed: changed(translation)
+        case .ended:
+            let v = pan.velocity(in: pan.view)
+            ended(translation, CGSize(width: v.x, height: v.y))
+        case .cancelled, .failed: ended(translation, .zero)
+        default: break
+        }
+    }
 }
 
 /// Attaches the hold-and-follow to the open month (iOS 18 and later).
