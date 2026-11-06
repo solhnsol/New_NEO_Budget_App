@@ -1,5 +1,6 @@
 import Foundation
 import NEOBudgetCore
+import NEOBudgetInMemoryStorage
 
 /// The real ledger's durable inputs, in Application Support: every notification the Shortcut sent, in arrival order,
 /// and the user's account setup. The ledger is derived from them by replay (`IntakeLedger`), so these two files are all
@@ -34,6 +35,12 @@ struct NotificationStore: Sendable {
         )
         return history
     }
+
+    /// The built ledger saved by `IntakeLedger.snapshot()`. It is derived data, so a file that is missing, cut short or from
+    /// another format reads as nil and the caller replays everything.
+    func ledgerSnapshot() -> IntakeLedgerSnapshot? { try? read(IntakeLedgerSnapshot.self, from: "ledger-snapshot.json") }
+
+    func save(ledgerSnapshot: IntakeLedgerSnapshot) throws { try write(ledgerSnapshot, to: "ledger-snapshot.json") }
 
     func save(notifications: [RawNotification]) throws { try write(notifications, to: "notifications.json") }
 

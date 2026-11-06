@@ -18,6 +18,23 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         ledger = try InMemoryLedgerRepository(configuration: configuration)
     }
 
+    /// What a saved copy of this repository holds: the candidates (by ID order), the candidate revision and the ledger's entries.
+    public func exportedState() -> (candidateRevision: UInt64, candidates: [StoredTransactionCandidate], entries: [LedgerEntry]) {
+        (candidateRevision, candidates.sorted { $0.key.rawValue < $1.key.rawValue }.map(\.value), ledger.committedEntries)
+    }
+
+    /// Rebuilds a repository from `exportedState()`. The entries go back through the ledger's own validation, so a saved
+    /// copy that does not fit the configuration throws instead of producing a ledger the replay could not have.
+    public init(
+        configuration: LedgerConfiguration, candidateRevision: UInt64,
+        candidates stored: [StoredTransactionCandidate], entries: [LedgerEntry]
+    ) throws {
+        try self.init(configuration: configuration)
+        for entry in entries { _ = try ledger.commit(entry, expectedRevision: ledger.currentRevision) }
+        for candidate in stored { put(candidate, id: candidate.candidate.id) }
+        self.candidateRevision = candidateRevision
+    }
+
     public func processingSnapshot() throws -> CandidateProcessingSnapshot {
         CandidateProcessingSnapshot(
             candidateRevision: candidateRevision,

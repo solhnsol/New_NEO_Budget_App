@@ -27,6 +27,8 @@ actor AppLedger {
     private var backing: Backing
     private var launch: Launch?
     private var fullReplay: Task<Void, Never>?
+    /// The last snapshot write; each new one waits for it, so an older ledger never lands on top of a newer one.
+    private var snapshotWrite: Task<Void, Never>?
     private let source: UpdatableTransactionSource
     private let decoder: ShortcutNotificationDecoder
 
@@ -49,20 +51,30 @@ actor AppLedger {
         let setup = try store.setup()
         // A history that cannot be read is left out rather than keeping the whole ledger from opening.
         let history = try? store.history()
-        let launch = Launch(
-            notifications: try store.notifications(), setup: setup,
-            intake: NotificationIntake(timeZoneIdentifier: zone.identifier), history: history
-        )
-        let cutoff = Int64(Date().timeIntervalSince1970 * 1_000) - Self.recentWindow
-        let ledger = try IntakeLedger(
-            notifications: launch.notifications, setup: setup, intake: launch.intake, history: history, replayingSince: cutoff
-        )
-        // Importing registers the history's accounts in the setup; keep them. A partial replay's setup holds only what the
-        // recent notifications added, so that one waits for the full replay.
-        if ledger.isComplete {
-            if ledger.setup != setup { try store.save(setup: ledger.setup) }
+        let notifications = try store.notifications()
+        let intake = NotificationIntake(timeZoneIdentifier: zone.identifier)
+        let ledger: IntakeLedger
+        // The saved ledger plus the notifications after it, when it still fits; otherwise (no file, damaged, other rules,
+        // history or setup) everything is replayed as before.
+        if let snapshot = store.ledgerSnapshot(),
+           let restored = try? IntakeLedger(restoring: snapshot, notifications: notifications, setup: setup, intake: intake, history: history) {
+            ledger = restored
+            if restored.setup != setup { try store.save(setup: restored.setup) }
+            if restored.notifications.count != snapshot.notificationIDs.count { snapshotWrite = Self.write(restored, to: store, after: nil) }
         } else {
-            self.launch = launch
+            let launch = Launch(notifications: notifications, setup: setup, intake: intake, history: history)
+            let cutoff = Int64(Date().timeIntervalSince1970 * 1_000) - Self.recentWindow
+            ledger = try IntakeLedger(
+                notifications: launch.notifications, setup: setup, intake: launch.intake, history: history, replayingSince: cutoff
+            )
+            // Importing registers the history's accounts in the setup; keep them. A partial replay's setup holds only what the
+            // recent notifications added, so that one waits for the full replay.
+            if ledger.isComplete {
+                if ledger.setup != setup { try store.save(setup: ledger.setup) }
+                snapshotWrite = Self.write(ledger, to: store, after: nil)
+            } else {
+                self.launch = launch
+            }
         }
         backing = .live(ledger, store)
         source = UpdatableTransactionSource(LedgerTransactionSource(processing: try ledger.repository.processingSnapshot()))
@@ -185,6 +197,7 @@ actor AppLedger {
         let history = try store.save(historyData: data)
         let ledger = try IntakeLedger(notifications: current.notifications, setup: current.setup, intake: current.intake, history: history)
         try store.save(setup: ledger.setup)
+        snapshotWrite = Self.write(ledger, to: store, after: snapshotWrite)
         backing = .live(ledger, store)
         try refreshSource()
         let reconciliation = ledger.importReconciliation()
@@ -204,7 +217,10 @@ actor AppLedger {
         if !fresh.isEmpty {
             try store.save(notifications: persistedNotifications(of: ledger))
             // A partial ledger's setup lacks what the older notifications add; the full replay saves it.
-            if ledger.isComplete { try store.save(setup: ledger.setup) }
+            if ledger.isComplete {
+                try store.save(setup: ledger.setup)
+                snapshotWrite = Self.write(ledger, to: store, after: snapshotWrite)
+            }
         }
         backing = .live(ledger, store)
         try refreshSource()
@@ -242,6 +258,7 @@ actor AppLedger {
         guard case .live(var ledger, let store) = backing else { throw AppLedgerError.notLive }
         try apply(&ledger)
         try store.save(setup: ledger.setup)
+        snapshotWrite = Self.write(ledger, to: store, after: snapshotWrite)
         backing = .live(ledger, store)
         try refreshSource()
     }
@@ -278,9 +295,19 @@ actor AppLedger {
             try full.receive(partial.notifications)
             try store.save(setup: full.setup)
         } catch { return }
+        snapshotWrite = Self.write(full, to: store, after: snapshotWrite)
         backing = .live(full, store)
         self.launch = nil
         try? refreshSource()
+    }
+
+    /// Saves the built ledger off the actor, after `previous`. A failed write only costs the next launch a replay.
+    private static func write(_ ledger: IntakeLedger, to store: NotificationStore, after previous: Task<Void, Never>?) -> Task<Void, Never>? {
+        guard let snapshot = ledger.snapshot() else { return previous }
+        return Task.detached(priority: .utility) {
+            await previous?.value
+            try? store.save(ledgerSnapshot: snapshot)
+        }
     }
 
     /// Every notification to keep on disk: while the ledger is partial, the ones it left out are still in the file.
