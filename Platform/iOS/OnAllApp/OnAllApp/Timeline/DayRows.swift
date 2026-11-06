@@ -135,9 +135,9 @@ struct RailPlan {
     let past: [EventBlock]
     let cards: [EventBlock]
     let rows: [Row]
-    /// Each row's y: its minute's place on the axis, or a row below the one above when two share a minute, so none sits on another.
+    /// Each row's y: its minute's place on the axis, plus one pitch per earlier row in the same minute (the axis stretched that minute for them).
     let rowYs: [CGFloat]
-    /// The rail's height, grown if stacked rows ran past the axis.
+    /// The rail's height.
     let height: CGFloat
     let axis: RailAxis
     static let rowHeight: CGFloat = 26
@@ -179,15 +179,19 @@ struct RailPlan {
         if let now { covered.append(now) }
         let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
         let axis = RailAxis(events: events, transactions: rows.map(\.minute), now: now, firstMinute: range.first, lastMinute: range.last)
+        // A dot always sits on its real minute; rows that share a minute step down inside the room the axis stretched for them.
         var ys: [CGFloat] = []
-        for row in rows { ys.append(max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)) }
+        for (index, row) in rows.enumerated() {
+            let sameBefore = rows[..<index].reversed().prefix { $0.minute == row.minute }.count
+            ys.append(CGFloat(axis.y(row.minute) + Double(sameBefore) * RailAxis.Needs().sameMinutePitch))
+        }
         self.past = past
         self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
         self.rows = rows
         self.rowYs = ys
         self.axis = axis
         self.nowMinute = now
-        self.height = max(CGFloat(axis.height), (ys.last ?? 0) + Self.rowHeight)
+        self.height = CGFloat(axis.height)
     }
 
     /// The row's amount as the design writes it: the number alone, with a minus for money spent and a plus for money coming in.
@@ -375,22 +379,18 @@ private struct NowLine: View {
 struct LedgerEntryLoader: View {
     let id: LedgerEntryID
     let model: AppModel
-    @Environment(\.dismiss) private var dismiss
     @State private var entry: LedgerListEntry?
     @State private var missing = false
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let entry {
-                    TransactionDetailView(entry: entry, model: model)
-                } else if missing {
-                    Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary)
-                } else {
-                    ProgressView()
-                }
+        Group {
+            if let entry {
+                TransactionDetailView(entry: entry, model: model)
+            } else if missing {
+                Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
             }
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("닫기") { dismiss() } } }
         }
         .task(id: model.overrideRevision) {
             let sections = await model.ledgerSections() ?? []

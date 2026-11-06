@@ -24,7 +24,7 @@ struct FeedbackBanner: View {
     }
 }
 
-/// Title and calendar for a new event whose time was just dragged out. Cancelling (or swiping the sheet away)
+/// Title and calendar for a new event whose time was just dragged out (design-v2 polish/create-v11, the small sheet). Swiping the sheet away
 /// discards the preview; nothing is written until Save.
 struct NewEventSheet: View {
     let range: TimedRange
@@ -34,7 +34,7 @@ struct NewEventSheet: View {
     let onCancel: () -> Void
 
     @State private var title = ""
-    @State private var calendarID: CalendarID
+    @State private var calendarID: CalendarID?
     @FocusState private var focused: Bool
 
     init(
@@ -46,25 +46,38 @@ struct NewEventSheet: View {
         self.calendars = calendars.filter(\.isWritable)
         self.onSave = onSave
         self.onCancel = onCancel
-        _calendarID = State(initialValue: calendars.first(where: \.isWritable)?.id ?? CalendarID(rawValue: ""))
+        _calendarID = State(initialValue: calendars.first(where: \.isWritable)?.id)
     }
 
+    private var chosen: CalendarID? { calendarID ?? calendars.first?.id }
+    private var canSave: Bool { chosen != nil && !title.trimmingCharacters(in: .whitespaces).isEmpty }
+
     var body: some View {
-        NavigationStack {
-            Form {
-                TextField("제목", text: $title).focused($focused).submitLabel(.done)
-                LabeledContent("시간", value: Formatting.timeRange(range.startUnixMilliseconds, range.endUnixMilliseconds, zoneIdentifier: zoneIdentifier))
-                Picker("캘린더", selection: $calendarID) {
-                    ForEach(calendars, id: \.id) { calendar in Text(calendar.title).tag(calendar.id) }
+        PanelSheet(isOpen: .constant(false), canOpen: false, close: onCancel) {
+            VStack(alignment: .leading, spacing: 0) {
+                SheetTitleLine(canSave: canSave, save: save) {
+                    SheetTitleField(text: $title, focus: $focused, submit: { if canSave { save() } })
                 }
+                if calendars.count > 1 { SheetCalendarChips(calendars: calendars, selection: $calendarID).padding(.top, Theme.Space.m) }
+                SheetSummaryLine(parts: summaryParts) {}.padding(.top, Theme.Space.m)
             }
-            .navigationTitle("새 일정")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("취소", action: onCancel) }
-                ToolbarItem(placement: .confirmationAction) { Button("저장") { onSave(title, calendarID) }.disabled(calendars.isEmpty) }
-            }
-            .onAppear { focused = true }
+            .padding(.bottom, Theme.Space.l)
         }
+        .onAppear { focused = true }
+    }
+
+    private var summaryParts: [(text: String, isAccent: Bool)] {
+        let zone = TimeZone(identifier: zoneIdentifier) ?? .current
+        let day = SheetFormat.day(Date(timeIntervalSince1970: Double(range.startUnixMilliseconds) / 1_000), zone: zone)
+        return [
+            (day + " · ", false),
+            (Formatting.time(range.startUnixMilliseconds, zoneIdentifier: zoneIdentifier), true),
+            (" – " + Formatting.time(range.endUnixMilliseconds, zoneIdentifier: zoneIdentifier), false)
+        ]
+    }
+
+    private func save() {
+        guard let chosen else { return }
+        onSave(title, chosen)
     }
 }

@@ -18,6 +18,8 @@ public struct RailAxis: Equatable, Sendable {
         public var pastEventStart = 28.0
         public var cardEnd = 56.0
         public var other = 14.0
+        /// Row pitch for transactions sharing one minute: that minute is stretched on the axis so each gets its own place inside it.
+        public var sameMinutePitch = 28.0
         /// Points per minute where nothing needs more room.
         public var emptyPointsPerMinute = 0.35
         public init() {}
@@ -44,6 +46,10 @@ public struct RailAxis: Equatable, Sendable {
             add(event.end, event.isCard ? needs.cardEnd : needs.other)
         }
         for minute in transactions { add(minute, needs.transaction) }
+        // k transactions in one minute stretch that minute (not the dots): the next key sits (k-1) pitches further on.
+        for (minute, count) in Dictionary(transactions.map { ($0, 1) }, uniquingKeysWith: +) where count > 1 {
+            add(minute + 1, Double(count - 1) * needs.sameMinutePitch + needs.transaction)
+        }
         if let now { add(now, needs.other) }
         let sorted = need.keys.sorted()
         var ys = [0.0]

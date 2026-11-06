@@ -26,3 +26,9 @@ import Testing
     #expect(empty.first == 540 && empty.last == 1080)
     #expect(padded.first == 540 && padded.last == 780)
 }
+
+@Test func railAxisStretchesASharedMinuteSoEveryRowKeepsItsRealMinute() {
+    let axis = RailAxis(events: [], transactions: [1063, 1063, 1063, 1100], now: 1067, firstMinute: 1000, lastMinute: 1200)
+    #expect(axis.y(1064) - axis.y(1063) >= 2 * 28 + 46)
+    #expect(axis.y(1067) > axis.y(1064))
+}

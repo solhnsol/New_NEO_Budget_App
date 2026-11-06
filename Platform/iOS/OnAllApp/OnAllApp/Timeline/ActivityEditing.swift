@@ -88,6 +88,7 @@ enum ActivityEditing {
         let endUnixMilliseconds: Int64
         /// The activity the event already has, so the one a transaction is in now can be marked.
         let activityID: ActivityID?
+        var colorHex: String? = nil
         var id: String { key.id }
     }
 
@@ -97,7 +98,7 @@ enum ActivityEditing {
         var seen = Set<CalendarEventKey>()
         let choices = timelines.flatMap(\.blocks)
             .filter { $0.revisionToken != nil && seen.insert($0.eventKey).inserted }
-            .map { EventChoice(key: $0.eventKey, title: $0.title, startUnixMilliseconds: $0.startUnixMilliseconds, endUnixMilliseconds: $0.endUnixMilliseconds, activityID: $0.activity?.activityID) }
+            .map { EventChoice(key: $0.eventKey, title: $0.title, startUnixMilliseconds: $0.startUnixMilliseconds, endUnixMilliseconds: $0.endUnixMilliseconds, activityID: $0.activity?.activityID, colorHex: $0.calendarColorHex) }
         func gap(_ choice: EventChoice) -> Int64 { max(0, choice.startUnixMilliseconds - time, time - choice.endUnixMilliseconds) }
         return choices.sorted { (gap($0), $0.startUnixMilliseconds, $0.id) < (gap($1), $1.startUnixMilliseconds, $1.id) }
     }

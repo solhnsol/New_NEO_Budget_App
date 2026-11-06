@@ -24,16 +24,15 @@ struct TransactionRef: Identifiable { let id: LedgerEntryID }
 /// The header's right side (design): the list / calendar switch (the list opens the ledger; a long press on the calendar half turns the day view between
 /// styles), search, and add.
 struct CalendarMenu: View {
-    @Binding var style: CalendarStyle
+    @Binding var showsList: Bool
     let onAdd: () -> Void
     var onAddEvent: () -> Void = {}
-    let onOpen: (LedgerDestination) -> Void
 
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                segment("list", on: false) { onOpen(.list) }
-                segment("cal", on: true) {}
+                segment("list", on: showsList) { showsList = true }
+                segment("cal", on: !showsList) { showsList = false }
             }
             .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
             .padding(.trailing, 6)

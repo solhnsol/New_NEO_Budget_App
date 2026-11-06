@@ -19,22 +19,19 @@ struct SettlementSheet: View {
     @FocusState private var typingShare: PersonID?
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if let block {
-                    form(block)
-                } else {
-                    ContentUnavailableView("일정을 찾을 수 없어요", systemImage: "calendar.badge.exclamationmark")
-                }
+        Group {
+            if let block {
+                form(block)
+            } else {
+                Text("일정을 찾을 수 없어요").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .navigationTitle((block?.title).map { $0 + " 정산" } ?? "정산")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("완료") { dismiss() } }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("완료") { typingShare = nil }.fontWeight(.semibold)
-                }
+        }
+        .background(Theme.surface)
+        .onAllSheet(detents: [.large])
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("완료") { typingShare = nil }.fontWeight(.semibold)
             }
         }
         .task(id: model.dataGeneration) { life = await model.lifeState() }
@@ -103,43 +100,48 @@ struct SettlementSheet: View {
         let isOverTotal = planAsTyped == nil && !fixed.isEmpty && makePlan(block, fixed: [:]) != nil
         let plan = planAsTyped ?? (isOverTotal ? makePlan(block, fixed: [:]) : nil)
         let isLocked = !obligations.isEmpty
-        return Form {
-            Section {
-                AmountHero(
-                    label: "결제한 금액",
-                    amount: paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? (block.allocatedSpend.isEmpty ? "아직 없어요" : "아직 몰라요"),
-                    note: paidNote(block, paid)
-                )
+        let currency = paid?.currency ?? "KRW"
+        let receivable = isLocked
+            ? obligations.filter { $0.direction == .receivable }.reduce(Int64(0)) { $0 + $1.amount.knowledge.bounds.lower }
+            : (plan?.others.reduce(Int64(0)) { $0 + $1.minorUnits } ?? 0)
+        return SheetScaffold {
+            if plan != nil || isLocked {
+                Text("받을 돈 " + Formatting.money(receivable, currency: currency)).font(Theme.Typo.hero).foregroundStyle(Theme.textPrimary)
+                Text(block.title + (paid.map { " · 총 " + Formatting.money($0.minorUnits, currency: $0.currency) + "을 \(plan?.headcount ?? headcount.value)명이 나눠요" } ?? ""))
+                    .font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.top, Theme.Space.xs)
+            } else {
+                Text(paid.map { Formatting.money($0.minorUnits, currency: $0.currency) } ?? (block.allocatedSpend.isEmpty ? "아직 없어요" : "아직 몰라요"))
+                    .font(Theme.Typo.hero).foregroundStyle(Theme.textPrimary)
+                Text(block.title).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.top, Theme.Space.xs)
+                if let note = paidNote(block, paid) { Text(note).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary).padding(.top, Theme.Space.s) }
             }
-            .onAllCardRow()
-            if let failure { Section { Label(failure, systemImage: "exclamationmark.circle.fill").foregroundStyle(Theme.danger).font(Theme.Typo.caption) }.onAllCardRow() }
-            Section {
-                PeoplePicker(
-                    people: model.catalog.people, chosen: Set(others.map(\.id)), isLocked: isLocked,
-                    toggle: { id in run(ActivityEditing.setParticipant(id, on: !others.contains { $0.id == id }, event: eventKey, now: model.nowMilliseconds)) },
-                    add: addPerson
-                )
-                HeadcountRow(value: headcount.value, least: headcount.least, isLocked: isLocked) {
-                    run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
-                }
-            } header: {
-                Text("함께한 사람")
-            } footer: {
-                if isLocked { Text("정산 요청을 만든 뒤에는 사람과 인원을 바꿀 수 없어요. 바꾸려면 아래에서 다시 나누세요.") }
-            }
-            .onAllCardRow()
+            if let failure { Text(failure).font(Theme.Typo.label).foregroundStyle(Theme.danger).padding(.top, Theme.Space.s) }
+            Theme.divider.frame(height: 1).padding(.top, Theme.Space.xl)
             if isLocked {
-                requestedSection()
+                requestedRows()
             } else if let plan {
-                shareSection(plan, isOverTotal: isOverTotal)
+                shareRows(plan, isOverTotal: isOverTotal)
             }
-        }
-        .onAllGroupedScreen()
-        .scrollDismissesKeyboard(.interactively)
-        .primaryActionBar(isShown: !isLocked && plan != nil, isEnabled: !(plan?.others.isEmpty ?? true) && !isOverTotal && !isSaving) {
-            if let plan, !isOverTotal { Task { await request(plan) } }
-        } label: {
-            Text(isOverTotal ? "나눠 낼 금액을 고쳐 주세요" : plan.map { $0.others.isEmpty ? "함께한 사람을 골라 주세요" : "\($0.others.count)명에게 정산 요청 만들기" } ?? "정산 요청 만들기")
+            SheetSectionLabel("함께한 사람")
+            PeoplePicker(
+                people: model.catalog.people, chosen: Set(others.map(\.id)), isLocked: isLocked,
+                toggle: { id in run(ActivityEditing.setParticipant(id, on: !others.contains { $0.id == id }, event: eventKey, now: model.nowMilliseconds)) },
+                add: addPerson
+            )
+            HeadcountRow(value: headcount.value, least: headcount.least, isLocked: isLocked) {
+                run(.setHeadcount(SetHeadcountInput(target: .event(eventKey), headcount: $0, provenance: ActivityEditing.provenance(now: model.nowMilliseconds))))
+            }
+            .padding(.top, Theme.Space.m)
+        } button: {
+            if isLocked {
+                Button("확인") { dismiss() }.buttonStyle(.onAllPrimary)
+            } else {
+                Button { if let plan, !isOverTotal { Task { await request(plan) } } } label: {
+                    Text(isOverTotal ? "나눠 낼 금액을 고쳐 주세요" : plan.map { $0.others.isEmpty ? "함께한 사람을 골라 주세요" : "\($0.others.count)명에게 정산 요청 만들기" } ?? "정산 요청 만들기")
+                }
+                .buttonStyle(.onAllPrimary)
+                .disabled(plan == nil || (plan?.others.isEmpty ?? true) || isOverTotal || isSaving)
+            }
         }
         .confirmationDialog("정산 요청을 지우고 다시 나눌까요?", isPresented: $isConfirmingRedo, titleVisibility: .visible) {
             Button("요청 지우고 다시 나누기", role: .destructive) { Task { await cancelRequests() } }
@@ -149,18 +151,18 @@ struct SettlementSheet: View {
         }
     }
 
-    private func shareSection(_ plan: EventSettlementPlan, isOverTotal: Bool) -> some View {
-        Section {
+    /// A person's name in gray and what they owe at the right; the amount is a field, empty for an equal share.
+    private func shareRows(_ plan: EventSettlementPlan, isOverTotal: Bool) -> some View {
+        VStack(spacing: 0) {
             if isOverTotal {
-                Label("직접 적은 금액이 결제한 " + Formatting.money(plan.totalMinorUnits, currency: plan.currency) + "보다 많아요", systemImage: "exclamationmark.circle.fill")
-                    .font(Theme.Typo.caption).foregroundStyle(Theme.danger)
+                Text("직접 적은 금액이 결제한 " + Formatting.money(plan.totalMinorUnits, currency: plan.currency) + "보다 많아요")
+                    .font(Theme.Typo.label).foregroundStyle(Theme.danger).frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, Theme.Space.s)
             }
             ForEach(plan.others) { share in
-                HStack(spacing: Theme.Space.m) {
-                    PersonAvatar(name: share.name, size: 32)
-                    Text(share.name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+                HStack(spacing: Theme.Space.s) {
+                    Text(share.name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textTertiary)
                     Spacer()
-                    TextField(Formatting.money(share.minorUnits, currency: plan.currency), text: Binding(
+                    TextField(Formatting.grouped(share.minorUnits), text: Binding(
                         get: { fixedText[share.personID] ?? "" },
                         set: { fixedText[share.personID] = $0.isEmpty ? nil : $0 }
                     ))
@@ -168,67 +170,39 @@ struct SettlementSheet: View {
                     .focused($typingShare, equals: share.personID)
                     .multilineTextAlignment(.trailing)
                     .font(Theme.Typo.amount)
+                    .foregroundStyle(Theme.textPrimary)
                     .frame(maxWidth: 140)
+                    Text("원").font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
                 }
+                .frame(minHeight: Theme.rowHeight)
+                .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
             }
             if plan.unnamedCount > 0 {
-                HStack(spacing: Theme.Space.m) {
-                    PersonAvatar(name: "?", size: 32)
-                    Text("이름 없는 \(plan.unnamedCount)명").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    Text("각 " + Formatting.money(plan.unnamedShareMinorUnits, currency: plan.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textSecondary)
-                }
+                SheetRow(label: "이름 없는 \(plan.unnamedCount)명", value: "각 " + Formatting.money(plan.unnamedShareMinorUnits, currency: plan.currency), valueColor: Theme.textTertiary)
             }
-            HStack(spacing: Theme.Space.m) {
-                PersonAvatar(name: "나", size: 32, isSelf: true)
-                Text("내 몫").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                Spacer()
-                Text(Formatting.money(plan.myShareMinorUnits, currency: plan.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.accent)
-            }
-        } header: {
-            Text("나눠 낼 금액")
-        } footer: {
-            Text(plan.unnamedCount > 0
-                 ? "금액을 비워 두면 똑같이 나눠요. 이름 없는 사람의 몫은 이름을 넣기 전까지 받을 돈으로 잡지 않아요."
-                 : "금액을 비워 두면 똑같이 나눠요.")
+            SheetRow(label: "내 몫", value: Formatting.money(plan.myShareMinorUnits, currency: plan.currency), valueColor: Theme.accent, valueWeight: .semibold, showsDivider: false)
         }
-        .onAllCardRow()
     }
 
-    private func requestedSection() -> some View {
-        Section {
+    private func requestedRows() -> some View {
+        VStack(spacing: 0) {
             ForEach(obligations, id: \.id) { obligation in
                 let name = life?.persons[obligation.counterpartyID]?.displayName ?? "알 수 없음"
                 let applied = life?.appliedMinorUnits(for: obligation.id) ?? 0
-                HStack(spacing: Theme.Space.m) {
-                    PersonAvatar(name: name, size: 32)
-                    VStack(alignment: .leading, spacing: Theme.Space.xxs) {
-                        Text(name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
-                        Text(obligation.direction == .receivable ? "받을 돈" : "줄 돈").font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
-                    }
+                HStack(spacing: Theme.Space.s) {
+                    Text(name).font(Theme.Typo.rowTitle).foregroundStyle(Theme.textTertiary)
                     Spacer()
-                    VStack(alignment: .trailing, spacing: Theme.Space.xs) {
+                    VStack(alignment: .trailing, spacing: Theme.Space.xxs) {
                         Text(Formatting.knowledge(obligation.amount.knowledge, currency: obligation.currency)).font(Theme.Typo.amount).foregroundStyle(Theme.textPrimary)
-                        StatusBadge(text: statusText(obligation.status, applied: applied, currency: obligation.currency), tone: tone(obligation.status))
+                        Text(statusText(obligation.status, applied: applied, currency: obligation.currency)).font(Theme.Typo.caption).foregroundStyle(Theme.textTertiary)
                     }
                 }
+                .frame(minHeight: Theme.rowHeight)
+                .overlay(alignment: .bottom) { Theme.divider.frame(height: 1) }
             }
             if obligations.allSatisfy({ (life?.appliedMinorUnits(for: $0.id) ?? 0) == 0 }) {
-                Button("다시 나누기") { isConfirmingRedo = true }
-                    .buttonStyle(SecondaryButtonStyle(tint: Theme.danger))
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                SheetRow(label: "다시 나누기", placeholder: nil, showsChevron: true, showsDivider: false) { isConfirmingRedo = true }
             }
-        } header: {
-            Text("정산 요청")
-        }
-        .onAllCardRow()
-    }
-
-    private func tone(_ status: ObligationStatus) -> StatusBadge.Tone {
-        switch status {
-        case .open, .partiallySettled: return .caution
-        case .settled: return .accent
-        case .cancelled: return .neutral
         }
     }
 

@@ -30,12 +30,14 @@ struct LedgerCategorySheet: View {
                     ForEach(CategoryIcon.choices, id: \.id) { choice in
                         let isChosen = chosen == choice.id
                         Button { chosen = choice.id } label: {
-                            VStack(spacing: Theme.Space.xs) {
-                                Image(systemName: choice.symbol).font(.system(size: 20)).foregroundStyle(Theme.textSecondary)
-                                    .frame(width: 56, height: 56)
-                                    .background(isChosen ? Theme.accentSoft : Theme.fill, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(isChosen ? Theme.accent : .clear, lineWidth: 1.5))
-                                Text(choice.name).font(Theme.Typo.caption).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                            VStack(spacing: 6) {
+                                let tile = LedgerTile.of(CanonicalCategoryID(rawValue: choice.id))
+                                LineIcon(name: tile.icon, size: 24).foregroundStyle(Theme.textSecondary)
+                                    .frame(width: 52, height: 52)
+                                    .background(tile.tint, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(isChosen ? Theme.accent : .clear, lineWidth: 2))
+                                Text(choice.name).font(isChosen ? Font.onAll(size: 13, weight: .semibold) : Theme.Typo.label)
+                                    .foregroundStyle(isChosen ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -78,8 +80,8 @@ struct LedgerTagSheet: View {
                             Text(tag).font(Theme.Typo.chip)
                                 .foregroundStyle(isChosen ? Theme.accentStrong : Theme.textSecondary)
                                 .padding(.horizontal, Theme.Space.m)
-                                .frame(height: Theme.chipHeight)
-                                .background(isChosen ? Theme.accentSoft : Theme.fill, in: Capsule())
+                                .frame(height: 36)
+                                .background(isChosen ? Theme.accentSoft : Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.chip, style: .continuous))
                         }
                         .buttonStyle(.plain)
                         .accessibilityAddTraits(isChosen ? .isSelected : [])
@@ -87,8 +89,8 @@ struct LedgerTagSheet: View {
                 }
             }
             HStack {
-                Image(systemName: "tag").foregroundStyle(Theme.textTertiary)
-                TextField("태그 추가", text: $typed).submitLabel(.done).onSubmit(add)
+                LineIcon(name: "tag", size: 18).foregroundStyle(Theme.textTertiary)
+                TextField("", text: $typed, prompt: Text("태그 추가").foregroundStyle(Theme.disabled)).submitLabel(.done).onSubmit(add)
             }
             .padding(.horizontal, Theme.Space.m)
             .frame(height: 44)
