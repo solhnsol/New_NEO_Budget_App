@@ -30,6 +30,8 @@ struct DayPagerView: View {
     /// The day the pager is being turned to (by a pick elsewhere, 오늘, a week swipe) and has not reached yet: the days it passes through on the way are
     /// not the reader's own scrolling, so they must not move the selected day (they dragged it back, a week at a time).
     @State private var turningTo: Int?
+    /// When a finger last touched the pager (a swipe settles within a second of lifting).
+    @State private var lastTouch = Date.distantPast
 
     init(model: AppModel, topInset: CGFloat = 0, showsList: Bool = false, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onOpenIncome: @escaping (LedgerEntryID) -> Void = { _ in }, onScrollToDay: @escaping (LocalDate) -> Void) {
         self.model = model
@@ -85,6 +87,7 @@ struct DayPagerView: View {
             }
             .scrollTargetBehavior(.paging)
             .scrollPosition(id: $position)
+            .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in lastTouch = Date() }.onEnded { _ in lastTouch = Date() })
             .scrollIndicators(.hidden)
         }
         .onChange(of: position) { old, new in
@@ -93,6 +96,9 @@ struct DayPagerView: View {
                 return
             }
             guard let new, new != model.selectedDay.daysSinceUnixEpoch else { return }
+            // Only the reader's own swipe moves the selection. A position change with no touch on the pager in the last moment is the scroll view
+            // re-resolving after a layout change (a sheet, the list / calendar switch, a tap elsewhere): put the pager back on the selected day.
+            guard Date().timeIntervalSince(lastTouch) < 1 else { position = model.selectedDay.daysSinceUnixEpoch; return }
             if old != nil { Haptics.snap() }
             onScrollToDay(LocalDate(daysSinceUnixEpoch: new))
         }
