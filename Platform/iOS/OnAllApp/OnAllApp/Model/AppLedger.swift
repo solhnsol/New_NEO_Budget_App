@@ -52,7 +52,8 @@ actor AppLedger {
         // A history that cannot be read is left out rather than keeping the whole ledger from opening.
         let history = try? store.history()
         let notifications = try store.notifications()
-        let intake = NotificationIntake(timeZoneIdentifier: zone.identifier)
+        // 읽기 사전이 바뀌면 저장해 둔 장부가 맞지 않아 처음부터 다시 읽는다(규칙 키에 사전이 들어 있다).
+        let intake = NotificationIntake(timeZoneIdentifier: zone.identifier, readingDictionary: (try? store.readingDictionary()) ?? .official)
         let ledger: IntakeLedger
         // The saved ledger plus the notifications after it, when it still fits; otherwise (no file, damaged, other rules,
         // history or setup) everything is replayed as before.
@@ -225,6 +226,43 @@ actor AppLedger {
         backing = .live(ledger, store)
         try refreshSource()
         return fresh.map { InboxItem(notification: $0, status: ledger.status(of: $0.id)) }
+    }
+
+    // MARK: Reading dictionary
+
+    /// 지금 쓰는 읽기 사전(공식 + 내 항목). 데모에서는 공식 사전만.
+    func readingDictionary() -> ReadingDictionary {
+        guard case let .live(ledger, _) = backing else { return .official }
+        return ledger.intake.parser.dictionary
+    }
+
+    /// 읽기 사전이 이 알림들을 각각 어느 항목으로 읽는지(항목 id별 건수).
+    func readingCounts() -> [String: Int] {
+        guard case let .live(ledger, _) = backing else { return [:] }
+        let parser = ledger.intake.parser
+        var counts: [String: Int] = [:]
+        for notification in ledger.notifications { if let id = parser.entryID(for: notification) { counts[id, default: 0] += 1 } }
+        return counts
+    }
+
+    private struct Rebuilt: @unchecked Sendable { let ledger: IntakeLedger }
+
+    /// 사전을 저장하고, 저장해 둔 알림 전체를 새 사전으로 처음부터 다시 읽는다.
+    func setReadingDictionary(_ dictionary: ReadingDictionary) async throws {
+        try await completeHistoryOrThrow()
+        guard case .live(let old, let store) = backing else { throw AppLedgerError.notLive }
+        try store.save(readingDictionary: dictionary)
+        let intake = NotificationIntake(timeZoneIdentifier: old.intake.timeZoneIdentifier, readingDictionary: dictionary)
+        let setup = try store.setup()
+        let history = try? store.history()
+        let notifications = try store.notifications()
+        let rebuilt = try await Task.detached(priority: .userInitiated) {
+            Rebuilt(ledger: try IntakeLedger(notifications: notifications, setup: setup, intake: intake, history: history))
+        }.value.ledger
+        try store.save(setup: rebuilt.setup)
+        snapshotWrite = Self.write(rebuilt, to: store, after: snapshotWrite)
+        backing = .live(rebuilt, store)
+        try refreshSource()
     }
 
     // MARK: Account answers

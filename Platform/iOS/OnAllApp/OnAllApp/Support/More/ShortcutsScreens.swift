@@ -30,7 +30,7 @@ struct ShortcutsScreen: View {
             .padding(.horizontal, 16).padding(.top, 12)
             SCard {
                 SLink(row: SRow(icon: "list", tone: .orange, title: "받은 알림 내역", value: items.map { "\($0.count)건" }, chevron: true)) { IntakeInboxView(model: model) }
-                SLink(row: SRow(icon: "file", tone: .purple, title: "알림 처리 규칙", value: "\(NotificationRule.samples.count)개", chevron: true)) { RulesScreen() }
+                SLink(row: SRow(icon: "file", tone: .purple, title: "알림 처리 규칙", value: "\(NotificationRule.samples.count)개", chevron: true)) { RulesScreen(model: model) }
             }
             .padding(.top, 12)
             SSection(title: "받을 앱") {
@@ -73,12 +73,21 @@ struct NotificationRule: Identifiable {
 
 /// 알림 처리 규칙.
 struct RulesScreen: View {
+    /// 있으면 맨 위에 읽기 사전으로 가는 줄이 보인다.
+    var model: AppModel?
+    @State private var userEntryCount = 0
     @State private var rules = NotificationRule.samples
     @State private var filter = 0
     @State private var adding = false
 
     var body: some View {
         SettingsPage(title: "알림 처리 규칙", action: ("추가", { adding = true })) {
+            if let model {
+                SCard {
+                    SLink(row: SRow(icon: "file", tone: .purple, title: "읽기 사전", sub: "내가 알려준 읽는 법 \(userEntryCount)개", chevron: true)) { ReadingDictionaryScreen(model: model) }
+                }
+                .padding(.top, 12)
+            }
             SChipRow(titles: ["전체 \(rules.count)", "지출", "수입", "무시"], selection: $filter)
             ForEach(["카드", "통장", "기타"], id: \.self) { group in
                 SSection(title: group) {
@@ -105,6 +114,10 @@ struct RulesScreen: View {
             }
         }
         .navigationDestination(isPresented: $adding) { RuleEditScreen(rule: nil, sample: nil) }
+        .task {
+            guard let model else { return }
+            userEntryCount = await model.readingDictionary().userEntries.count
+        }
     }
 }
 

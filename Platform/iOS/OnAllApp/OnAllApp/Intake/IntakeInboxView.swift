@@ -142,7 +142,11 @@ struct InboxDetailScreen: View {
     let model: AppModel
     let item: InboxItem
     @State private var choosingAccount: RuleQuestion?
-    @State private var makingRule = false
+    @State private var teaching = false
+    @State private var ignoring = false
+    /// 이 알림을 읽은 항목 이름. nil이면 아직 읽는 법이 없다. `loaded` 전에는 카드를 그리지 않는다.
+    @State private var readBy: String?
+    @State private var loaded = false
 
     var body: some View {
         let notification = item.notification
@@ -160,13 +164,30 @@ struct InboxDetailScreen: View {
             SSection(title: "처리 결과") {
                 SRow(icon: "tag", tone: IntakeText.isSettled(item.status) ? .green : .orange, title: IntakeText.status(item.status))
             }
+            if loaded {
+                SSection(title: "처리 과정") {
+                    if let readBy {
+                        SRow(title: "읽었어요", sub: "읽은 방법: \(readBy)")
+                    } else {
+                        SRow(title: "읽지 못했어요", sub: "이 항목의 알림은 아직 읽는 법이 없어요")
+                    }
+                }
+            }
             if IntakeText.asksForAccount(item.status) {
                 SButton(title: "계좌 정하기", light: true) { Task { choosingAccount = await model.ruleQuestion(for: item.id) } }
             }
-            SButton(title: "이 알림으로 새 규칙 만들기", top: 10) { makingRule = true }
+            SButton(title: "이 알림 읽는 법 알려주기", top: 10) { teaching = true }
+            SButton(title: "이 알림 무시하기", light: true, top: 10) { ignoring = true }
+        }
+        .task {
+            let dictionary = await model.readingDictionary()
+            let id = ReadingEntryParser(dictionary: dictionary).entryID(for: notification)
+            readBy = id.flatMap { id in (dictionary.userEntries + dictionary.officialEntries).first { $0.id == id }?.name }
+            loaded = true
         }
         .sheet(item: $choosingAccount) { question in RuleAnswerSheet(model: model, question: question) }
-        .navigationDestination(isPresented: $makingRule) { RuleEditScreen(rule: nil, sample: IntakeText.preview(notification)) }
+        .navigationDestination(isPresented: $teaching) { TeachReadingScreen(model: model, notification: notification) }
+        .navigationDestination(isPresented: $ignoring) { TeachIgnoreScreen(model: model, notification: notification) }
     }
 }
 

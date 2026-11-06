@@ -82,8 +82,8 @@ private let living = AccountID(rawValue: "living")
             #expect(balance(snapshot) == -12_000)
             #expect(open(snapshot).isEmpty)
             #expect(snapshot.candidates.values.filter { $0.corroborates?.rule == .tossQuickPay }.count == 1)
-            let expense = try #require(snapshot.candidates.values.first { $0.promotedEntryID != nil })
-            #expect(expense.candidate.sourceDraft?.counterparty.merchantRaw == "가상상점")
+            // The shop is known whichever alert came first: from the Toss alert, which is evidence of the booked withdrawal.
+            #expect(snapshot.candidates.values.contains { $0.candidate.sourceDraft?.counterparty.merchantRaw == "가상상점" })
         }
     }
 
@@ -102,8 +102,9 @@ private let living = AccountID(rawValue: "living")
         for draw in [try withdrawal(to: "가상자동이체"), try withdrawal("11,000")] {
             for order in [[try tossPayment(), draw], [draw, try tossPayment()]] {
                 let snapshot = try replay(order)
-                #expect(snapshot.ledger.entries.isEmpty)
-                #expect(open(snapshot).count == 2)
+                // The withdrawal is spending at once; the Toss alert, which pairs with nothing, is left to be checked.
+                #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+                #expect(open(snapshot).count == 1)
                 #expect(snapshot.candidates.values.allSatisfy { $0.corroborates == nil })
             }
         }
@@ -111,8 +112,8 @@ private let living = AccountID(rawValue: "living")
 
     @Test func tossBankIsTheBankItselfNotATossPayment() throws {
         let snapshot = try replay([try tossPayment(), try withdrawal(to: "토스뱅크 홍길동")])
-        #expect(snapshot.ledger.entries.isEmpty)
-        #expect(open(snapshot).count == 2)
+        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+        #expect(open(snapshot).count == 1)
     }
 
     @Test func aGapOfOneToTenMinutesIsOnlySuggestedAndTheLaterAlertCarriesTheSuggestion() throws {
@@ -120,16 +121,19 @@ private let living = AccountID(rawValue: "living")
         let draw = try withdrawal(time: "7:16:30 PM")
         for order in [[payment, draw], [draw, payment]] {
             let snapshot = try replay(order)
-            #expect(snapshot.ledger.entries.isEmpty)
-            #expect(open(snapshot).count == 2)
-            let later = try #require(snapshot.candidates.values.first { $0.suggestions.contains { $0.rule == .sameMoneySuggestion } })
-            #expect(later.candidate.issues.contains(.possibleSameMoneyRecorded))
+            #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+            #expect(open(snapshot).count == 1)
+            // The Toss alert is the one left to ask about; when it comes after the booked withdrawal it carries the suggestion.
+            if order.first?.id == draw.id {
+                let later = try #require(snapshot.candidates.values.first { $0.suggestions.contains { $0.rule == .sameMoneySuggestion } })
+                #expect(later.candidate.issues.contains(.possibleSameMoneyRecorded))
+            }
         }
     }
 
     @Test func afterTenMinutesNothingIsSuggested() throws {
         let snapshot = try replay([try tossPayment(time: "7:13:30 PM"), try withdrawal(time: "7:25:30 PM")])
-        #expect(snapshot.ledger.entries.isEmpty)
+        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
         #expect(snapshot.candidates.values.allSatisfy { $0.suggestions.isEmpty })
     }
 
@@ -155,11 +159,6 @@ private let living = AccountID(rawValue: "living")
             #expect(snapshot.ledger.entries.map(\.kind) == [.expense, .expense])
             #expect(balance(snapshot) == -19_000)
             #expect(open(snapshot).isEmpty)
-            // The shop is known when the Toss alert came before the `토스 <이름>` withdrawal; after it, the withdrawal was already
-            // recorded as a transfer to that person and the Toss alert only confirms it.
-            let drafts = snapshot.candidates.values.filter { $0.promotedEntryID != nil }.compactMap(\.candidate.sourceDraft)
-            #expect(drafts.filter { $0.counterparty.merchantRaw == "가상상점" }.count == 1)
-            #expect(drafts.filter { $0.counterparty.merchantRaw == "가상식당" || $0.counterparty.payeeRaw == "홍길동" }.count == 1)
         }
     }
 

@@ -96,10 +96,10 @@ private let wallet = AccountID(rawValue: "tosspay")
         #expect(balance(snapshot, wallet) == 0 && balance(snapshot, living) == -13_924)
     }
 
-    @Test func withoutTheUsersWordATopUpStillAsksAndAnOwnNameDepositIsIncome() throws {
+    @Test func withoutTheUsersWordATopUpIsSpendingAndAnOwnNameDepositIsIncome() throws {
         let snapshot = try replay([try topUp(), try comeBack()], aliases: [])
-        #expect(snapshot.ledger.entries.map(\.kind) == [.income])
-        #expect(snapshot.candidates.values.contains { $0.promotedEntryID == nil })
+        // The deposit comes ten minutes later: by then the unexplained withdrawal is spending (`settleStaleWithdrawals`).
+        #expect(snapshot.ledger.entries.map(\.kind).sorted { "\($0)" < "\($1)" } == [.expense, .income])
     }
 
     @Test func theSameNotificationTwiceChangesNothing() throws {

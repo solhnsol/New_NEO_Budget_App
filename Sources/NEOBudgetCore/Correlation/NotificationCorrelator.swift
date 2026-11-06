@@ -101,6 +101,14 @@ public struct NotificationCorrelator: Sendable {
             }
             if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .cardWithdrawal) }
         }
+        // A check card approval arriving after its bank withdrawal was already booked as spending: the same payment.
+        if incoming.draft.kind == .purchase, case let .account(account)? = incoming.binding {
+            let partners = committed.filter { record in
+                record.draft.kind == .withdrawal && record.transferCounterpart == nil && record.binding == .account(account) && sameMoney(record, incoming)
+                    && !claimed(record, by: .cardWithdrawal, in: records)
+            }
+            if let partner = nearest(partners, to: incoming) { return CorrelationMatch(candidateID: partner.candidateID, rule: .cardWithdrawal) }
+        }
         // A pay app and the card (or account) it charged both report one payment.
         if incoming.draft.kind == .purchase, let binding = incoming.binding {
             let partners = committed.filter { record in
@@ -125,7 +133,7 @@ public struct NotificationCorrelator: Sendable {
         // the same money. The shop name is lost, the spending is counted once and nothing waits for review.
         if Self.isUnpairedTossPayment(incoming.draft, incoming.notificationType, incoming.binding) {
             let partners = committed.filter { record in
-                record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+                (record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID || Self.isTossNamedWithdrawal(record.draft, record.binding))
                     && pairs(record.draft, incoming.draft, within: tossPairToleranceMilliseconds)
                     && !claimed(record, by: .tossQuickPay, in: records)
             }
@@ -208,7 +216,8 @@ public struct NotificationCorrelator: Sendable {
         let others = records.filter { $0.candidateID != incoming.candidateID }
         if echoedCancellation(of: incoming, in: others.filter { $0.entryID != nil && $0.corroborates == nil }, claimedAgainst: others) != nil { return nil }
         let purchases = others.filter { record in
-            record.entryID != nil && record.corroborates == nil && record.draft.kind == .purchase && record.binding == binding
+            record.entryID != nil && record.corroborates == nil
+                && (record.draft.kind == .purchase || (record.draft.kind == .withdrawal && record.transferCounterpart == nil)) && record.binding == binding
                 && record.draft.amount.currency == incoming.draft.amount.currency
                 && !others.contains { $0.cancels == record.candidateID && $0.entryID != nil }
         }
@@ -361,7 +370,8 @@ public struct NotificationCorrelator: Sendable {
     private func sameMoneySuggestions(for incoming: CorrelationObservation, in records: [CorrelationRecord]) -> [CorrelationMatch] {
         let partners: [CorrelationRecord]
         if Self.isUnpairedTossPayment(incoming.draft, incoming.notificationType, incoming.binding) {
-            partners = records.filter { $0.entryID == nil && $0.corroborates == nil && Self.isBankWithdrawal($0.draft, $0.binding) && sameMoney($0, incoming) }
+            // The withdrawal may already be booked as spending: the Toss alert then asks whether it is the same payment.
+            partners = records.filter { $0.corroborates == nil && Self.isBankWithdrawal($0.draft, $0.binding) && sameMoney($0, incoming) }
         } else if Self.isBankWithdrawal(incoming.draft, incoming.binding) {
             partners = records.filter {
                 $0.entryID == nil && $0.corroborates == nil && Self.isUnpairedTossPayment($0.draft, $0.notificationType, $0.binding) && sameMoney($0, incoming)
@@ -454,6 +464,12 @@ public struct NotificationCorrelator: Sendable {
         [.transferOut, .transferIn, .withdrawal, .deposit, .walletTopUp, .cashWithdrawal].contains(record.draft.kind)
     }
 
+    /// A bank withdrawal (or Kakao send) booked as spending the moment it arrived, with nothing yet to say whom it went to.
+    private static func isBookedSpendingOut(_ record: CorrelationRecord) -> Bool {
+        record.entryID != nil && record.transferCounterpart == nil
+            && (record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID || record.draft.kind == .withdrawal || record.draft.kind == .transferOut)
+    }
+
     /// A deposit on the transfer's other account that was recorded as income before this leg arrived.
     private func isIncomeLeg(_ record: CorrelationRecord, oppositeOf incoming: CorrelationObservation, counterpart: AccountID) -> Bool {
         record.entryID != nil && record.corroborates == nil && record.recordedAsIncome && record.binding == .account(counterpart)
@@ -462,7 +478,7 @@ public struct NotificationCorrelator: Sendable {
 
     /// A withdrawal on the transfer's other account that was recorded as spending on a person before this deposit leg arrived.
     private func isPersonSpendLeg(_ record: CorrelationRecord, oppositeOf incoming: CorrelationObservation, counterpart: AccountID) -> Bool {
-        record.entryID != nil && record.corroborates == nil && record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+        record.entryID != nil && record.corroborates == nil && Self.isBookedSpendingOut(record)
             && record.binding == .account(counterpart) && incoming.draft.direction == .inflow
             && pairs(record.draft, incoming.draft, within: tossPairToleranceMilliseconds)
     }
@@ -477,8 +493,8 @@ public struct NotificationCorrelator: Sendable {
                   pairs(record.draft, incoming, within: tossPairToleranceMilliseconds) else { return nil }
             if incoming.direction == .inflow {
                 // A withdrawal still waiting for review, or one already booked as spending on a person.
-                let waiting = record.entryID == nil && record.draft.kind == .withdrawal
-                let person = record.entryID != nil && record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+                let waiting = record.entryID == nil && (record.draft.kind == .withdrawal || record.draft.kind == .transferOut)
+                let person = Self.isBookedSpendingOut(record)
                 return waiting || person ? other : nil
             }
             return record.entryID != nil && record.recordedAsIncome ? other : nil
