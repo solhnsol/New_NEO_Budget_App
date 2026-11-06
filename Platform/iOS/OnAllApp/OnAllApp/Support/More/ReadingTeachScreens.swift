@@ -13,8 +13,11 @@ private struct TokenFlow: View {
 
     var body: some View {
         FlowLayout(spacing: 6) {
-            ForEach(builder.tokens) { token in
-                Button { tap(token) } label: { piece(token) }.buttonStyle(.plain)
+            ForEach(builder.groups, id: \.self) { ids in
+                if let token = builder.tokens.first(where: { $0.id == ids[0] }) {
+                    Button { tap(token) } label: { piece(token, text: ids.compactMap { id in builder.tokens.first { $0.id == id }?.text }.joined()) }
+                        .buttonStyle(.plain)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -24,16 +27,16 @@ private struct TokenFlow: View {
     }
 
     @ViewBuilder
-    private func piece(_ token: ReadingEntryBuilder.Token) -> some View {
+    private func piece(_ token: ReadingEntryBuilder.Token, text: String) -> some View {
         let state = look(token)
         VStack(spacing: 2) {
-            Text(token.text).font(.onAll(size: 16)).foregroundStyle(foreground(state))
+            Text(text).font(.onAll(size: 16)).foregroundStyle(foreground(state))
                 .padding(.horizontal, 8).frame(minWidth: 28, minHeight: 36)
                 .background(background(state), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay { RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(border(state), lineWidth: 1.5) }
             if case let .marked(name) = state { Text(name).font(.onAll(size: 11)).foregroundStyle(Theme.accentStrong) }
         }
-        .accessibilityLabel(token.text)
+        .accessibilityLabel(text)
     }
 
     private func foreground(_ state: Look) -> Color {

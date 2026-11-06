@@ -228,3 +228,8 @@ private func appNote(_ app: String, _ title: String?, _ subtitle: String?, _ bod
     // 다른 앱에서는 내 무시 항목이 아니라 공식 항목(광고)이 걸러 낸다.
     #expect(try parser.parse(note(nil, nil, "[광고] 아무 내용 입금 5,000원", app: "other"), context: ctx()) == .notTransaction(.promotion))
 }
+
+@Test func commaSeparatedNumbersShowAsOneGroup() {
+    let builder = ReadingEntryBuilder(text: "출금 150,000원 잔액 2,310,000원")
+    #expect(builder.groups.map { $0.map { builder.tokens[$0].text }.joined() } == ["출금", "150,000", "원", "잔액", "2,310,000", "원"])
+}

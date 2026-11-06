@@ -69,6 +69,18 @@ public struct ReadingEntryBuilder: Sendable {
         return ids
     }
 
+    /// 화면에 보이는 단위: 쉼표로 이어진 숫자(`150,000`)는 한 덩어리, 나머지는 조각 하나씩. 각 덩어리는 조각 id 목록이다.
+    public var groups: [[Int]] {
+        var result: [[Int]] = []
+        var index = 0
+        while index < tokens.count {
+            let ids = mergedAmountTokenIDs(startingAt: index)
+            result.append(ids)
+            index = (ids.last ?? index) + 1
+        }
+        return result
+    }
+
     /// 이 조각 묶음에 붙일 수 있는 칸(글자 종류에 맞는 것만). 입금/출금 같은 방향은 칸이 아니다.
     public static func slots(for kind: TokenKind) -> [ReadingSlot] {
         switch kind {
