@@ -15,6 +15,8 @@ struct TransactionDetailView: View {
     /// The events a few days around the transaction, nearest first.
     @State private var nearby: [ActivityEditing.EventChoice] = []
     @State private var failure: String?
+    /// The notification text, loaded only when the app could not read a name from it.
+    @State private var originalText: String?
     private var current: LedgerListEntry { fresh ?? entry }
     private var zoneIdentifier: String { model.dayZone.identifier }
 
@@ -34,6 +36,7 @@ struct TransactionDetailView: View {
             Text((isRefund ? "+" : "−") + Formatting.money(transaction.amount.minorUnits, currency: currency))
                 .font(Theme.Typo.hero).foregroundStyle(Theme.amountColor(isIncoming: isRefund))
                 .padding(.top, Theme.Space.xl)
+            if transaction.title == nil { unreadNotice(entry) }
             if let failure { Text(failure).font(Theme.Typo.label).foregroundStyle(Theme.danger).padding(.top, Theme.Space.s) }
             if !entry.offsets.isEmpty, let net = entry.netMinorUnits { offsets(entry, net: net, currency: currency) }
             if transaction.flow == .spend { eventSection(entry, linked: linked, linkedIDs: linkedIDs) }
@@ -57,6 +60,22 @@ struct TransactionDetailView: View {
             let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
             nearby = ActivityEditing.eventChoices(near: entry.transaction.occurredAtUnixMilliseconds, in: timelines)
         }
+    }
+
+    /// The name could not be read from the notification: say so, show what the notification said, and ask for the name.
+    private func unreadNotice(_ entry: LedgerListEntry) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s) {
+            Text("알림에서 이름을 읽지 못했어요").font(Theme.Typo.rowTitle).foregroundStyle(Theme.textPrimary)
+            if let originalText {
+                Text(originalText).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Button("이름 입력하기") { editing = true }.font(Theme.Typo.smallButton).foregroundStyle(Theme.accent)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(Theme.Space.l)
+        .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous))
+        .padding(.top, Theme.Space.l)
+        .task { originalText = await model.originalNotification(for: entry.id).map(NotificationText.joined) }
     }
 
     private func dayText(_ unixMilliseconds: Int64) -> String {

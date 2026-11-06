@@ -228,7 +228,9 @@ final class AppModel {
         }
         let service = CalendarCommandService(
             provider: provider,
-            repository: InMemoryLifeRepository(initialState: initialLife),
+            repository: isDemo
+                ? InMemoryLifeRepository(initialState: initialLife)
+                : FileLifeRepository(url: URL.applicationSupportDirectory.appending(path: "life-state.json"), initialState: initialLife),
             transactions: source,
             configuration: CalendarServiceConfiguration(displayTimeZone: dayZone),
             makeID: { kind in "\(kind.rawValue)-\(UUID().uuidString)" },
@@ -308,6 +310,7 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
+        await refreshSpendReductions(service)
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
         let incomes = ((try? await ledger.incomes()) ?? []).map { item in
             IncomeItem(id: item.id, occurredAtUnixMilliseconds: item.occurredAtUnixMilliseconds, minorUnits: item.minorUnits, title: transactionOverrides[item.id]?.title ?? item.title)
@@ -345,6 +348,14 @@ final class AppModel {
             guard mine == dataGeneration else { return }
             phase = .failed("일정과 거래를 불러오지 못했어요")
         }
+    }
+
+    /// Tells the calendar reads what settlements took off each purchase, so a settled purchase shows the user's share everywhere at once.
+    private func refreshSpendReductions(_ service: CalendarCommandService) async {
+        guard let sections = await ledgerSections() else { return }
+        var reductions: [LedgerEntryID: Int64] = [:]
+        for entry in sections.flatMap(\.entries) where entry.shareReductionMinorUnits > 0 { reductions[entry.id] = entry.shareReductionMinorUnits }
+        await service.setSpendReductions(reductions)
     }
 
     /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank. What was read is kept in one go (and only
@@ -846,6 +857,8 @@ final class AppModel {
     /// Received notifications, newest first, with where each ended up. Empty in the demo.
     func inbox() async -> [InboxItem] { await ledger.inbox() }
 
+    func originalNotification(for entry: LedgerEntryID) async -> RawNotification? { await ledger.originalNotification(for: entry) }
+
     /// Accounts and cards the notifications mention that the user has not answered for yet.
     func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
 
@@ -908,9 +921,9 @@ final class AppModel {
     /// decided is never looked at again.
     func bindSpendingByTime() async {
         guard let service, let transactions = try? await ledger.transactions() else { return }
-        let life = (try? await service.lifeSnapshot().state) ?? .empty
+        // Every month with spending, not only unallocated ones: an event whose time moved must release what it took by time.
         let months = Set(transactions
-            .filter { $0.flow == .spend && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .filter { $0.flow == .spend }
             .compactMap { marker -> LocalDate? in
                 let day = dayZone.localDate(of: marker.occurredAtUnixMilliseconds)
                 return try? LocalDate(year: day.year, month: day.month, day: 1)

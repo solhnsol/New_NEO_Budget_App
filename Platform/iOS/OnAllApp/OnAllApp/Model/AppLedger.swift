@@ -125,6 +125,11 @@ actor AppLedger {
         Dictionary(ledger.entries.compactMap { entry in entry.adjustment.map { (entry.id, $0.originalEntryID) } }, uniquingKeysWith: { first, _ in first })
     }
 
+    /// The notification a ledger entry was made from (the first one recorded as it), to show the user what the app had to read.
+    func originalNotification(for entry: LedgerEntryID) -> RawNotification? {
+        inbox().last { if case let .recorded(id) = $0.status { id == entry } else { false } }?.notification
+    }
+
     /// Received notifications, newest first, with where each ended up. Empty outside the real ledger.
     func inbox() -> [InboxItem] {
         guard case let .live(ledger, _) = backing else { return [] }

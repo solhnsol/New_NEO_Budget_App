@@ -33,6 +33,8 @@ public actor CalendarCommandService {
     private let configuration: CalendarServiceConfiguration
     private let makeID: @Sendable (IDKind) -> String
     private let now: @Sendable () -> Int64
+    /// What the user's own share takes off each purchase (settlements, refunds): applied to what the day and week reads show, never stored.
+    private var spendReductions: [LedgerEntryID: Int64] = [:]
 
     public init(
         provider: any CalendarProvider,
@@ -53,6 +55,8 @@ public actor CalendarCommandService {
     // MARK: Read models
 
     public func lifeSnapshot() throws -> LifeSnapshot { try repository.snapshot() }
+
+    public func setSpendReductions(_ reductions: [LedgerEntryID: Int64]) { spendReductions = reductions }
 
     /// The event as the calendar provider reports it now, or `nil` if the key no longer resolves. A plain read; nothing is written.
     public func event(_ key: CalendarEventKey) async throws -> CalendarEvent? { try await provider.event(key) }
@@ -87,7 +91,7 @@ public actor CalendarCommandService {
             life: life,
             transactions: Array(markers.values),
             policy: configuration.displayPolicy
-        ))
+        )).reducingSpend(by: spendReductions)
     }
 
     /// Binds spending that happened during an event to that event (`TimeBinding`), for the events and transactions between `from` and `to`.
@@ -95,8 +99,15 @@ public actor CalendarCommandService {
     @discardableResult
     public func bindByTime(from: Int64, to: Int64, calendarIDs: Set<CalendarID>? = nil) async throws -> Int {
         let events = try await provider.events(from: from, to: to, calendarIDs: calendarIDs)
-        let life = try repository.snapshot().state
-        let proposals = TimeBinding.proposals(events: events, transactions: transactions.transactions(occurringFrom: from, to: to), life: life)
+        var life = try repository.snapshot().state
+        let window = transactions.transactions(occurringFrom: from, to: to)
+        // An event whose time moved lets go of what it took by time, so the payment can bind to whichever event now contains it.
+        let stale = TimeBinding.staleAllocations(events: events, transactions: window, life: life)
+        if !stale.isEmpty {
+            let by = AssignmentProvenance.automated(origin: TimeBinding.origin, confidence: 1, at: now())
+            if case .applied = applyLocal(stale.map { .removeAllocation($0.allocationID, by: by) }, activityID: nil) { life = try repository.snapshot().state }
+        }
+        let proposals = TimeBinding.proposals(events: events, transactions: window, life: life)
         var bound = 0
         for proposal in proposals {
             let provenance = AssignmentProvenance.automated(origin: TimeBinding.origin, confidence: 1, at: now())
@@ -135,7 +146,8 @@ public actor CalendarCommandService {
             timeZone: timeZone,
             events: events,
             life: try repository.snapshot().state,
-            transactions: transactions.transactions(occurringFrom: from, to: to)
+            transactions: transactions.transactions(occurringFrom: from, to: to),
+            reductions: spendReductions
         )
     }
 
