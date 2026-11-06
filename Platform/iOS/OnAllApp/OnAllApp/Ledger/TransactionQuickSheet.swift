@@ -76,7 +76,7 @@ struct TransactionQuickSheet: View {
         })
         .tint(Theme.accent)
         .sheet(isPresented: $choosingCategory) { CategoryChooserSheet(entry: current, model: model) }
-        .sheet(isPresented: $choosingEvent) { TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs) }
+        .fullScreenCover(isPresented: $choosingEvent) { LedgerEventPicker(model: model, entries: [current], onApplied: { Task { await refreshEntry() } }) }
         .task(id: [model.dataGeneration, model.overrideRevision]) {
             await refreshEntry()
             if let statements = await model.ledgerStatements() {

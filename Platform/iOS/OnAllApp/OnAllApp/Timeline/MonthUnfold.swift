@@ -49,6 +49,12 @@ enum MonthUnfold {
         labelRow * (1 - unfold) + numberRow + (barsRow + monthGap) * unfold + dotsRow + spendRow + stripBottomPadding * (1 - unfold)
     }
 
+    /// How much taller the calendar card is than when it is a week, at `progress`: the card is laid out at its closed height and draws this much over what is
+    /// below it, and the day list is moved down by the same amount, so nothing below is laid out again while the finger moves.
+    static func growth(rows: Int, progress: CGFloat) -> CGFloat {
+        (CGFloat(rows) * 96 - 60) * max(0, min(1.03, progress))
+    }
+
     /// 24,000 → 2.4만, 70,000 → 7만; under 10,000 it is written out (1,550). Nil when nothing was spent that day.
     static func spendText(of cell: WeekStripDay?) -> String? {
         guard let money = cell?.netSpend.first(where: { $0.currency == "KRW" }) ?? cell?.netSpend.first, money.minorUnits > 0 else { return nil }
