@@ -2,7 +2,7 @@ import NEOBudgetCalendar
 import SwiftUI
 
 /// The event bars of one week of the month grid (also the open week strip): one bar per event, running across its days, in the calendar's colour.
-/// A bar that is still to come is solid with white text; one that is over is a pale tint with dark text. Drawn over the week's cells, it takes
+/// A bar that is still to come is a pastel tint, one that is over a fainter one; both with dark text. Drawn over the week's cells, it takes
 /// no touches: the cell under it is the day's button.
 struct MonthWeekBars: View {
     let layout: MonthWeekLayout
@@ -25,11 +25,11 @@ struct MonthWeekBars: View {
                 let over = bar.event.endUnixMilliseconds <= now
                 Text(bar.event.title)
                     .font(.onAll(size: 10))
-                    .foregroundStyle(over ? Theme.textPrimary : Color.white)
+                    .foregroundStyle(Theme.textPrimary)
                     .lineLimit(1)
                     .padding(.horizontal, 3)
                     .frame(width: CGFloat(bar.lastColumn - bar.firstColumn + 1) * cell - 2, height: Self.laneHeight, alignment: .leading)
-                    .background(over ? tint.opacity(0.22) : tint, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .background(tint.opacity(over ? 0.12 : 0.32), in: RoundedRectangle(cornerRadius: 3, style: .continuous))
                     .offset(x: CGFloat(bar.firstColumn) * cell + 1, y: Self.top + CGFloat(bar.lane) * (Self.laneHeight + Self.laneGap))
             }
         }

@@ -13,8 +13,9 @@ public struct MonthWeekLayout: Equatable, Sendable {
     /// Per column: the events that got no bar, in order.
     public let overflow: [[WeekStripEvent]]
 
-    /// `week` is the seven days in column order.
-    public init(week: [WeekStripDay], lanes: Int = 2) {
+    /// `week` is the seven days in column order. Events that are over by `now` (milliseconds; 0 for none) come first, the most spent on them first.
+    public init(week: [WeekStripDay], lanes: Int = 2, now: Int64 = 0) {
+        func pastSpend(_ e: WeekStripEvent) -> Int64 { e.endUnixMilliseconds <= now ? -e.linkedSpend : 0 }
         var spans: [CalendarEventKey: (event: WeekStripEvent, first: Int, last: Int)] = [:]
         for (column, day) in week.enumerated() {
             for event in day.events {
@@ -23,8 +24,8 @@ public struct MonthWeekLayout: Equatable, Sendable {
         }
         // Longest first from the left edge, so a run across the week keeps one lane and the short ones stack under it.
         let ordered = spans.values.sorted {
-            ($0.first, $1.last - $1.first, $0.event.isAllDay ? 0 : 1, $0.event.startUnixMilliseconds, $0.event.title)
-                < ($1.first, $0.last - $0.first, $1.event.isAllDay ? 0 : 1, $1.event.startUnixMilliseconds, $1.event.title)
+            ($0.first, pastSpend($0.event), $1.last - $1.first, $0.event.isAllDay ? 0 : 1, $0.event.startUnixMilliseconds, $0.event.title)
+                < ($1.first, pastSpend($1.event), $0.last - $0.first, $1.event.isAllDay ? 0 : 1, $1.event.startUnixMilliseconds, $1.event.title)
         }
         var laneEnds = [Int](repeating: -1, count: lanes)
         var bars: [Bar] = []
@@ -37,7 +38,7 @@ public struct MonthWeekLayout: Equatable, Sendable {
                 for column in span.first...span.last { overflow[column].append(span.event) }
             }
         }
-        for column in overflow.indices { overflow[column].sort { ($0.isAllDay ? 0 : 1, $0.startUnixMilliseconds) < ($1.isAllDay ? 0 : 1, $1.startUnixMilliseconds) } }
+        for column in overflow.indices { overflow[column].sort { (pastSpend($0), $0.isAllDay ? 0 : 1, $0.startUnixMilliseconds) < (pastSpend($1), $1.isAllDay ? 0 : 1, $1.startUnixMilliseconds) } }
         self.bars = bars
         self.overflow = overflow
     }

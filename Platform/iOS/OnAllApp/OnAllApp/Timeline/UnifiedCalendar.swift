@@ -291,7 +291,7 @@ private struct CalendarWeekRow: View {
     var body: some View {
         let infos = days.map(cells)
         let read = infos.compactMap { $0 }
-        let layout = read.count == 7 ? MonthWeekLayout(week: read, lanes: MonthWeekBars.lanes) : nil
+        let layout = read.count == 7 ? MonthWeekLayout(week: read, lanes: MonthWeekBars.lanes, now: Int64(Date().timeIntervalSince1970 * 1000)) : nil
         ZStack(alignment: .topLeading) {
             HStack(spacing: 0) {
                 ForEach(0..<7, id: \.self) { column in
