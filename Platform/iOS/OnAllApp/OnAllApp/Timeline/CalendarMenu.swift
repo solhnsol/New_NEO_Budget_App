@@ -31,8 +31,8 @@ struct CalendarMenu: View {
     var body: some View {
         HStack(spacing: 0) {
             HStack(spacing: 0) {
-                segment("list", on: showsList) { showsList = true }
-                segment("cal", on: !showsList) { showsList = false }
+                segment("list", on: showsList) { if !showsList { Haptics.snap() }; showsList = true }
+                segment("cal", on: !showsList) { if showsList { Haptics.snap() }; showsList = false }
             }
             .padding(2).background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.segment, style: .continuous))
             .padding(.trailing, 6)
