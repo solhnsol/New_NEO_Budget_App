@@ -263,10 +263,17 @@ private struct CalendarPage: View, Equatable {
         let start = MonthUnfold.gridStart(of: first)
         let rowCount = MonthUnfold.rows(for: first)
         let selectedRow = (sel.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        // Past days are tinted by what was spent, from the most (deepest) to the least, so the month reads at a glance.
+        let spends = (0..<rowCount * 7).compactMap { i -> (LocalDate, Int64)? in
+            let d = start.adding(days: i)
+            guard d < today, let m = (cells(d)?.netSpend.first(where: { $0.currency == "KRW" }) ?? cells(d)?.netSpend.first)?.minorUnits, m > 0 else { return nil }
+            return (d, m)
+        }.sorted { $0.1 < $1.1 }
+        let shades = Dictionary(uniqueKeysWithValues: spends.enumerated().map { ($1.0, Double($0 + 1) / Double(spends.count)) })
         VStack(spacing: 0) {
             ForEach(0..<rowCount, id: \.self) { row in
                 CalendarWeekRow(
-                    days: (0..<7).map { start.adding(days: row * 7 + $0) }, month: first, sel: sel, state: state, today: today,
+                    days: (0..<7).map { start.adding(days: row * 7 + $0) }, month: first, sel: sel, state: state, today: today, shades: shades,
                     cells: cells, color: color, income: income, onTap: onTap
                 )
                 .frame(height: rowHeight)
@@ -283,6 +290,7 @@ private struct CalendarWeekRow: View {
     let sel: LocalDate
     let state: MonthUnfoldState
     let today: LocalDate
+    let shades: [LocalDate: Double]
     let cells: (LocalDate) -> WeekStripDay?
     let color: (CalendarID) -> Color
     let income: (LocalDate) -> Int64
@@ -297,7 +305,7 @@ private struct CalendarWeekRow: View {
                 ForEach(0..<7, id: \.self) { column in
                     CalendarDay(
                         day: days[column], info: infos[column], inMonth: days[column].month == month.month, isSelected: days[column] == sel, today: today,
-                        state: state, color: color, income: income(days[column]), overflow: layout?.overflow[column], onTap: onTap
+                        state: state, shade: shades[days[column]] ?? 0, color: color, income: income(days[column]), overflow: layout?.overflow[column], onTap: onTap
                     )
                 }
             }
@@ -317,6 +325,8 @@ private struct CalendarDay: View {
     let isSelected: Bool
     let today: LocalDate
     let state: MonthUnfoldState
+    /// 0 for a day with no spending to show; up to 1 for the month's biggest.
+    let shade: Double
     let color: (CalendarID) -> Color
     let income: Int64
     let overflow: [WeekStripEvent]?
@@ -355,6 +365,7 @@ private struct CalendarDay: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.accent.opacity(0.03 + 0.09 * shade).opacity(shade > 0 ? 1 : 0), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { onTap(day) }
         .accessibilityElement(children: .ignore)
