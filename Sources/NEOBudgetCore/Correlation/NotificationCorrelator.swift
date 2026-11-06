@@ -477,7 +477,7 @@ public struct NotificationCorrelator: Sendable {
                   pairs(record.draft, incoming, within: tossPairToleranceMilliseconds) else { return nil }
             if incoming.direction == .inflow {
                 // A withdrawal still waiting for review, or one already booked as spending on a person.
-                let waiting = record.entryID == nil && record.draft.kind == .withdrawal
+                let waiting = record.entryID == nil && (record.draft.kind == .withdrawal || record.draft.kind == .transferOut)
                 let person = record.entryID != nil && record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
                 return waiting || person ? other : nil
             }

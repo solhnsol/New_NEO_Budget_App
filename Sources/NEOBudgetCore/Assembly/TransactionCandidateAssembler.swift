@@ -119,6 +119,9 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
                 return try review(candidateID, draft, evidenceIDs, .missingOriginalEntry, context)
             }
             entry = try adjustment(entryID, draft, binding, original, evidenceIDs)
+        case .transferOut where context.bookWithdrawalAsSpending && context.transferCounterpartAccountID == nil:
+            // A send no bank alert of the user's own accounts answered is money that left: spending.
+            entry = try expense(entryID, draft, binding, context, evidenceIDs)
         case .transferOut, .transferIn, .cashWithdrawal, .walletTopUp:
             guard case let .account(accountID) = binding,
                   let counterpart = context.transferCounterpartAccountID else {

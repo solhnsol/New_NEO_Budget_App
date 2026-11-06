@@ -396,7 +396,7 @@ public struct NotificationIntake: Sendable {
     /// category or shop, which the user is asked for later. `now` is the time of the newest notification (or the clock).
     public func settleStaleWithdrawals<Repository: CandidateProcessingRepository>(at now: Int64, repository: inout Repository) throws {
         let waiting = try repository.correlationRecords(near: now, within: Self.withdrawalWaitMilliseconds * 4).filter {
-            $0.entryID == nil && $0.corroborates == nil && $0.draft.kind == .withdrawal && $0.draft.direction == .outflow
+            $0.entryID == nil && $0.corroborates == nil && ($0.draft.kind == .withdrawal || $0.draft.kind == .transferOut) && $0.draft.direction == .outflow
                 && $0.draft.occurredAt.unixMilliseconds + Self.withdrawalWaitMilliseconds <= now
         }.sorted { ($0.draft.occurredAt.unixMilliseconds, $0.candidateID.rawValue) < ($1.draft.occurredAt.unixMilliseconds, $1.candidateID.rawValue) }
         for record in waiting {

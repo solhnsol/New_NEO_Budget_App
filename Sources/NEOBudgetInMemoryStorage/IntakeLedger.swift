@@ -99,7 +99,7 @@ public struct IntakeLedger {
 
     /// Bump when anything that decides what a notification becomes changes (the parser's reading, the assembler, the
     /// correlator, deduplication): a saved ledger made under another value is not used, and the ledger is replayed once.
-    public static let rulesRevision = 10
+    public static let rulesRevision = 11
 
     /// The ledger as it stands, to save and restore later (`init(restoring:...)`). Nil for a partial replay.
     public func snapshot() -> IntakeLedgerSnapshot? {

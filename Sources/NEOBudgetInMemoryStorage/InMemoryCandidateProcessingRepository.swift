@@ -219,7 +219,7 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
             waited = stored.promotedEntryID == nil && stored.corroborates == nil && earlier.cancels == nil
                 && observation.draft.kind == .cancellation && earlier.draft == observation.draft
             // A bank withdrawal that waited for an explanation nothing gave is booked as spending (see `settleStaleWithdrawals`).
-            let settlesWithdrawal = stored.promotedEntryID == nil && stored.corroborates == nil && observation.draft.kind == .withdrawal
+            let settlesWithdrawal = stored.promotedEntryID == nil && stored.corroborates == nil && (observation.draft.kind == .withdrawal || observation.draft.kind == .transferOut)
                 && earlier.draft == observation.draft && stored.candidate.status != .ready && candidate.status == .ready
             withdrawalSettles = settlesWithdrawal
             waited = waited || settlesWithdrawal
