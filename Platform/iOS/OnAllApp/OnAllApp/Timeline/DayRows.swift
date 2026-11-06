@@ -690,10 +690,12 @@ struct LedgerEntryLoader: View {
     let close: () -> Void
     @State private var entry: LedgerListEntry?
     @State private var missing = false
+    /// The placeholder panel has finished sliding up: only then does the real one take its place (else it would pop in).
+    @State private var settled = false
 
     var body: some View {
         Group {
-            if let entry {
+            if let entry, settled {
                 TransactionQuickSheet(entry: entry, model: model, close: close, appearsShown: true)
             } else {
                 // The panel is up at once while the entry is read (the whole ledger list is built for it), as the design's is.
@@ -705,6 +707,7 @@ struct LedgerEntryLoader: View {
                 }
             }
         }
+        .task { try? await Task.sleep(for: .milliseconds(420)); settled = true }
         .task(id: model.overrideRevision) {
             let sections = await model.ledgerSections() ?? []
             entry = sections.lazy.flatMap(\.entries).first { $0.id == id }
