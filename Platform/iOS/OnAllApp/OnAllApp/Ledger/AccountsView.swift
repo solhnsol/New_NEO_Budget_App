@@ -70,7 +70,7 @@ struct AccountsView: View {
     }
 
     private var month: BudgetMonth? {
-        let today = model.dayZone.localDate(of: Int64(Date().timeIntervalSince1970 * 1_000))
+        let today = model.dayZone.ledgerDate(of: Int64(Date().timeIntervalSince1970 * 1_000))
         return try? BudgetMonth(year: today.year, month: today.month)
     }
 

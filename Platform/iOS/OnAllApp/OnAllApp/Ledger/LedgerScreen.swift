@@ -325,7 +325,7 @@ struct LedgerScreen: View {
             selectionNotice = "같은 일정에 들어 있는 거래만 정산할 수 있어요. 먼저 '일정'에서 한 일정으로 모아 주세요."
             return
         }
-        let day = model.dayZone.localDate(of: first.transaction.occurredAtUnixMilliseconds)
+        let day = model.dayZone.ledgerDate(of: first.transaction.occurredAtUnixMilliseconds)
         let timelines = await model.readDays((-3...3).map { day.adding(days: $0) }).compactMap(\.timeline)
         let block = timelines.flatMap(\.blocks).first { $0.activity?.activityID == activity }
         guard let block else {
@@ -339,7 +339,7 @@ struct LedgerScreen: View {
 
     private var nettedByDay: [LocalDate: [String: Int64]] { NettedSpendingTotals.byDay(model.nettedSpending, zone: model.dayZone) }
 
-    private var today: LocalDate { model.dayZone.localDate(of: Int64(Date().timeIntervalSince1970 * 1_000)) }
+    private var today: LocalDate { model.dayZone.ledgerDate(of: Int64(Date().timeIntervalSince1970 * 1_000)) }
 
     private func load() async {
         if let loaded = await model.ledgerSections() { sections = loaded } else if sections == nil { sections = [] }

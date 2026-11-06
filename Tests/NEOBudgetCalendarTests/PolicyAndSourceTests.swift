@@ -200,3 +200,15 @@ private func ledgerSnapshot(base: Int64 = 0) throws -> (LedgerSnapshot, LedgerEn
     #expect(net == expectedNet)
     #expect(timeline.summary.unlinkedTransactionCount == 3)
 }
+
+@Test func ledgerDateFollowsTheConfiguredDayStart() throws {
+    var zone = try DisplayTimeZone(identifier: "Asia/Seoul")
+    let at0130 = zone.instant(of: try LocalDate(year: 2026, month: 11, day: 5), minuteOfDay: 90)
+    #expect(zone.ledgerDate(of: at0130) == (try LocalDate(year: 2026, month: 11, day: 5)))   // start 00:00: unchanged
+    zone.ledgerDayStartMinutes = 240
+    #expect(zone.ledgerDate(of: at0130) == (try LocalDate(year: 2026, month: 11, day: 4)))
+    let at0400 = zone.instant(of: try LocalDate(year: 2026, month: 11, day: 5), minuteOfDay: 240)
+    #expect(zone.ledgerDate(of: at0400) == (try LocalDate(year: 2026, month: 11, day: 5)))
+    let dec1 = zone.instant(of: try LocalDate(year: 2026, month: 12, day: 1), minuteOfDay: 120)
+    #expect(zone.ledgerDate(of: dec1) == (try LocalDate(year: 2026, month: 11, day: 30)))
+}
