@@ -124,7 +124,7 @@ public struct RailAxis: Equatable, Sendable {
     public func hourMarks(minimumGap: Double = 16, avoiding minute: Int? = nil) -> [(hour: Int, y: Double)] {
         var marks: [(hour: Int, y: Double)] = []
         var last = -Double.infinity
-        for hour in Int((Double(firstMinute) / 60).rounded(.up))...min(lastMinute / 60, 23) {
+        for hour in Int((Double(firstMinute) / 60).rounded(.up))...(lastMinute > 1440 ? lastMinute / 60 : min(lastMinute / 60, 23)) {
             let y = y(hour * 60)
             if let minute, abs(y - self.y(minute)) < 14 { continue }
             if y - last < minimumGap && hour * 60 != firstMinute { continue }

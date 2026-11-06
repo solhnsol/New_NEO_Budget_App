@@ -5,14 +5,14 @@ import NEOBudgetCalendar
 enum NettedSpendingTotals {
     static func byDay(_ items: [NettedSpending], zone: DisplayTimeZone) -> [LocalDate: [String: Int64]] {
         var sums: [LocalDate: [String: Int64]] = [:]
-        for item in items { sums[zone.localDate(of: item.atUnixMilliseconds), default: [:]][item.currency, default: 0] += item.minorUnits }
+        for item in items { sums[zone.ledgerDate(of: item.atUnixMilliseconds), default: [:]][item.currency, default: 0] += item.minorUnits }
         return sums
     }
 
     static func month(_ items: [NettedSpending], year: Int, month: Int, zone: DisplayTimeZone) -> [String: Int64] {
         var sums: [String: Int64] = [:]
         for item in items {
-            let day = zone.localDate(of: item.atUnixMilliseconds)
+            let day = zone.ledgerDate(of: item.atUnixMilliseconds)
             if day.year == year && day.month == month { sums[item.currency, default: 0] += item.minorUnits }
         }
         return sums

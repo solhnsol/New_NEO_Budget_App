@@ -48,8 +48,9 @@ public enum WeekStripBuilder {
                 }
             }.sorted { ($0.isAllDay ? 0 : 1, $0.startUnixMilliseconds, $0.title) < ($1.isAllDay ? 0 : 1, $1.startUnixMilliseconds, $1.title) }
             let eventCount = dayEvents.count
+            let ledgerBounds = timeZone.ledgerDayBounds(current)
             let dayTransactions = transactions.filter {
-                $0.occurredAtUnixMilliseconds >= bounds.start && $0.occurredAtUnixMilliseconds < bounds.end
+                $0.occurredAtUnixMilliseconds >= ledgerBounds.start && $0.occurredAtUnixMilliseconds < ledgerBounds.end
             }
             var byCurrency: [String: Int64] = [:]
             for transaction in dayTransactions { byCurrency[transaction.amount.currency, default: 0] += transaction.signedMinorUnits - (transaction.flow == .spend ? min(reductions[transaction.id] ?? 0, transaction.amount.minorUnits) : 0) }

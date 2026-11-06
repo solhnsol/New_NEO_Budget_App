@@ -20,7 +20,7 @@ struct AnalysisSnapshot {
         guard let sections = await model.ledgerSections() else { return nil }
         let life = await model.lifeState() ?? .empty
         let entries = sections.flatMap(\.entries)
-        var snapshot = AnalysisSnapshot(today: model.dayZone.localDate(of: model.nowMilliseconds))
+        var snapshot = AnalysisSnapshot(today: model.dayZone.ledgerDate(of: model.nowMilliseconds))
         snapshot.entriesByID = Dictionary(entries.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         snapshot.rows = AnalysisInput.transactions(entries, life: life, zone: model.dayZone, recurring: model.recurringDecisions)
         snapshot.recurringInputs = AnalysisInput.recurringInputs(entries, zone: model.dayZone)

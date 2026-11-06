@@ -105,7 +105,13 @@ final class AppModel {
     /// Created with `editor`. Use `save(_:)` so the days are read again afterwards.
     private(set) var savePipeline: EventSavePipeline?
 
-    let dayZone: DisplayTimeZone
+    private let baseZone: DisplayTimeZone
+    /// The display zone with the ledger's day start (설정 > 하루 시작 시각) applied; calendar code ignores that field.
+    var dayZone: DisplayTimeZone {
+        var zone = baseZone
+        zone.ledgerDayStartMinutes = DayStartSetting.current()
+        return zone
+    }
     let isDemo: Bool
 
     private let provider: any CalendarProvider
@@ -151,7 +157,7 @@ final class AppModel {
     ) {
         self.provider = provider
         self.eventKit = eventKit
-        self.dayZone = dayZone
+        self.baseZone = dayZone
         self.ledger = ledger
         self.isDemo = isDemo
         calendarIcons = CalendarIconStore.load(key: isDemo ? "calendarIcons.demo" : "calendarIcons")
@@ -303,12 +309,12 @@ final class AppModel {
 
     func shift(days: Int) async { await select(selectedDay.adding(days: days)) }
 
-    func goToday() async { await select(dayZone.localDate(of: Self.nowMilliseconds())) }
+    func goToday() async { await select(today) }
 
-    /// Today's date in the display zone.
-    var today: LocalDate { dayZone.localDate(of: Self.nowMilliseconds()) }
+    /// Today's ledger day in the display zone: between midnight and the day start it is still yesterday's date.
+    var today: LocalDate { dayZone.ledgerDate(of: Self.nowMilliseconds()) }
 
-    var isToday: Bool { selectedDay == dayZone.localDate(of: Self.nowMilliseconds()) }
+    var isToday: Bool { selectedDay == today }
 
     // MARK: Loading
 
@@ -935,7 +941,7 @@ final class AppModel {
         let months = Set(transactions
             .filter { $0.flow == .spend }
             .compactMap { marker -> LocalDate? in
-                let day = dayZone.localDate(of: marker.occurredAtUnixMilliseconds)
+                let day = dayZone.ledgerDate(of: marker.occurredAtUnixMilliseconds)
                 return try? LocalDate(year: day.year, month: day.month, day: 1)
             })
         for month in months.sorted() {

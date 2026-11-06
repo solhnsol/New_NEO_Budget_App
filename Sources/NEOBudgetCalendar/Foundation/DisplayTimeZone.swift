@@ -4,6 +4,9 @@ import Foundation
 /// explicit input; nothing here reads the device time zone, locale, or clock.
 public struct DisplayTimeZone: Codable, Hashable, Sendable {
     public let identifier: String
+    /// Minutes after local midnight at which the ledger's day starts (default 0). Only `ledgerDate(of:)` reads it; it is a display
+    /// setting, not part of the stored form, so changing it re-dates past transactions without touching the ledger.
+    public var ledgerDayStartMinutes = 0
 
     public init(identifier: String) throws {
         guard TimeZone(identifier: identifier) != nil else {
@@ -40,6 +43,19 @@ public struct DisplayTimeZone: Codable, Hashable, Sendable {
         // Foundation returns valid components for a valid instant.
         return (try? LocalDate(year: parts.year ?? 1970, month: parts.month ?? 1, day: parts.day ?? 1))
             ?? LocalDate(daysSinceUnixEpoch: 0)
+    }
+
+    /// The ledger day that contains `instant`: 01:30 on the 5th is the 4th when the ledger day starts at 04:00.
+    /// shortcut: shifts by a fixed offset, so on a DST-change night the boundary can be an hour off.
+    public func ledgerDate(of instant: Int64) -> LocalDate {
+        localDate(of: instant - Int64(ledgerDayStartMinutes) * 60_000)
+    }
+
+    /// Half-open bounds of the ledger day `day`: from its start time to the same time next day.
+    public func ledgerDayBounds(_ day: LocalDate) -> (start: Int64, end: Int64) {
+        let shift = Int64(ledgerDayStartMinutes) * 60_000
+        let bounds = dayBounds(day)
+        return (bounds.start + shift, bounds.end + shift)
     }
 
     private func noon(of day: LocalDate) -> Date {

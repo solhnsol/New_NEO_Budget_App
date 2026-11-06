@@ -62,12 +62,18 @@ struct DataTransferScreen: View {
 /// 정산 설정: the surplus choice is stored (`SurplusSetting`); the rest is looks.
 struct SettlementSettingsScreen: View {
     @AppStorage(SurplusSetting.key) private var surplusRaw = SurplusTreatment.income.rawValue
+    @AppStorage(DayStartSetting.key) private var dayStart = DayStartSetting.defaultMinutes
     @State private var shortfall = 0
     @State private var days = 14
     @State private var remember = true
 
     var body: some View {
         SettingsPage(title: "정산 설정") {
+            SSection(title: "하루 시작 시각") {
+                ForEach(DayStartSetting.hours, id: \.self) { hour in
+                    SRadioRow(title: hour == 0 ? "자정" : "오전 \(hour)시", isOn: dayStart == hour * 60) { dayStart = hour * 60 }
+                }
+            }
             SSection(title: "정산보다 더 받은 돈") {
                 SRadioRow(title: "별도 수입으로 기록", isOn: surplusRaw == SurplusTreatment.income.rawValue) { surplusRaw = SurplusTreatment.income.rawValue }
                 SRadioRow(title: "그 지출에서 차감", isOn: surplusRaw == SurplusTreatment.reduceSpending.rawValue) { surplusRaw = SurplusTreatment.reduceSpending.rawValue }
