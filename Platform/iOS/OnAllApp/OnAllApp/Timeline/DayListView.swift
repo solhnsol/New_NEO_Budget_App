@@ -30,6 +30,7 @@ struct DayListView: View {
                     switch item.kind {
                     case let .row(row): pickable(row, inEvent: false)
                     case let .bundle(bundle): bundleView(bundle)
+                    case .nowLine: NowLine(minute: Int((model.nowMilliseconds - (timeline?.dayStartUnixMilliseconds ?? 0)) / 60_000))
                     case let .event(block, rows, isFuture):
                         EventBox(block: block, rows: rows, isFuture: isFuture, isLive: isGoingOn(block, timeline), onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
                     }
@@ -110,7 +111,7 @@ struct DayListView: View {
         }
 
         struct Item: Identifiable {
-            enum Kind { case row(Row), event(EventBlock, [Row], isFuture: Bool), bundle(Bundle) }
+            enum Kind { case row(Row), event(EventBlock, [Row], isFuture: Bool), bundle(Bundle), nowLine }
             let id: String
             let minute: Int
             let kind: Kind
@@ -170,6 +171,10 @@ struct DayListView: View {
                 rowCount += inside.count
                 items.append(Item(id: "e/" + block.id.rawValue, minute: block.displayStartMinute, kind: .event(block, inside, isFuture: block.displayStartMinute >= now)))
             }
+            // Today, with no event going on: the time of day as a hairline among the rows (the design's `.nowl`).
+            if raw >= 0, raw < Int64(timeline.totalMinutes), !blocks.contains(where: { $0.displayStartMinute <= now && now < $0.displayEndMinute }) {
+                items.append(Item(id: "now", minute: now, kind: .nowLine))
+            }
             self.items = items.sorted { ($0.minute, $0.id) < ($1.minute, $1.id) }
             self.eventCount = blocks.count
             self.rowCount = rowCount
@@ -184,6 +189,20 @@ private extension View {
     /// A row that opens on a tap: a tap gesture, not a `Button`, so a swipe that starts on it never opens it.
     func listTap(_ action: @escaping () -> Void) -> some View {
         contentShape(Rectangle()).onTapGesture(perform: action).accessibilityAddTraits(.isButton)
+    }
+}
+
+/// The time of day as a hairline with its time at the right (the design's `.nowl`), in the blue of the rail's now-line.
+private struct NowLine: View {
+    let minute: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Rectangle().fill(Theme.accent.opacity(0.55)).frame(height: 1)
+            Text(clockText(minute)).font(.onAll(size: 11, weight: .semibold).monospacedDigit()).foregroundStyle(Theme.accent).padding(.leading, 6)
+        }
+        .frame(height: 16).padding(.horizontal, 28).padding(.vertical, 2)
+        .accessibilityElement(children: .ignore).accessibilityLabel("지금 \(clockText(minute))")
     }
 }
 
