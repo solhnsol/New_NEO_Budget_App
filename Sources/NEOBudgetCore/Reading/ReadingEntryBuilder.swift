@@ -65,6 +65,12 @@ public struct ReadingEntryBuilder: Sendable {
                 while index < chars.count, !cuts.contains(index) {
                     let c = chars[index]
                     if Self.isDigit(c) { current.append(c); index += 1; continue }
+                    // 계좌번호 `123-456-789***`도 한 조각.
+                    if c == "*" || (c == "-" && index + 1 < chars.count && Self.isDigit(chars[index + 1])) {
+                        current.append(c)
+                        index += 1
+                        continue
+                    }
                     if ",/:.".contains(c), index + 1 < chars.count, Self.isDigit(chars[index + 1]), !cuts.contains(index + 1) {
                         if c != "," { currentKind = .dateTime }
                         current.append(c)
@@ -219,7 +225,7 @@ public struct ReadingEntryBuilder: Sendable {
             let inner = String(chars[(index + 1)..<end])
             flush()
             if inner == "*" { result.append(.slot("아무 텍스트")) }
-            else if inner == #"re:[0-9]+"# || inner == Self.numberPattern { result.append(.slot("숫자")) }
+            else if inner == #"re:[0-9]+"# || inner == Self.numberPattern || inner == Self.maskedNumberPattern { result.append(.slot("숫자")) }
             else if inner == Self.dateTimePattern { result.append(.slot("날짜 시각")) }
             else if inner.hasPrefix("re:") { result.append(.slot("…")) }
             else {
@@ -234,6 +240,7 @@ public struct ReadingEntryBuilder: Sendable {
 
     /// 쉼표로 천 단위를 끊은 숫자(`1,000,000`)도 맞는다.
     static let numberPattern = #"re:[0-9]+(?:,[0-9]{3})*"#
+    static let maskedNumberPattern = #"re:[0-9*\-]+"#
     static let dateTimePattern = #"re:[0-9]+(?:[/:.][0-9]+)+"#
 
     public static func direction(of kind: DraftEventKind) -> TransactionDirection {
@@ -250,7 +257,9 @@ public struct ReadingEntryBuilder: Sendable {
     }
 
     private static func fixed(_ token: Token, generalizeDigits: Bool = true) -> String {
-        if generalizeDigits, token.kind == .digits { return "{\(numberPattern)}" }
+        if generalizeDigits, token.kind == .digits {
+            return token.text.contains("-") || token.text.contains("*") ? "{\(maskedNumberPattern)}" : "{\(numberPattern)}"
+        }
         if generalizeDigits, token.kind == .dateTime { return "{\(dateTimePattern)}" }
         // 틀의 특수 글자(`{`, `}`)는 정규식으로 적는다.
         return token.text.map { $0 == "{" || $0 == "}" ? #"{re:\\\#($0)}"# : String($0) }.joined()

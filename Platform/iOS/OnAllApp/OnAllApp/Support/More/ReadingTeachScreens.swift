@@ -110,7 +110,7 @@ final class TeachDraft {
         var order: [ReadingSlot] = []
         var texts: [ReadingSlot: String] = [:]
         for token in builder.tokens {
-            guard let slot = assignments[token.id], slot != .free else { continue }
+            guard let slot = assignments[token.id], slot != .free, slot != .direction else { continue }
             if !order.contains(slot) { order.append(slot) }
             texts[slot] = (texts[slot].map { $0 + (token.spaceBefore ? " " : "") } ?? "") + token.text
         }
@@ -501,8 +501,8 @@ private struct ReadingConfirmScreen: View {
                 .font(.onAll(size: 15)).foregroundStyle(Theme.textPrimary).lineSpacing(4)
                 .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 16).padding(.vertical, 14)
             }
-            SSection(title: "지난 알림") {
-                SRow(title: "같은 항목으로 읽혀요", value: "\(counts.matched)건")
+            SSection(title: "같은 항목으로 읽히는 지난 알림") {
+                SRow(title: "읽혀요", value: "\(counts.matched)건")
                 if !counts.missed.isEmpty {
                     Button { showMissed = true } label: { SRow(title: "읽지 못해요", value: "\(counts.missed.count)건", chevron: true) }
                         .buttonStyle(.onAllRow)
