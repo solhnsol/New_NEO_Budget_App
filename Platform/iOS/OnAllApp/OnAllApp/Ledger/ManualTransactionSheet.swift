@@ -10,12 +10,24 @@ struct ManualTransactionSheet: View {
     @State private var title = ""
     @State private var amountText = ""
     @State private var isRefund = false
-    @State private var when = Date()
+    @State private var when: Date
     @State private var category: CanonicalCategoryID?
     @State private var memo = ""
     @State private var tags: [String] = []
     @State private var showsTags = false
     @FocusState private var amountFocused: Bool
+
+    init(model: AppModel) {
+        self.model = model
+        // The day on screen, at the time of day it is now (the viewed day is not always today).
+        var zoneCalendar = Calendar(identifier: .gregorian)
+        zoneCalendar.timeZone = TimeZone(identifier: model.dayZone.identifier) ?? .current
+        let now = Date()
+        var parts = zoneCalendar.dateComponents([.hour, .minute], from: now)
+        let day = model.selectedDay
+        parts.year = day.year; parts.month = day.month; parts.day = day.day
+        _when = State(initialValue: model.isToday ? now : (zoneCalendar.date(from: parts) ?? now))
+    }
 
     private var won: Int64? { Int64(amountText.filter(\.isNumber)).flatMap { $0 > 0 ? $0 : nil } }
     private var zone: TimeZone { TimeZone(identifier: model.dayZone.identifier) ?? .current }

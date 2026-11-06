@@ -81,6 +81,8 @@ struct CalendarCard: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * max(0, min(1.03, p)), alignment: .top)
                 .clipped()
+                // The rows above and below the visible band are laid out beyond the clip; without this they still took the touches over the header buttons.
+                .contentShape(Rectangle())
                 handle
             }
             .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
@@ -113,6 +115,13 @@ struct CalendarCard: View {
 
     private func tap(_ day: LocalDate) {
         guard state.allowsTap else { return }
+        // Belt and braces: a day whose row is outside the visible band cannot have been what the finger meant.
+        let start = MonthUnfold.gridStart(of: first)
+        let row = (day.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        let selectedRow = (selected.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        let p = max(0, min(1.03, state.progress))
+        let top = CGFloat(row) * rowHeight - CGFloat(selectedRow) * rowHeight * (1 - state.progress)
+        guard top + rowHeight > 0, top < stripHeight + (CGFloat(rows) * rowHeight - stripHeight) * p else { return }
         onSelect(day)
     }
 
@@ -232,9 +241,12 @@ struct CalendarCard: View {
         let target: CGFloat = go ? -CGFloat(direction) * w : 0
         let initial = abs(target - dx) > 1 ? max(-8, min(8, vx / (target - dx))) : 0
         let destination = step(direction)
-        withAnimation(.interpolatingSpring(mass: 1, stiffness: 385.5, damping: 35.3, initialVelocity: initial), completionCriteria: .logicallyComplete) {
-            dragX = target
-        } completion: {
+        // The swap runs once, when the spring finishes or, if its completion never arrives (it can wait for the next redraw, so the first tap after a
+        // swipe seemed to snap back to the old week), a moment after the spring should be at rest.
+        var swapped = false
+        let swapIn = {
+            guard !swapped else { return }
+            swapped = true
             // The neighbour is drawn just as the page that replaces it will be, so swapping them shows no change.
             var swap = Transaction()
             swap.disablesAnimations = true
@@ -244,6 +256,10 @@ struct CalendarCard: View {
                 paging = false
             }
         }
+        withAnimation(.interpolatingSpring(mass: 1, stiffness: 385.5, damping: 35.3, initialVelocity: initial), completionCriteria: .logicallyComplete) {
+            dragX = target
+        } completion: { swapIn() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { swapIn() }
     }
 }
 
