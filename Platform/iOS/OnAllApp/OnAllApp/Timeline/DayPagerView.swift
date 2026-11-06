@@ -93,6 +93,9 @@ struct DayPagerView: View {
                 return
             }
             guard let new, new != model.selectedDay.daysSinceUnixEpoch else { return }
+            // A swipe turns one page at a time; a bigger jump is the scroll view re-resolving its position after a layout change (a sheet, the
+            // list / calendar switch), not the reader. Put the pager back on the selected day instead of moving the selection.
+            guard abs(new - model.selectedDay.daysSinceUnixEpoch) <= 1 else { position = model.selectedDay.daysSinceUnixEpoch; return }
             if old != nil { Haptics.snap() }
             onScrollToDay(LocalDate(daysSinceUnixEpoch: new))
         }
