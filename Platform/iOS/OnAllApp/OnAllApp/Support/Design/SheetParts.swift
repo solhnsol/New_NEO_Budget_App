@@ -547,6 +547,8 @@ private struct PanelRoot<Small: View, More: View>: View {
         addChild(host)
         host.view.translatesAutoresizingMaskIntoConstraints = false
         host.view.backgroundColor = .clear
+        // The panel slides over the home-indicator strip; without this the content would inset itself there and leave a gap at its foot while it moves.
+        host.safeAreaRegions = []
         panel.addSubview(host.view)
         NSLayoutConstraint.activate([
             host.view.topAnchor.constraint(equalTo: panel.topAnchor),
