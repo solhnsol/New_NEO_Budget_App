@@ -58,3 +58,10 @@ import NEOBudgetCalendar
     marks.reconcile([k]) { _ in event("e", from: at(today, 19), to: at(today, 19) + half, recurring: true) }
     #expect(marks.count == 0)
 }
+
+@Test func marksListTheirKeysForALaterLookup() {
+    var marks = OpenEndMarks()
+    let k = key("life", "e")
+    marks.mark(k)
+    #expect(marks.keys == [k])
+}

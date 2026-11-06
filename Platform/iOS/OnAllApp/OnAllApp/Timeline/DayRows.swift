@@ -171,6 +171,14 @@ struct RailPlan {
     static let rowHeight: CGFloat = 36
     /// The now line's minute, only while it falls inside this day.
     let nowMinute: Int?
+    /// 종료 미정 events (by block id) and, for a begun one, the minute its colour reaches: its last linked transaction, never less than its saved end.
+    let openReach: [String: Int]
+
+    func isOpen(_ block: EventBlock) -> Bool { openReach[block.id.rawValue] != nil }
+    /// Where the event is drawn to: its saved end, or for a begun open one how far its transactions go.
+    func end(of block: EventBlock) -> Int { openReach[block.id.rawValue].map { max($0, block.displayEndMinute) } ?? block.displayEndMinute }
+    /// A card to come that has no end is drawn this tall, fading out (the saved end is only a placeholder).
+    static let openCardHeight: CGFloat = 80
 
     /// Where something drawn has touches of its own, in the rail's space (a transaction row, an event card, a begun event's bar and name): a hold on the
     /// empty time between them makes a new event, on these it does what they do.
@@ -179,25 +187,33 @@ struct RailPlan {
         var bands = rowYs.map { CGRect(x: 0, y: $0 - Self.rowHeight / 2, width: wide, height: Self.rowHeight) }
         for block in cards {
             let top = CGFloat(axis.y(block.displayStartMinute))
-            bands.append(CGRect(x: 0, y: top, width: wide, height: max(6, CGFloat(axis.y(block.displayEndMinute)) - top)))
+            bands.append(CGRect(x: 0, y: top, width: wide, height: max(6, isOpen(block) ? Self.openCardHeight : CGFloat(axis.y(block.displayEndMinute)) - top)))
         }
         for block in past {
-            let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(block.displayEndMinute))
+            let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(end(of: block)))
             bands.append(CGRect(x: 0, y: top, width: 70, height: max(6, bottom - top)))
             bands.append(CGRect(x: 0, y: top, width: wide, height: 22))
         }
         return bands
     }
 
-    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = [], isOpen: (String) -> Bool = { _ in false }) {
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = [], isOpen: (String) -> Bool = { _ in false }, openEnds: Set<CalendarEventKey> = []) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
         let past = blocks.filter { $0.displayStartMinute < cutoff }
         let now = cutoff >= 0 && cutoff < timeline.totalMinutes ? cutoff : nil
 
+        // An open event that has begun runs to its last transaction (the saved end is only a placeholder), so those transactions are inside it.
+        var reach: [String: Int] = [:]
+        for block in blocks where openEnds.contains(block.eventKey) {
+            let last = block.allocations.filter(\.occursOnSelectedDay).map { Int(max(0, min(Int64(timeline.totalMinutes - 1), ($0.occurredAtUnixMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000))) }.max()
+            reach[block.id.rawValue] = block.displayStartMinute < cutoff ? max(block.displayEndMinute, (last ?? 0) + 1) : block.displayEndMinute
+        }
+        func reached(_ block: EventBlock) -> Int { reach[block.id.rawValue].map { max($0, block.displayEndMinute) } ?? block.displayEndMinute }
+
         var rows: [Row] = timeline.markers.map { marker in
-            let inside = past.first { $0.displayStartMinute <= marker.positionMinute && marker.positionMinute < $0.displayEndMinute }
+            let inside = past.first { $0.displayStartMinute <= marker.positionMinute && marker.positionMinute < reached($0) }
             let linked = marker.allocations.first { $0.activityID != nil }.flatMap { link in blocks.first { $0.activity?.activityID == link.activityID } }
             return Row(
                 id: "m/" + marker.transactionID.rawValue, transactionID: marker.transactionID, minute: marker.positionMinute, title: marker.title ?? "거래",
@@ -247,7 +263,7 @@ struct RailPlan {
             bundles.append(Bundle(key: key, indices: ordered, title: title, isAuto: key.hasPrefix("a:")))
         }
 
-        let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: $0.displayEndMinute, isCard: $0.displayStartMinute >= cutoff) }
+        let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: reached($0), isCard: $0.displayStartMinute >= cutoff) }
         // Where each row is laid out: a bundle that is opened stacks its legs one under another at its first leg's time (its legs' own times are in
         // their text); a bundle that is closed is one row, at its first leg. So a bundle is one point of the day, with nothing else between its legs.
         var layoutMinute = rows.map(\.minute)
@@ -282,6 +298,7 @@ struct RailPlan {
         self.rowBundle = rowBundle
         self.axis = axis
         self.nowMinute = now
+        self.openReach = reach
         self.height = max(CGFloat(axis.height), (lastY.isFinite ? lastY : 0) + Self.rowHeight)
     }
 
@@ -328,8 +345,10 @@ private struct RailTimeline: View {
     /// Selection mode lives on the model: a row picks itself there.
     var model: AppModel?
 
+    private var openEnds: Set<CalendarEventKey> { Set(timeline.blocks.map(\.eventKey).filter { model?.openEndMarks.isOpenEnd($0) ?? false }) }
+
     var body: some View {
-        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) }, noChargeTaps: model?.noChargeTaps ?? [], isOpen: { model?.openBundles.contains($0) ?? false })
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) }, noChargeTaps: model?.noChargeTaps ?? [], isOpen: { model?.openBundles.contains($0) ?? false }, openEnds: openEnds)
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
@@ -338,8 +357,8 @@ private struct RailTimeline: View {
                     .frame(width: RailMetrics.hourLabelWidth, height: 14, alignment: .trailing).offset(x: RailMetrics.hourLabelX, y: CGFloat(mark.y) - 7)
             }
             Capsule().fill(Theme.rail).frame(width: RailMetrics.railWidth, height: height).offset(x: RailMetrics.railX)
-            ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
-            ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
+            ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis, end: plan.end(of: block), isOpen: plan.isOpen(block)) { onSelect(.event(block)) } }
+            ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis, isOpen: plan.isOpen(block)) { onSelect(.event(block)) } }
             // The spine of each bundle, under its rows: from its first leg to its last.
             ForEach(plan.bundles.filter { model?.openBundles.contains($0.key) ?? false }) { bundle in
                 BundleSpine(top: plan.rowYs[bundle.first], bottom: plan.rowYs[bundle.last], capped: false)
@@ -432,13 +451,20 @@ private func clockText(_ minute: Int) -> String { String(format: "%02d:%02d", mi
 private struct PastEventBar: View {
     let block: EventBlock
     let axis: RailAxis
+    let end: Int
+    let isOpen: Bool
     let onTap: () -> Void
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
-        let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(block.displayEndMinute))
+        let top = CGFloat(axis.y(block.displayStartMinute)), bottom = CGFloat(axis.y(end))
+        // 종료 미정: the colour thins from the start to the last transaction and then fades out over one more stretch, with no end to stop at.
+        let reach = max(RailMetrics.barWidth, bottom - top), fade: CGFloat = isOpen ? 64 : 0
+        let paint = isOpen
+            ? AnyShapeStyle(LinearGradient(stops: [.init(color: color, location: 0), .init(color: color.opacity(0.45), location: reach / (reach + fade)), .init(color: color.opacity(0), location: 1)], startPoint: .top, endPoint: .bottom))
+            : AnyShapeStyle(color)
         ZStack(alignment: .topLeading) {
-            RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(color).frame(width: RailMetrics.barWidth, height: max(RailMetrics.barWidth, bottom - top))
+            RoundedRectangle(cornerRadius: RailMetrics.barWidth / 2).fill(paint).frame(width: RailMetrics.barWidth, height: reach + fade)
                 .contentShape(Rectangle().inset(by: -8)).onTapGesture(perform: onTap)
                 .offset(x: RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2, y: top)
             HStack(spacing: Theme.Space.s) {
@@ -452,7 +478,7 @@ private struct PastEventBar: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(block.title), \(clockText(block.displayStartMinute))부터 \(clockText(block.displayEndMinute))까지")
+        .accessibilityLabel(isOpen ? "\(block.title), \(clockText(block.displayStartMinute))부터" : "\(block.title), \(clockText(block.displayStartMinute))부터 \(clockText(block.displayEndMinute))까지")
         .accessibilityAddTraits(.isButton)
         .accessibilityAction(.default, onTap)
     }
@@ -462,6 +488,7 @@ private struct PastEventBar: View {
 private struct EventCardView: View {
     let block: EventBlock
     let axis: RailAxis
+    var isOpen = false
     let onTap: () -> Void
 
     /// What the transactions put in this event come to (the event's own share, as the timeline counts it).
@@ -474,9 +501,11 @@ private struct EventCardView: View {
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
         let top = CGFloat(axis.y(block.displayStartMinute))
-        let height = max(RailMetrics.barWidth, CGFloat(axis.y(block.displayEndMinute)) - top)
+        // 종료 미정: no end to stop at, so the card is a fixed stretch whose colour fades out downward; its time reads "18:30 –".
+        let height = isOpen ? RailPlan.openCardHeight : max(RailMetrics.barWidth, CGFloat(axis.y(block.displayEndMinute)) - top)
         let shape = UnevenRoundedRectangle(topLeadingRadius: 3, bottomLeadingRadius: 3, bottomTrailingRadius: 12, topTrailingRadius: 12)
-        let range = clockText(block.displayStartMinute) + " – " + clockText(block.displayEndMinute)
+        let range = clockText(block.displayStartMinute) + " –" + (isOpen ? "" : " " + clockText(block.displayEndMinute))
+        let fadeOut = LinearGradient(stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.45), .init(color: .clear, location: 1)], startPoint: .top, endPoint: .bottom)
         Group {
             if height < 40 {
                 HStack(spacing: Theme.Space.s) {
@@ -505,6 +534,7 @@ private struct EventCardView: View {
         .background(Theme.surface, in: shape)
         .overlay(alignment: .leading) { Rectangle().fill(color).frame(width: RailMetrics.barWidth) }
         .clipShape(shape)
+        .mask { if isOpen { Rectangle().fill(fadeOut) } else { Rectangle() } }
         .padding(.leading, RailMetrics.railX + RailMetrics.railWidth / 2 - RailMetrics.barWidth / 2)
         .contentShape(shape)
         .onTapGesture(perform: onTap)
