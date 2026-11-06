@@ -232,9 +232,12 @@ struct CalendarCard: View {
         let target: CGFloat = go ? -CGFloat(direction) * w : 0
         let initial = abs(target - dx) > 1 ? max(-8, min(8, vx / (target - dx))) : 0
         let destination = step(direction)
-        withAnimation(.interpolatingSpring(mass: 1, stiffness: 385.5, damping: 35.3, initialVelocity: initial), completionCriteria: .logicallyComplete) {
-            dragX = target
-        } completion: {
+        // The swap runs once, when the spring finishes or, if its completion never arrives (it can wait for the next redraw, so the first tap after a
+        // swipe seemed to snap back to the old week), a moment after the spring should be at rest.
+        var swapped = false
+        let swapIn = {
+            guard !swapped else { return }
+            swapped = true
             // The neighbour is drawn just as the page that replaces it will be, so swapping them shows no change.
             var swap = Transaction()
             swap.disablesAnimations = true
@@ -244,6 +247,10 @@ struct CalendarCard: View {
                 paging = false
             }
         }
+        withAnimation(.interpolatingSpring(mass: 1, stiffness: 385.5, damping: 35.3, initialVelocity: initial), completionCriteria: .logicallyComplete) {
+            dragX = target
+        } completion: { swapIn() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { swapIn() }
     }
 }
 
