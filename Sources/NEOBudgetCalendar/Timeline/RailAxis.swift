@@ -22,6 +22,8 @@ public struct RailAxis: Equatable, Sendable {
         public var stackStep = 38.0
         /// Room under a past event's start for its name (it stands beside the rail there, 22 high) plus half a row, since the next row is centred on its key.
         public var nameRoom = 40.0
+        /// A past event's name is this high; a row at the very minute the event began is drawn under it (`nameHeight` below its start).
+        public var nameHeight = 22.0
         /// Points per minute where nothing needs more room.
         public var emptyPointsPerMinute = 0.35
         public init() {}
@@ -50,6 +52,11 @@ public struct RailAxis: Equatable, Sendable {
             if !event.isCard { add(event.start + 1, needs.nameRoom) }
         }
         for minute in transactions { add(minute, needs.transaction) }
+        // Rows at the very minute a past event began stand under its name: the minute that follows is that far away.
+        for event in events where !event.isCard {
+            let count = transactions.filter { $0 == event.start }.count
+            if count > 0 { add(event.start + 1, needs.nameHeight + Double(count) * needs.stackStep) }
+        }
         // Rows that share a minute are stacked; the axis grows by the stack (the design: the time axis is stretched, not the rows moved).
         for (minute, count) in Dictionary(grouping: transactions, by: { $0 }).mapValues(\.count) where count > 1 {
             add(minute + 1, Double(count - 1) * needs.stackStep)

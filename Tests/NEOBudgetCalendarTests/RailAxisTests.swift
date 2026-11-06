@@ -37,3 +37,12 @@ import Testing
     #expect(axis.y(19 * 60) >= lastRow + 18)
     #expect(axis.y(19 * 60 + 1) - axis.y(19 * 60) >= 22)
 }
+
+@Test func aRowAtTheMinuteAPastEventBeganStandsUnderItsName() {
+    let axis = RailAxis(
+        events: [.init(start: 10 * 60, end: 11 * 60, isCard: false)], transactions: [10 * 60],
+        now: nil, firstMinute: 9 * 60, lastMinute: 12 * 60
+    )
+    // The name is 22 high under the start, then the row (38): the next minute is at least that far on.
+    #expect(axis.y(10 * 60 + 1) - axis.y(10 * 60) >= 22 + 38)
+}

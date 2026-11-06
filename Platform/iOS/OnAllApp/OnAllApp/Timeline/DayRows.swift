@@ -266,8 +266,11 @@ struct RailPlan {
         var ys = [CGFloat](repeating: 0, count: rows.count)
         // Rows sharing a minute stack downward; the axis already made room for that (`RailAxis.Needs.stackStep`).
         var lastY = -CGFloat.infinity
+        // A row at the minute a past event began is drawn under that event's name, not over it.
+        let nameStarts = Set(past.map(\.displayStartMinute))
         for index in order {
-            ys[index] = max(CGFloat(axis.y(layoutMinute[index])), lastY + Self.rowHeight + 2)
+            let under = nameStarts.contains(layoutMinute[index]) ? CGFloat(RailAxis.Needs().nameHeight) : 0
+            ys[index] = max(CGFloat(axis.y(layoutMinute[index])) + under, lastY + Self.rowHeight + 2)
             lastY = ys[index]
         }
         for bundle in bundles where !isOpen(bundle.key) { for index in bundle.indices where index != bundle.first { ys[index] = ys[bundle.first] } }
