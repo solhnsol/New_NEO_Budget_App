@@ -1,0 +1,81 @@
+import Foundation
+import Testing
+import NEOBudgetCore
+
+/// 읽기 사전(공식 항목)이 예전 코드 파서와 같은 결과를 내는지 모든 고정 알림으로 견주어 본다.
+private struct AllFixtures: Decodable {
+    struct Direction: Decodable { let input: RawNotification }
+    struct Amount: Decodable { let input: RawNotification }
+    let negative: [RawNotification]
+    let directions: [Direction]
+    let amounts: [Amount]
+}
+private struct Synthetic: Decodable { let notifications: [RawNotification] }
+
+private func load<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+    let url = try #require(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures"))
+    return try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
+}
+
+private func note(_ title: String?, _ subtitle: String?, _ body: String?, app: String = "x.app", time: Int64? = 1_780_000_000_000) -> RawNotification {
+    RawNotification(
+        id: UUID().uuidString, source: NotificationSource(applicationIdentifier: app), sourceDeliveryID: nil,
+        capturedAtUnixMilliseconds: 1_780_000_001_000, notificationAtUnixMilliseconds: time, title: title, subtitle: subtitle, body: body
+    )
+}
+
+private let handWritten: [RawNotification] = [
+    note("카드", "₩1,550 for Metro", "Your new balance is ₩10,000."),
+    note("카드", "₩0 for Metro", "Your new balance is ₩10,000."),
+    note("카드", nil, "Your new balance is ₩10,000. No charge"),
+    note("카드", "Fare", "Your new balance is ₩10,000."),
+    note("현대카드", "스타벅스 강남점, 서울특별시", "₩4,500"),
+    note("현대카드", "이마트, 에브리데이, 경기도", "₩12,000"),
+    note("현대카드", "A, B", "₩0"),
+    note("현대카드", "", "₩4,500"),
+    note("Wallet", "스타벅스", "₩4,500"),
+    note("우리WON뱅킹 입출금알림", nil, "[입금] 차유진        67,035원 1002-967-767***계좌 잔액 1,234,000원"),
+    note("우리WON뱅킹 입출금알림", nil, "우리 입금 67,035원 1002-123-456*** 차유진 잔액 1,234,000원 10/02 19:10"),
+    note("우리WON뱅킹 입출금알림", nil, "[출금] 토스 김철수 12,000원 잔액 1,000원"),
+    note("우리WON뱅킹", nil, "[출금] 토스퀵계좌이체 3,300원"),
+    note("토스뱅크", nil, "[출금] 토스뱅크 5,000원"),
+    note("현대카드", "현대 MM 승인", "홍길동 님, 현대 MM 승인\n12,300원 일시불\n쿠팡\n승인번호 123456"),
+    note("현대카드", nil, "현대 MM 승인취소\n12,300원\n쿠팡\n원승인번호 123456\n승인번호 7788"),
+    note("토스", "결제 완료", "쿠팡에서 76,570원 결제"),
+    note("토스", nil, "7.25 USD (10,760원) 결제"),
+    note("토스", nil, "7.25 USD 결제"),
+    note("토스", nil, "포인트 5,076원 사용 12,000원 결제"),
+    note("카카오페이", nil, "충전이 완료되었어요 10,000원\n충전계좌: 우리은행 1234"),
+    note("카카오페이", nil, "송금했어요 5,000원 홍길동 1234 ("),
+    note("은행", nil, "카드대금 출금 350,000원"),
+    note("은행", nil, "카드결제 출금 120,000원"),
+    note("은행", nil, "광고 입금 이벤트"),
+    note("은행", nil, "로그인 인증번호 123456"),
+    note("은행", nil, "승인 거절 한도초과 30,000원"),
+    note("은행", nil, "잔액 조회 1,000원"),
+    note("은행", nil, "이체한도 변경 안내"),
+    note("은행", nil, "취소 15,000원 중 5,000원 환불"),
+    note("은행", nil, "입금 1,000원 환불 완료"),
+    note("은행", nil, "출금 10원 100원"),
+    note("은행", nil, "그냥 아무 알림"),
+    note(nil, nil, nil),
+    note("은행", "", "출금 1,000원 \n 2,000원", time: nil),
+    note("은행", nil, "입금 1,000.5원"),
+]
+
+@Test func officialReadingEntriesMatchTheOldCodeParserOnEveryFixture() throws {
+    let red = try load("redteam-parser-fixtures", as: AllFixtures.self)
+    let all = try load("raw-notifications", as: [RawNotification].self)
+        + load("synthetic-notification-coverage", as: Synthetic.self).notifications
+        + red.negative + red.directions.map(\.input) + red.amounts.map(\.input) + handWritten
+    let context = try NotificationParsingContext(timeZoneIdentifier: "Asia/Seoul", referenceTimeUnixMilliseconds: 0, parserID: "p", parserVersion: "1")
+    let legacy = LegacyKoreanParser()
+    let entries = ReadingEntryParser()
+    #expect(entries.invalidEntryIDs.isEmpty)
+    for input in all {
+        let old = try legacy.parse(input, context: context)
+        let new = try entries.parse(input, context: context)
+        #expect(old == new, "\(input.title ?? "") | \(input.subtitle ?? "") | \(input.body ?? "")\nold: \(old)\nnew: \(new)")
+    }
+    #expect(all.count > 40)
+}

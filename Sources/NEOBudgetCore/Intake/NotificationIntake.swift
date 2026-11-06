@@ -123,7 +123,7 @@ public struct NotificationIntake: Sendable {
 
     public let timeZoneIdentifier: String
     public let policyVersion: String
-    public let parser: KoreanFinancialNotificationParser
+    public let parser: ReadingEntryParser
     public let extractor: AccountEvidenceExtractor
     public let assembler: DefaultTransactionCandidateAssembler
     public let correlator: NotificationCorrelator
@@ -131,12 +131,13 @@ public struct NotificationIntake: Sendable {
     public init(
         timeZoneIdentifier: String,
         policyVersion: String = "intake-v1",
+        readingDictionary: ReadingDictionary = .official,
         extractor: AccountEvidenceExtractor = AccountEvidenceExtractor(),
         correlator: NotificationCorrelator = NotificationCorrelator()
     ) {
         self.timeZoneIdentifier = timeZoneIdentifier
         self.policyVersion = policyVersion
-        self.parser = KoreanFinancialNotificationParser()
+        self.parser = ReadingEntryParser(dictionary: readingDictionary)
         self.extractor = extractor
         self.assembler = DefaultTransactionCandidateAssembler()
         self.correlator = correlator
