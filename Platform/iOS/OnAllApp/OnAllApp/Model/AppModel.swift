@@ -371,7 +371,7 @@ final class AppModel {
 
     /// Tells the calendar reads what settlements took off each purchase, so a settled purchase shows the user's share everywhere at once.
     private func refreshSpendReductions(_ service: CalendarCommandService) async {
-        guard let sections = await ledgerSections() else { return }
+        guard let sections = await ledgerSections(fresh: true) else { return }
         var reductions: [LedgerEntryID: Int64] = [:]
         for entry in sections.flatMap(\.entries) where entry.shareReductionMinorUnits > 0 { reductions[entry.id] = entry.shareReductionMinorUnits }
         await service.setSpendReductions(reductions)
@@ -826,10 +826,11 @@ final class AppModel {
     /// The ledger tab's list: every spend and refund, newest day first, with the activities each was split into.
     /// `nil` when the ledger could not be read. Before the command service exists (no calendar access yet) the
     /// transactions are still listed, without allocations.
-    func ledgerSections() async -> [LedgerDaySection]? {
+    func ledgerSections(fresh: Bool = false) async -> [LedgerDaySection]? {
         // Building the list reads the whole ledger, and opening one transaction asks for it three times: kept until something it is built from moves.
-        let key = SectionsKey(generation: dataGeneration, overrides: overrideRevision, surplus: SurplusSetting.current().rawValue, dayStart: dayZone.ledgerDayStartMinutes)
-        if let cached = sectionsCache, cached.key == key { return cached.value }
+        let key = currentSectionsKey
+        // `fresh`: the start of a reload reads the ledger because it may have changed since; the generation has not moved yet, so the kept list would be the old one.
+        if !fresh, let cached = sectionsCache, cached.key == key { return cached.value }
         guard let built = await buildLedgerSections() else { return nil }
         sectionsCache = (key, built)
         return built
@@ -840,6 +841,16 @@ final class AppModel {
         let overrides: Int
         let surplus: String
         let dayStart: Int
+    }
+
+    private var currentSectionsKey: SectionsKey {
+        SectionsKey(generation: dataGeneration, overrides: overrideRevision, surplus: SurplusSetting.current().rawValue, dayStart: dayZone.ledgerDayStartMinutes)
+    }
+
+    /// One transaction as the ledger list shows it, at once, if the list was built for the data as it is now. `nil` otherwise (read it with `ledgerSections`).
+    func cachedLedgerEntry(_ id: LedgerEntryID) -> LedgerListEntry? {
+        guard let cached = sectionsCache, cached.key == currentSectionsKey else { return nil }
+        return cached.value.lazy.flatMap(\.entries).first { $0.id == id }
     }
 
     @ObservationIgnored private var sectionsCache: (key: SectionsKey, value: [LedgerDaySection])?

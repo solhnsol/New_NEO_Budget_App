@@ -734,12 +734,24 @@ struct LedgerEntryLoader: View {
     @State private var entry: LedgerListEntry?
     @State private var missing = false
     /// The placeholder panel has finished sliding up: only then does the real one take its place (else it would pop in).
-    @State private var settled = false
+    @State private var settled: Bool
+    /// The entry was already read ahead (`AppModel.warmLedger`), so the real sheet is the first and only panel.
+    private let instant: Bool
+
+    init(id: LedgerEntryID, model: AppModel, close: @escaping () -> Void) {
+        self.id = id
+        self.model = model
+        self.close = close
+        let ready = model.cachedLedgerEntry(id)
+        _entry = State(initialValue: ready)
+        _settled = State(initialValue: ready != nil)
+        instant = ready != nil
+    }
 
     var body: some View {
         Group {
             if let entry, settled {
-                TransactionQuickSheet(entry: entry, model: model, close: close, appearsShown: true)
+                TransactionQuickSheet(entry: entry, model: model, close: close, appearsShown: !instant)
             } else {
                 // The panel is up at once while the entry is read (the whole ledger list is built for it), as the design's is.
                 PanelSheet(isOpen: .constant(false), canOpen: false, close: close) {
