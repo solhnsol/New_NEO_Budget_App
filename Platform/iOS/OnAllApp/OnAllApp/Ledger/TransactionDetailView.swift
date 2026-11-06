@@ -51,9 +51,7 @@ struct TransactionDetailView: View {
         }
         .onAllSheet(detents: [.large])
         .sheet(isPresented: $editing) { TransactionEditSheet(entry: current, model: model) }
-        .sheet(isPresented: $choosingEvent) {
-            TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs)
-        }
+        .fullScreenCover(isPresented: $choosingEvent) { LedgerEventPicker(model: model, entries: [current], onApplied: {}) }
         .task(id: [model.dataGeneration, model.overrideRevision]) {
             fresh = await model.ledgerSections()?.lazy.flatMap(\.entries).first { $0.id == entry.id }
             let day = model.dayZone.localDate(of: entry.transaction.occurredAtUnixMilliseconds)
