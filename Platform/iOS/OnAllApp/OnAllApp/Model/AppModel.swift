@@ -90,6 +90,8 @@ final class AppModel {
     private(set) var calendars: [CalendarDescriptor] = []
     /// The deposits of the ledger by day, for the calendar's red income marks and rows.
     private(set) var incomeByDay: [LocalDate: [IncomeItem]] = [:]
+    /// When the transit card said "no charge" (an alighting or a transfer): keeps a trip open across them (`TransitTripMerge`).
+    private(set) var noChargeTaps: [Int64] = []
     func income(on day: LocalDate) -> Int64 { incomeByDay[day]?.reduce(0) { $0 + $1.minorUnits } ?? 0 }
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
@@ -319,6 +321,7 @@ final class AppModel {
         let incomes = ((try? await ledger.incomes()) ?? []).filter { !settled.contains($0.id) }.map { item in
             IncomeItem(id: item.id, occurredAtUnixMilliseconds: item.occurredAtUnixMilliseconds, minorUnits: item.minorUnits, title: transactionOverrides[item.id]?.title ?? item.title)
         }
+        noChargeTaps = await ledger.noChargeTapTimes()
         incomeByDay = Dictionary(grouping: incomes, by: { dayZone.localDate(of: $0.occurredAtUnixMilliseconds) })
         dataGeneration += 1
         let mine = dataGeneration

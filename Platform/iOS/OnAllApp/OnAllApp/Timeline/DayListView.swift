@@ -16,7 +16,7 @@ struct DayListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             let incomes = model.incomeByDay[day] ?? []
-            let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds, incomes: incomes, groupOf: { model.bundleGroup(of: $0) }) }
+            let plan = timeline.map { Plan($0, nowMilliseconds: model.nowMilliseconds, incomes: incomes, groupOf: { model.bundleGroup(of: $0) }, noChargeTaps: model.noChargeTaps) }
             HStack(alignment: .firstTextBaseline) {
                 Text("\(day.day)일 \(Formatting.weekdayShort(day))요일").font(Theme.Typo.section).foregroundStyle(Theme.textPrimary)
                 Spacer(minLength: 0)
@@ -115,7 +115,7 @@ struct DayListView: View {
         /// Nothing of the day has happened yet.
         let futureOnly: Bool
 
-        init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }) {
+        init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = []) {
             let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
             let now = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
             func row(_ id: LedgerEntryID, _ minute: Int, _ title: String?, _ category: CanonicalCategoryID?, _ money: Money, incoming: Bool) -> Row {
@@ -137,7 +137,7 @@ struct DayListView: View {
             let looseRows: [Row] = items.compactMap { if case let .row(row) = $0.kind, !row.isIncome { return row } else { return nil } }
             let keys = TransactionBundling.keys(
                 looseRows.map { TransactionBundling.Candidate(id: $0.id, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncoming) },
-                dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf
+                dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf, noChargeTaps: noChargeTaps
             )
             var byKey: [String: [Row]] = [:]
             for (row, key) in zip(looseRows, keys) { if let key { byKey[key, default: []].append(row) } }

@@ -189,7 +189,7 @@ struct RailPlan {
         return bands
     }
 
-    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, isOpen: (String) -> Bool = { _ in false }) {
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, noChargeTaps: [Int64] = [], isOpen: (String) -> Bool = { _ in false }) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
@@ -229,7 +229,7 @@ struct RailPlan {
         // Bundles: a group the user made, else a transit trip (a boarding and the charges that followed).
         let keys = TransactionBundling.keys(
             rows.map { TransactionBundling.Candidate(id: $0.transactionID, minute: $0.minute, title: $0.title, category: $0.category, amountMinor: $0.amountMinor, eligible: !$0.isIncome && !$0.isIncoming) },
-            dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf
+            dayStart: timeline.dayStartUnixMilliseconds, groupOf: groupOf, noChargeTaps: noChargeTaps
         )
         for index in rows.indices { rows[index].bundleKey = keys[index] }
         var bundles: [Bundle] = []
@@ -321,7 +321,7 @@ private struct RailTimeline: View {
     var model: AppModel?
 
     var body: some View {
-        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) }, isOpen: { model?.openBundles.contains($0) ?? false })
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) }, noChargeTaps: model?.noChargeTaps ?? [], isOpen: { model?.openBundles.contains($0) ?? false })
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
@@ -709,7 +709,7 @@ enum TransactionBundling {
     }
 
     /// A key per candidate (`u:` a user's group, `a:` a transit trip), nil when it is in no bundle of two or more.
-    static func keys(_ items: [Candidate], dayStart: Int64, groupOf: (LedgerEntryID) -> String?) -> [String?] {
+    static func keys(_ items: [Candidate], dayStart: Int64, groupOf: (LedgerEntryID) -> String?, noChargeTaps: [Int64] = []) -> [String?] {
         var keys = items.map { $0.eligible ? groupOf($0.id).map { "u:" + $0 } : nil }
         let loose = items.indices.filter { keys[$0] == nil && items[$0].eligible }
         let markers = loose.compactMap { index -> TransactionMarker? in
@@ -719,7 +719,7 @@ enum TransactionBundling {
             )
         }
         let transit = Dictionary(loose.map { (items[$0].id, CategoryIcon.symbol(for: items[$0].category) == "car") }, uniquingKeysWith: { first, _ in first })
-        for trip in TransitTripMerge.trips(in: markers, accountOf: { _ in "day" }, isTransit: { transit[$0.id] ?? false }) {
+        for trip in TransitTripMerge.trips(in: markers, accountOf: { _ in "day" }, isTransit: { transit[$0.id] ?? false }, noChargeTaps: noChargeTaps) {
             for index in loose where trip.legs.contains(items[index].id) { keys[index] = "a:" + trip.boarding.rawValue }
         }
         let counts = Dictionary(keys.compactMap { $0 }.map { ($0, 1) }, uniquingKeysWith: +)
