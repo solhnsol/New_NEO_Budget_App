@@ -217,6 +217,8 @@ public struct NotificationIntake: Sendable {
             // `[출금] 현대카드 1,069,690원` with no card approval of that money: the monthly bill, paid from this account.
             recordedDraft = bill.draft
             cardInstrument = bill.card
+        } else if earlier == nil, case .account? = binding, let premium = Self.asHealthInsurance(draft, text: NotificationText.joined(notification)) {
+            recordedDraft = premium
         } else if earlier == nil, case .account? = binding, let charge = Self.asPrepaidChargeSpending(draft, text: NotificationText.joined(notification)) {
             // The user has not registered that prepaid wallet (a registered one is the alias transfer above): the top-up stays spending.
             recordedDraft = charge
@@ -264,7 +266,9 @@ public struct NotificationIntake: Sendable {
     static let aliasTransferRuleID = "alias-transfer"
     public static let tossPersonTransferRuleID = "toss-person-transfer"
     static let prepaidChargeSpendingRuleID = "prepaid-charge-spending"
-    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID, cardBillRuleID]
+    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID, cardBillRuleID, healthInsuranceRuleID]
+    static let healthInsuranceRuleID = "health-insurance-withdrawal"
+    private static let healthInsurancePattern = try! NSRegularExpression(pattern: #"\[출금\]\s*건강[가-힣]{2,4}\s+[0-9]"#)
     static let cardBillRuleID = "card-bill-withdrawal"
     private static let cardBillPattern = try! NSRegularExpression(pattern: #"\[출금\]\s*([가-힣]*카드)\s+[0-9][0-9,]*\s*원"#)
 
@@ -307,6 +311,13 @@ public struct NotificationIntake: Sendable {
               let bill = rewritten(draft, ruleID: cardBillRuleID, counterparty: DraftCounterparty(merchantRaw: card.name, memoRaw: "카드 대금"), kind: .cardBillPayment)
         else { return nil }
         return (bill, card.id)
+    }
+
+    /// The bank prints the health insurance auto-debit as `[출금] 건강<이름> …`: spending, not a transfer.
+    static func asHealthInsurance(_ draft: TransactionCandidateDraft, text: String) -> TransactionCandidateDraft? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              healthInsurancePattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) != nil else { return nil }
+        return rewritten(draft, ruleID: healthInsuranceRuleID, counterparty: DraftCounterparty(merchantRaw: "건강보험료"))
     }
 
     private static func cardInstrument(for draft: TransactionCandidateDraft, in cards: [CreditInstrument]) -> CreditInstrumentID? {
