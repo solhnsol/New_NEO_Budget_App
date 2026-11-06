@@ -7,19 +7,19 @@ import SwiftUI
 struct IncomeSheet: View {
     let item: IncomeItem
     let model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
+    @State private var isOpen = false
     @State private var name: String
     @State private var opensCategory = false
     @State private var settling: (deposit: LedgerDeposit, life: LifeState)?
-    @State private var detent = PresentationDetent.height(Self.quickHeight)
     @FocusState private var nameFocused: Bool
 
-    static let quickHeight: CGFloat = 152
     private static let kinds = ["급여", "용돈", "이자", "환급", "기타"]
 
-    init(item: IncomeItem, model: AppModel) {
+    init(item: IncomeItem, model: AppModel, close: @escaping () -> Void) {
         self.item = item
         self.model = model
+        self.close = close
         _name = State(initialValue: item.title ?? "입금")
     }
 
@@ -28,14 +28,14 @@ struct IncomeSheet: View {
     private var zone: String { model.dayZone.identifier }
 
     var body: some View {
-        ScrollView {
+        PanelSheet(isOpen: $isOpen, close: close, content: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: Theme.Space.s) {
                     TextField("이름", text: $name).font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
                         .focused($nameFocused).submitLabel(.done).onSubmit { commitName() }
                     Text("+" + Formatting.grouped(item.minorUnits) + "원").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.income)
                 }
-                .padding(.top, Theme.Space.xl)
+                .padding(.top, 2)
                 VStack(spacing: 0) {
                     Button { withAnimation(Theme.Motion.sheet) { opensCategory.toggle() } } label: {
                         HStack(spacing: 0) {
@@ -60,35 +60,29 @@ struct IncomeSheet: View {
                                 .buttonStyle(.plain)
                             }
                         }
-                        .padding(.bottom, Theme.Space.m)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, Theme.Space.m)
                     }
                 }
                 .padding(.top, 6)
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: Theme.Space.xl)
-                    HStack {
-                        Text("입금 시각").foregroundStyle(Theme.textTertiary)
-                        Spacer()
-                        Text(timeText).foregroundStyle(Theme.textPrimary)
-                    }
-                    .font(.onAll(size: 15)).frame(minHeight: Theme.rowHeight).overlay(alignment: .top) { Theme.divider.frame(height: 1) }
-                    Button { Task { await startSettling() } } label: {
-                        Text("정산으로 처리").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(Theme.accentStrong)
-                            .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
-                            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
-                    }
-                    .buttonStyle(.plain).padding(.top, Theme.Space.l)
-                }
             }
-            .padding(.horizontal, Theme.Space.xl).padding(.bottom, Theme.Space.l)
-        }
-        .scrollIndicators(.hidden)
-        .background(Theme.surface)
+        }, more: {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("입금 시각").foregroundStyle(Theme.textTertiary)
+                    Spacer()
+                    Text(timeText).foregroundStyle(Theme.textPrimary)
+                }
+                .font(.onAll(size: 15)).frame(minHeight: Theme.rowHeight).overlay(alignment: .top) { Theme.divider.frame(height: 1) }
+                Button { Task { await startSettling() } } label: {
+                    Text("정산으로 처리").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                        .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+                        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
+                }
+                .buttonStyle(.plain).padding(.top, Theme.Space.l)
+            }
+            .padding(.bottom, Theme.Space.l)
+        })
         .tint(Theme.accent)
-        .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
-        .presentationCornerRadius(Theme.Radius.sheet)
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Theme.surface)
         // A name that was typed stays however the sheet is closed.
         .onDisappear { commitName() }
         .sheet(isPresented: Binding(get: { settling != nil }, set: { if !$0 { settling = nil } })) {

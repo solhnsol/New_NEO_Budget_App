@@ -410,6 +410,8 @@ struct PanelSheet<Small: View, More: View>: View {
     @Binding var isOpen: Bool
     var canOpen = true
     let close: () -> Void
+    /// Asked when the user closes it (a tap outside, pulled down); `false` keeps it open (the caller asks what to do about unsaved changes).
+    var shouldClose: () -> Bool = { true }
     @ViewBuilder let small: () -> Small
     @ViewBuilder let more: () -> More
     @State private var shown = false
@@ -419,24 +421,27 @@ struct PanelSheet<Small: View, More: View>: View {
     @State private var dragY: CGFloat = 0
     @State private var dragStart: CGFloat?
     @State private var smallHeight: CGFloat = 0
+    /// What `more` needs when laid out whole: the panel opens that far, at most 55% of the screen (the design: `min(scrollHeight, innerHeight * .55)`).
+    @State private var moreHeight: CGFloat = 0
     private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
-    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
         _isOpen = isOpen
         self.canOpen = canOpen
         self.close = close
+        self.shouldClose = shouldClose
         small = content
         self.more = more
     }
 
     var body: some View {
         GeometryReader { screen in
-            let openHeight = max(smallHeight, screen.size.height - 70)
+            let openHeight = smallHeight + (moreHeight > 0 ? min(moreHeight, screen.size.height * 0.55) : screen.size.height - 70 - smallHeight)
             let range = max(1, openHeight - smallHeight)
             let height = smallHeight + range * max(0, min(1, progress))
             ZStack(alignment: .bottom) {
                 Color(rgb: 0x191F28).opacity(0.42).ignoresSafeArea().opacity(shown ? 1 - min(1, max(0, dragY) / 500) : 0)
-                    .contentShape(Rectangle()).onTapGesture(perform: dismiss)
+                    .contentShape(Rectangle()).onTapGesture(perform: attemptDismiss)
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
                         Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
@@ -445,7 +450,7 @@ struct PanelSheet<Small: View, More: View>: View {
                     .padding(.bottom, Theme.Space.l)
                     .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
                     if canOpen {
-                        ScrollView { more() }.scrollIndicators(.hidden).frame(height: max(0, height - smallHeight))
+                        ScrollView { more().background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: max(0, height - smallHeight))
                     }
                 }
                 .padding(.horizontal, Theme.Space.xl)
@@ -478,7 +483,7 @@ struct PanelSheet<Small: View, More: View>: View {
                             let start = dragStart ?? progress
                             dragStart = nil
                             let v = drag.velocity.height
-                            if start == 0, progress <= 0.001, dragY > 120 || (dragY > 0 && v > 600) { dismiss(); return }
+                            if start == 0, progress <= 0.001, dragY > 120 || (dragY > 0 && v > 600) { attemptDismiss(); return }
                             let target: CGFloat = v < -600 ? 1 : v > 600 ? 0 : (progress > 0.5 ? 1 : 0)
                             settle(to: canOpen ? target : 0)
                         }
@@ -488,7 +493,9 @@ struct PanelSheet<Small: View, More: View>: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
         .onPreferenceChange(PanelSmallHeightKey.self) { smallHeight = $0 }
+        .onPreferenceChange(PanelMoreHeightKey.self) { moreHeight = $0 }
         .tint(Theme.accent)
+        .environment(\.panelDismiss, PanelDismiss(run: { dismiss() }))
         .onAppear { withAnimation(spring) { shown = true } }
         .onChange(of: isOpen) { _, open in if (progress > 0.5) != open { withAnimation(spring) { progress = open ? 1 : 0 } } }
     }
@@ -496,6 +503,11 @@ struct PanelSheet<Small: View, More: View>: View {
     private func settle(to target: CGFloat) {
         withAnimation(spring) { progress = target; dragY = 0 }
         if (target == 1) != isOpen { isOpen = target == 1 }
+    }
+
+    /// The user closes it: the owner may refuse (and settle back to rest).
+    private func attemptDismiss() {
+        if shouldClose() { dismiss() } else { withAnimation(spring) { dragY = 0 } }
     }
 
     /// Goes down (the panel and the dim), then tells the owner.
@@ -512,6 +524,27 @@ extension PanelSheet where More == EmptyView {
     init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, @ViewBuilder content: @escaping () -> Small) {
         self.init(isOpen: isOpen, canOpen: canOpen, close: close, content: content, more: { EmptyView() })
     }
+}
+
+/// What a sheet's content calls to close its panel the way a tap outside would, with the slide down (and without the owner's `shouldClose`).
+struct PanelDismiss: Sendable {
+    let run: @MainActor @Sendable () -> Void
+}
+
+private struct PanelDismissKey: EnvironmentKey {
+    static let defaultValue = PanelDismiss(run: {})
+}
+
+extension EnvironmentValues {
+    var panelDismiss: PanelDismiss {
+        get { self[PanelDismissKey.self] }
+        set { self[PanelDismissKey.self] = newValue }
+    }
+}
+
+private struct PanelMoreHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 private struct PanelSmallHeightKey: PreferenceKey {

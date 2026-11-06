@@ -3,13 +3,16 @@ import SwiftUI
 
 /// The small sheet an event opens from the calendar (the design's `openEv`): its name with a 확인 button that lights up once something changed, the
 /// date and both times as three pills (each opens the system picker), and the calendar's chip. Under the fold, pulled up: what was spent in it, the
-/// event's info and 삭제.
+/// event's info and 삭제. Closing with changes asks first, as the design does.
 struct EventQuickSheet: View {
     let block: EventBlock
     let model: AppModel
+    let close: () -> Void
     var onEditInfo: (EventBlock) -> Void = { _ in }
     var onSettle: (EventBlock) -> Void = { _ in }
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.panelDismiss) private var panel
+    @State private var isOpen = false
+    @State private var asksToSave = false
     @State private var title: String
     @State private var start: Date
     @State private var end: Date
@@ -19,14 +22,12 @@ struct EventQuickSheet: View {
     @State private var scopeChoices: [RecurrenceScope] = []
     @State private var pendingRequest: EventSaveRequest?
     @State private var confirmsDelete = false
-    @State private var detent = PresentationDetent.height(Self.quickHeight)
     @FocusState private var titleFocused: Bool
 
-    static let quickHeight: CGFloat = 126
-
-    init(block: EventBlock, model: AppModel, onEditInfo: @escaping (EventBlock) -> Void = { _ in }, onSettle: @escaping (EventBlock) -> Void = { _ in }) {
+    init(block: EventBlock, model: AppModel, close: @escaping () -> Void, onEditInfo: @escaping (EventBlock) -> Void = { _ in }, onSettle: @escaping (EventBlock) -> Void = { _ in }) {
         self.block = block
         self.model = model
+        self.close = close
         self.onEditInfo = onEditInfo
         self.onSettle = onSettle
         _title = State(initialValue: block.title)
@@ -42,7 +43,11 @@ struct EventQuickSheet: View {
     private var editable: Bool { block.isEditable }
 
     var body: some View {
-        ScrollView {
+        PanelSheet(isOpen: $isOpen, close: close, shouldClose: {
+            // The design asks before closing with changes ("변경 사항을 저장할까요?"); a tap outside the question goes on editing.
+            if dirty && !saved { asksToSave = true; return false }
+            return true
+        }, content: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: Theme.Space.s) {
                     TextField("제목", text: $title).font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary)
@@ -54,7 +59,7 @@ struct EventQuickSheet: View {
                     }
                     .buttonStyle(.plain).disabled(!dirty)
                 }
-                .padding(.top, Theme.Space.xl)
+                .padding(.top, 2)
                 HStack(spacing: Theme.Space.s) {
                     pill(Self.dayText(start, zone), hasDate: true)
                     pill(Self.clock(start, zone), time: timeBinding($start, isStart: true))
@@ -65,24 +70,17 @@ struct EventQuickSheet: View {
                 .padding(.top, Theme.Space.m)
                 calendarChip.padding(.top, Theme.Space.m)
                 if let failure { Text(failure).font(Theme.Typo.caption).foregroundStyle(Theme.danger).padding(.top, Theme.Space.s) }
-                below
             }
-            .padding(.horizontal, Theme.Space.xl).padding(.bottom, Theme.Space.l)
-        }
-        .scrollIndicators(.hidden)
-        .background(Theme.surface)
+        }, more: {
+            below.padding(.bottom, Theme.Space.l)
+        })
         .tint(Theme.accent)
         .environment(\.timeZone, zone)
-        // Closing the sheet any other way than 확인 (a swipe down, a tap outside) keeps what was changed: it is written then, so the day shows it at once.
-        .onDisappear {
-            guard dirty, !saved else { return }
-            let request = makeRequest(scope: block.isRecurringInstance ? .thisOccurrence : nil)
-            Task { _ = await model.save(request) }
+        .confirmationDialog("변경 사항을 저장할까요?", isPresented: $asksToSave, titleVisibility: .visible) {
+            Button("저장") { Task { await save(nil) } }
+            Button("저장 안 함", role: .destructive) { saved = true; panel.run() }
+            Button("계속 편집", role: .cancel) {}
         }
-        .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
-        .presentationCornerRadius(Theme.Radius.sheet)
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Theme.surface)
         .confirmationDialog("이 일정을 지울까요?", isPresented: $confirmsDelete, titleVisibility: .visible) {
             Button("일정 삭제", role: .destructive) { Task { await delete() } }
             Button("취소", role: .cancel) {}
@@ -176,10 +174,10 @@ struct EventQuickSheet: View {
                     .frame(minHeight: Theme.rowHeight)
                 }
             }
-            Button { onEditInfo(block) } label: { actionLabel("지출 연결과 일정 정보", color: Theme.accentStrong, fill: Theme.accentSoft) }
+            Button { panel.run(); onEditInfo(block) } label: { actionLabel("지출 연결과 일정 정보", color: Theme.accentStrong, fill: Theme.accentSoft) }
                 .buttonStyle(.plain).padding(.top, Theme.Space.l)
             if block.activity != nil {
-                Button { onSettle(block) } label: { actionLabel("정산", color: Theme.accentStrong, fill: Theme.accentSoft) }
+                Button { panel.run(); onSettle(block) } label: { actionLabel("정산", color: Theme.accentStrong, fill: Theme.accentSoft) }
                     .buttonStyle(.plain).padding(.top, Theme.Space.s)
             }
             Button { confirmsDelete = true } label: { actionLabel("일정 삭제", color: Theme.dangerStrong, fill: Theme.dangerSoft) }
@@ -199,7 +197,7 @@ struct EventQuickSheet: View {
         titleFocused = false
         let request = makeRequest(scope: scope)
         switch await model.save(request) {
-        case .saved, .unchanged: saved = true; dismiss()
+        case .saved, .unchanged: saved = true; panel.run()
         case let .needsScope(options): scopeChoices = options
         case .refused: failure = "저장하지 못했어요. 일정이 바뀌었을 수 있어요."
         case .failed: failure = "저장하지 못했어요. 잠시 뒤에 다시 해 주세요."
@@ -219,7 +217,7 @@ struct EventQuickSheet: View {
             target: EventTarget(key: block.eventKey, expectedRevisionToken: block.revisionToken), scope: block.isRecurringInstance ? .thisOccurrence : nil
         )
         switch await model.perform(.deleteEvent(input)) {
-        case .applied?, .partiallyApplied?: dismiss()
+        case .applied?, .partiallyApplied?: saved = true; panel.run()
         default: failure = "지우지 못했어요."
         }
     }

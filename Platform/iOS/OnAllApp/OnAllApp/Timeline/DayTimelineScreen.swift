@@ -22,8 +22,6 @@ struct DayTimelineScreen: View {
     /// What others still owe the user, in KRW; the 정산 chip under the month in the list.
     @State private var receivable: Int64 = 0
     @State private var showsSettlement = false
-    @State private var openTransaction: TransactionRef?
-    @State private var openIncome: IncomeItem?
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -33,6 +31,23 @@ struct DayTimelineScreen: View {
 
     private var style: Binding<CalendarStyle> {
         Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .pager }, set: { styleRaw = $0.rawValue })
+    }
+
+    /// An event opens the small sheet over the whole screen; the other selections open the details sheet.
+    private func present(_ item: TimelineSelection) {
+        guard case let .event(block) = item else { selection = item; return }
+        // The sheet closes itself first (it slides down); the next one opens when it is gone.
+        model.quickSheet = .event(block, onEditInfo: { block in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                infoEvent = block.eventKey
+            }
+        }, onSettle: { block in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                settleEvent = block.eventKey
+            }
+        })
     }
 
     var body: some View {
@@ -200,7 +215,7 @@ struct DayTimelineScreen: View {
           }
           DayPagerView(
               model: model, topInset: 0, showsList: showsList,
-              onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onOpenIncome: { id in openIncome = model.incomeByDay.values.flatMap { $0 }.first { $0.id == id } }, onScrollToDay: onScrollToDay
+              onSelect: present, onOpenTransaction: { model.quickSheet = .transaction($0) }, onOpenIncome: { id in if let item = model.incomeByDay.values.flatMap({ $0 }).first(where: { $0.id == id }) { model.quickSheet = .income(item) } }, onScrollToDay: onScrollToDay
           )
           .id(showsList)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -214,22 +229,7 @@ struct DayTimelineScreen: View {
                 Color.clear.onAppear { screenWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         }
-        .sheet(item: $selection) { item in
-            if case let .event(block) = item {
-                EventQuickSheet(block: block, model: model, onEditInfo: { block in
-                    selection = nil
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(400))
-                        infoEvent = block.eventKey
-                    }
-                }, onSettle: { block in
-                    selection = nil
-                    Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(400))
-                        settleEvent = block.eventKey
-                    }
-                })
-            } else {
+        .sheet(item: Binding(get: { if case .event = selection { nil } else { selection } }, set: { selection = $0 })) { item in
             EventDetailView(selection: item, zoneIdentifier: zoneIdentifier, onEditInfo: { block in
                 // One sheet at a time: the details close, then the Activity sheet opens.
                 selection = nil
@@ -244,11 +244,8 @@ struct DayTimelineScreen: View {
                     settleEvent = block.eventKey
                 }
             })
-            }
         }
         .modifier(CalendarSelectionLayer(model: model))
-        .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
-        .sheet(item: $openIncome) { item in IncomeSheet(item: item, model: model) }
         .sheet(isPresented: Binding(get: { model.creatingTransaction }, set: { model.creatingTransaction = $0 })) { ManualTransactionSheet(model: model) }
         .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
         .task(id: model.dataGeneration) {

@@ -674,17 +674,16 @@ private struct NowLine: View {
 struct LedgerEntryLoader: View {
     let id: LedgerEntryID
     let model: AppModel
+    let close: () -> Void
     @State private var entry: LedgerListEntry?
     @State private var missing = false
 
     var body: some View {
         Group {
             if let entry {
-                TransactionQuickSheet(entry: entry, model: model)
+                TransactionQuickSheet(entry: entry, model: model, close: close)
             } else if missing {
-                Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary).frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
-            } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity).onAllSheet()
+                Color.clear.onAppear { close() }
             }
         }
         .task(id: model.overrideRevision) {

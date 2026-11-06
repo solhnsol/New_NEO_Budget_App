@@ -7,7 +7,9 @@ import SwiftUI
 struct TransactionQuickSheet: View {
     let entry: LedgerListEntry
     let model: AppModel
-    @Environment(\.dismiss) private var dismiss
+    let close: () -> Void
+    @Environment(\.panelDismiss) private var panel
+    @State private var isOpen = false
     @State private var fresh: LedgerListEntry?
     @State private var nearby: [ActivityEditing.EventChoice] = []
     @State private var opensCategory = false
@@ -18,9 +20,7 @@ struct TransactionQuickSheet: View {
     @State private var payment: String?
     /// The categories used most, so the chips show those first.
     @State private var popular: [String] = []
-    @State private var detent = PresentationDetent.height(Self.quickHeight)
 
-    static let quickHeight: CGFloat = 300
     private var current: LedgerListEntry { fresh ?? entry }
     private var zone: String { model.dayZone.identifier }
 
@@ -30,7 +30,7 @@ struct TransactionQuickSheet: View {
         let incoming = transaction.flow == .refund
         let linkedIDs = Set(entry.portions.compactMap(\.activityID))
         let linked = nearby.first { $0.activityID.map(linkedIDs.contains) ?? false }
-        ScrollView {
+        PanelSheet(isOpen: $isOpen, close: close, content: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: Theme.Space.s) {
                     Text(transaction.title ?? "거래").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)
@@ -38,48 +38,42 @@ struct TransactionQuickSheet: View {
                     Text((incoming ? "+" : "−") + Formatting.grouped(transaction.amount.minorUnits) + "원")
                         .font(Theme.Typo.sheetTitle).foregroundStyle(Theme.amountColor(isIncoming: incoming))
                 }
-                .padding(.top, Theme.Space.xl)
+                .padding(.top, 2)
                 VStack(spacing: 0) {
                     row("분류", open: opensCategory, tappable: !incoming) {
                         HStack(spacing: 6) {
                             CategoryTile(category: entry.categoryID, size: 24)
                             Text(CategoryIcon.name(for: entry.categoryID) ?? "안 함")
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle()} }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle() } }
                     if opensCategory && !incoming { categoryChips(entry) }
                     row("연결된 일정", open: opensEvent, tappable: true) {
                         HStack(spacing: 6) {
                             if let linked { Circle().fill(Color(hex: linked.colorHex) ?? Theme.accent).frame(width: 8, height: 8) }
                             Text(linked?.title ?? (entry.portions.compactMap(\.activityTitle).first ?? "없음"))
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle()} }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle() } }
                     if opensEvent { eventChips(entry, linked: linked) }
                 }
                 .padding(.top, 6)
-                VStack(spacing: 0) {
-                    Color.clear.frame(height: Theme.Space.xl)
-                    plainRow("결제 수단", payment ?? "—")
-                    plainRow("시각", dayText(transaction.occurredAtUnixMilliseconds) + " " + Formatting.clock24(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zone))
-                    // Only a typed-in transaction can be deleted; the button is there for every one and works for those.
-                    let removable = transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix)
-                    Button { model.removeManual(entry.id); dismiss() } label: {
-                        Text("삭제").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(removable ? Theme.dangerStrong : Theme.disabled)
-                            .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
-                            .background(removable ? Theme.dangerSoft : Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
-                    }
-                    .disabled(!removable)
-                    .padding(.top, Theme.Space.l)
-                }
             }
-            .padding(.horizontal, Theme.Space.xl).padding(.bottom, Theme.Space.l)
-        }
-        .scrollIndicators(.hidden)
-        .background(Theme.surface)
+        }, more: {
+            VStack(spacing: 0) {
+                plainRow("결제 수단", payment ?? "—")
+                plainRow("시각", dayText(transaction.occurredAtUnixMilliseconds) + " " + Formatting.clock24(transaction.occurredAtUnixMilliseconds, zoneIdentifier: zone))
+                // Only a typed-in transaction can be deleted; the button is there for every one and works for those.
+                let removable = transaction.id.rawValue.hasPrefix(ManualTransaction.idPrefix)
+                Button { model.removeManual(entry.id); panel.run() } label: {
+                    Text("삭제").font(.onAll(size: 16, weight: .semibold)).foregroundStyle(removable ? Theme.dangerStrong : Theme.disabled)
+                        .frame(maxWidth: .infinity, minHeight: Theme.primaryButtonHeight)
+                        .background(removable ? Theme.dangerSoft : Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.button, style: .continuous))
+                }
+                .disabled(!removable)
+                .padding(.top, Theme.Space.l)
+            }
+            .padding(.bottom, Theme.Space.l)
+        })
         .tint(Theme.accent)
-        .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
-        .presentationCornerRadius(Theme.Radius.sheet)
-        .presentationDragIndicator(.visible)
-        .presentationBackground(Theme.surface)
         .sheet(isPresented: $choosingCategory) { CategoryChooserSheet(entry: current, model: model) }
         .sheet(isPresented: $choosingEvent) { TransactionEventSheet(model: model, transaction: current.transaction, currentActivities: linkedIDs) }
         .task(id: [model.dataGeneration, model.overrideRevision]) {
@@ -169,7 +163,7 @@ struct TransactionQuickSheet: View {
             }
             chip(on: false, outlined: true) { choosingCategory = true } label: { Text("전체") }
         }
-        .padding(.bottom, Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, Theme.Space.m)
     }
 
     /// Reads the entry and the events around it again, so what the sheet shows is what is stored (also right after a link or unlink).
@@ -194,7 +188,7 @@ struct TransactionQuickSheet: View {
             }
             chip(on: false, outlined: true) { choosingEvent = true } label: { Text("선택") }
         }
-        .padding(.bottom, Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading).padding(.bottom, Theme.Space.m)
     }
 }
 

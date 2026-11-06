@@ -47,6 +47,8 @@ final class AppModel {
     var newEventSeed: (day: LocalDate, minute: Int?)?
     /// The manual-transaction sheet, opened from the create sheet's 거래 switch.
     var creatingTransaction = false
+    /// The small sheet a transaction, a deposit or an event opens from the calendar: drawn over the whole screen (`RootTabs`), like the create sheet.
+    var quickSheet: QuickSheet?
     private(set) var selectedDay: LocalDate
     /// The first of the two days on screen. `selectedDay` is its date.
     var timeline: DayTimeline? { cache[selectedDay] }
@@ -962,4 +964,12 @@ final class AppModel {
     }
 
     private static func nowMilliseconds() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
+}
+
+
+/// What the calendar's small sheet shows.
+enum QuickSheet {
+    case transaction(LedgerEntryID)
+    case income(IncomeItem)
+    case event(EventBlock, onEditInfo: (EventBlock) -> Void, onSettle: (EventBlock) -> Void)
 }
