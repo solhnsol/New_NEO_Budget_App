@@ -410,12 +410,37 @@ struct PanelSheet<Small: View, More: View>: View {
     @Binding var isOpen: Bool
     var canOpen = true
     let close: () -> Void
+    var shouldClose: () -> Bool = { true }
+    var appearsShown = false
+    @ViewBuilder let small: () -> Small
+    @ViewBuilder let more: () -> More
+
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, appearsShown: Bool = false, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
+        _isOpen = isOpen
+        self.canOpen = canOpen
+        self.close = close
+        self.shouldClose = shouldClose
+        self.appearsShown = appearsShown
+        small = content
+        self.more = more
+    }
+
+    /// The finger-driven state lives in `PanelMotion`, so a drag redraws only the moving panel and not the sheet's content (its text field, pickers).
+    var body: some View {
+        PanelMotion(isOpen: $isOpen, canOpen: canOpen, close: close, shouldClose: shouldClose, appearsShown: appearsShown, small: small(), more: more())
+    }
+}
+
+private struct PanelMotion<Small: View, More: View>: View {
+    @Binding var isOpen: Bool
+    var canOpen = true
+    let close: () -> Void
     /// Asked when the user closes it (a tap outside, pulled down); `false` keeps it open (the caller asks what to do about unsaved changes).
     var shouldClose: () -> Bool = { true }
     /// Already up when it appears (it takes the place of a panel that was showing the same thing while it loaded).
     var appearsShown = false
-    @ViewBuilder let small: () -> Small
-    @ViewBuilder let more: () -> More
+    let small: Small
+    let more: More
     @State private var shown = false
     /// How far the panel is open: 0 at rest, 1 nearly the whole screen. It follows the finger.
     @State private var progress: CGFloat = 0
@@ -427,14 +452,14 @@ struct PanelSheet<Small: View, More: View>: View {
     @State private var moreHeight: CGFloat = 0
     private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
-    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, appearsShown: Bool = false, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
+    init(isOpen: Binding<Bool>, canOpen: Bool, close: @escaping () -> Void, shouldClose: @escaping () -> Bool, appearsShown: Bool, small: Small, more: More) {
         _isOpen = isOpen
         self.appearsShown = appearsShown
         _shown = State(initialValue: appearsShown)
         self.canOpen = canOpen
         self.close = close
         self.shouldClose = shouldClose
-        small = content
+        self.small = small
         self.more = more
     }
 
@@ -451,12 +476,12 @@ struct PanelSheet<Small: View, More: View>: View {
                 VStack(spacing: 0) {
                     VStack(spacing: 0) {
                         Capsule().fill(Theme.disabled).frame(width: 36, height: 4).padding(.top, Theme.Space.s).padding(.bottom, Theme.Space.s + 2)
-                        small()
+                        small
                     }
                     .padding(.bottom, Theme.Space.l)
                     .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
                     if canOpen {
-                        ScrollView { more().background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: range)
+                        ScrollView { more.background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: range)
                             // At rest the panel's lower part hangs into the home-indicator strip, so `more` stays unseen until the panel is pulled.
                             .opacity(progress > 0 ? 1 : 0)
                     }
