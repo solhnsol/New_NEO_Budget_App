@@ -212,11 +212,17 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
     ) throws -> CandidateProcessingResult {
         guard observation.candidateID == candidate.id else { throw CandidateProcessingError.invalidCorrelationTarget(observation.candidateID) }
         var waited = false
+        var withdrawalSettles = false
         if let stored = candidates[candidate.id], let earlier = stored.observation {
             // A cancellation that waited for its purchase (or for the other alert of it) is judged again: what it waited for
             // may have been recorded since. The same notification again with nothing new changes nothing.
             waited = stored.promotedEntryID == nil && stored.corroborates == nil && earlier.cancels == nil
                 && observation.draft.kind == .cancellation && earlier.draft == observation.draft
+            // A bank withdrawal that waited for an explanation nothing gave is booked as spending (see `settleStaleWithdrawals`).
+            let settlesWithdrawal = stored.promotedEntryID == nil && stored.corroborates == nil && observation.draft.kind == .withdrawal
+                && earlier.draft == observation.draft && stored.candidate.status != .ready && candidate.status == .ready
+            withdrawalSettles = settlesWithdrawal
+            waited = waited || settlesWithdrawal
             if !waited {
                 guard earlier == observation else { throw CandidateProcessingError.conflictingCandidate(candidate.id) }
                 // A repeat: the earlier decision stands (judging again against later notifications could differ).
@@ -234,7 +240,7 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
         if waited {
             switch decision {
             case .corroborates: break
-            case .newAct where observation.cancels != nil: break
+            case .newAct where observation.cancels != nil || withdrawalSettles: break
             default: return .alreadyStored(candidateRevision: candidateRevision)
             }
         }

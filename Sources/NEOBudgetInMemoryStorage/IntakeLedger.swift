@@ -92,9 +92,14 @@ public struct IntakeLedger {
 
     public var isComplete: Bool { deferredIDs.isEmpty }
 
+    /// Books the bank withdrawals nothing explained as spending once their wait is over (`now` in Unix milliseconds).
+    public mutating func settleWithdrawals(at now: Int64) throws {
+        try intake.settleStaleWithdrawals(at: now, repository: &repository)
+    }
+
     /// Bump when anything that decides what a notification becomes changes (the parser's reading, the assembler, the
     /// correlator, deduplication): a saved ledger made under another value is not used, and the ledger is replayed once.
-    public static let rulesRevision = 9
+    public static let rulesRevision = 10
 
     /// The ledger as it stands, to save and restore later (`init(restoring:...)`). Nil for a partial replay.
     public func snapshot() -> IntakeLedgerSnapshot? {

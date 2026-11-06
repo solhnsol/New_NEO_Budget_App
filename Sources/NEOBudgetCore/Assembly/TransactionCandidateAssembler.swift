@@ -40,6 +40,8 @@ public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
     public let cardPaymentInstrumentID: CreditInstrumentID?
     public let adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal]
     public let cancelledPurchase: CancelledPurchase?
+    /// Set once nothing explained a bank withdrawal in time: it is then spending (a withdrawal is spending by default).
+    public let bookWithdrawalAsSpending: Bool
     public let policyVersion: String
 
     public init(
@@ -48,6 +50,7 @@ public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
         cardPaymentInstrumentID: CreditInstrumentID? = nil,
         adjustmentOriginalsByEvidenceValue: [String: AdjustmentOriginal] = [:],
         cancelledPurchase: CancelledPurchase? = nil,
+        bookWithdrawalAsSpending: Bool = false,
         policyVersion: String
     ) throws {
         guard !policyVersion.isEmpty else { throw CandidateValidationError.emptyPolicyVersion }
@@ -59,6 +62,7 @@ public struct CandidateAssemblyContext: Codable, Equatable, Sendable {
         self.cardPaymentInstrumentID = cardPaymentInstrumentID
         self.adjustmentOriginalsByEvidenceValue = adjustmentOriginalsByEvidenceValue
         self.cancelledPurchase = cancelledPurchase
+        self.bookWithdrawalAsSpending = bookWithdrawalAsSpending
         self.policyVersion = policyVersion
     }
 }
@@ -144,6 +148,8 @@ public struct DefaultTransactionCandidateAssembler: TransactionCandidateAssemble
                 liabilityChanges: [LiabilityChange(instrumentID: instrumentID, delta: try draft.amount.negated())],
                 evidenceIDs: evidenceIDs
             )
+        case .withdrawal where context.bookWithdrawalAsSpending && draft.direction == .outflow:
+            entry = try expense(entryID, draft, binding, context, evidenceIDs)
         case .withdrawal, .purchaseSettlementNotice:
             return try review(candidateID, draft, evidenceIDs, .unsupportedEvent, context)
         }

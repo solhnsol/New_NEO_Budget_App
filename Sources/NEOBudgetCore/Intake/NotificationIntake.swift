@@ -260,6 +260,7 @@ public struct NotificationIntake: Sendable {
         if case .promoted = result, recordedDraft.kind == .purchase {
             try settleWaitingCancellations(near: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
         }
+        try settleStaleWithdrawals(at: recordedDraft.occurredAt.unixMilliseconds, repository: &repository)
         return .processed(candidateID: candidate.id, result: result)
     }
 
@@ -380,6 +381,31 @@ public struct NotificationIntake: Sendable {
                 },
                 policyVersion: policyVersion
             ))
+            let revisions = try repository.revisions()
+            _ = try repository.process(
+                candidate, observation: observation, correlator: correlator,
+                expectedCandidateRevision: revisions.candidate, expectedLedgerRevision: revisions.ledger
+            )
+        }
+    }
+
+    /// How long a bank withdrawal waits for the alert that explains it (a card approval, a Toss payment, the other leg of a transfer).
+    public static let withdrawalWaitMilliseconds: Int64 = 5 * 60_000
+
+    /// A bank withdrawal nothing explained within `withdrawalWaitMilliseconds` is spending: named after whom it went to, with no
+    /// category or shop, which the user is asked for later. `now` is the time of the newest notification (or the clock).
+    public func settleStaleWithdrawals<Repository: CandidateProcessingRepository>(at now: Int64, repository: inout Repository) throws {
+        let waiting = try repository.correlationRecords(near: now, within: Self.withdrawalWaitMilliseconds * 4).filter {
+            $0.entryID == nil && $0.corroborates == nil && $0.draft.kind == .withdrawal && $0.draft.direction == .outflow
+                && $0.draft.occurredAt.unixMilliseconds + Self.withdrawalWaitMilliseconds <= now
+        }.sorted { ($0.draft.occurredAt.unixMilliseconds, $0.candidateID.rawValue) < ($1.draft.occurredAt.unixMilliseconds, $1.candidateID.rawValue) }
+        for record in waiting {
+            guard case .account? = record.binding else { continue }
+            let candidate = try assembler.assemble(record.draft, resolution: .resolved(record.binding!), context: CandidateAssemblyContext(
+                timeZoneIdentifier: timeZoneIdentifier, bookWithdrawalAsSpending: true, policyVersion: policyVersion
+            ))
+            guard candidate.status == .ready else { continue }
+            let observation = record.observation(cancels: nil)
             let revisions = try repository.revisions()
             _ = try repository.process(
                 candidate, observation: observation, correlator: correlator,

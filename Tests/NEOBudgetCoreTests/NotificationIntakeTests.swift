@@ -156,6 +156,19 @@ private let received: Int64 = 1_790_936_040_000
         #expect(NotificationIntake.asTossPersonTransfer(draft, text: text)?.counterparty.payeeRaw == "김석우")
     }
 
+    @Test func aWithdrawalNothingExplainsBecomesSpendingNamedAfterWhoGotIt() throws {
+        var setup = IntakeSetup()
+        let first = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 출금 1,000원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received)[0]
+        _ = try replay([first], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
+        let alone = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 가게A 7,000원 1002-123-456*** 잔액 900,000원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
+        var ledger = try IntakeLedger(notifications: [alone], setup: setup, intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
+        #expect(ledger.snapshot()?.entries.isEmpty == true)
+        try ledger.settleWithdrawals(at: (alone.notificationAtUnixMilliseconds ?? alone.capturedAtUnixMilliseconds) + 6 * 60_000)
+        #expect(ledger.snapshot()?.entries.map(\.kind) == [.expense])
+    }
+
     @Test func aNotificationThatIsNotAPaymentChangesNothing() throws {
         var setup = IntakeSetup()
         let ad = try decoder.decode(payload("Toss", body: "이번 주 혜택을 확인해 보세요"), receivedAtUnixMilliseconds: received)[0]
