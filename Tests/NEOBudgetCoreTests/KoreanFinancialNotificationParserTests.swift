@@ -292,6 +292,11 @@ private func parsedDraft(_ raw: RawNotification) throws -> TransactionCandidateD
     #expect(noRegion.counterparty.merchantRaw == "코페이_2 - 가상볼링장")
 }
 
+@Test func aShopNameContainingTheLetterWonIsStillTheShop() throws {
+    let draft = try parsedDraft(rawNotification(title: nil, body: "정한솔 님, 현대 MM 승인 \r\n2,800원 일시불, 10/21 16:11 \r\n씨유CU연세대공학원점"))
+    #expect(draft.counterparty.merchantRaw == "씨유CU연세대공학원점")
+}
+
 @Test func walletNoticesThatAreNotPaymentsStayNotTransactions() throws {
     let parser = KoreanFinancialNotificationParser()
     #expect(try parser.parse(rawNotification(title: "Wallet", body: "“MM” is ready for Apple Pay."), context: parserContext()) == .notTransaction(.unrecognized))
