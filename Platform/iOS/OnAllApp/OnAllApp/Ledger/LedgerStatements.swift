@@ -67,7 +67,11 @@ enum LedgerStatements {
     static func statements(
         _ snapshot: CandidateProcessingSnapshot, configuration: LedgerConfiguration, reportedBalances: [AccountID: ReportedBalance] = [:]
     ) -> [Statement] {
-        let titles = LedgerTimelineProjection.details(from: snapshot).titles
+        let details = LedgerTimelineProjection.details(from: snapshot)
+        let titles = details.titles
+        // A spending (or income) found to be one leg of a transfer between own accounts, and what undid it: the bank shows one movement, the transfer.
+        // They net to zero, so the running balance is the same without them; they stay in the ledger.
+        let hidden = details.hidden
         let instruments = instruments(from: snapshot)
         let entries = snapshot.ledger.entries.sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
 
@@ -77,6 +81,7 @@ enum LedgerStatements {
             for entry in entries {
                 for posting in entry.postings where posting.accountID == account.id {
                     balance += posting.delta.minorUnits
+                    if hidden.contains(entry.id) { continue }
                     lines.append(line(entry, delta: posting.delta, balanceAfter: balance, titles: titles, instruments: instruments))
                 }
             }

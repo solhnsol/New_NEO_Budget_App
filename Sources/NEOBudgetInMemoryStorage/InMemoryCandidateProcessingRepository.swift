@@ -299,6 +299,32 @@ public struct InMemoryCandidateProcessingRepository: CandidateProcessingReposito
                     to: CorrelationMatch(candidateID: candidate.id, rule: replaced.rule), reversal: reversal.id
                 ), id: replaced.candidateID)
             }
+            if let replaced = act.replacesPersonSpend {
+                guard let stored = candidates[replaced.candidateID], let entryID = stored.promotedEntryID, stored.reversalEntryID == nil,
+                      let original = ledger.entry(withID: entryID), original.kind == .expense, let impact = original.budgetImpact,
+                      original.liabilityChanges.isEmpty else {
+                    throw CandidateProcessingError.invalidCorrelationTarget(replaced.candidateID)
+                }
+                // The spending is paid back in full, in the month it was booked (a cancellation), and the transfer is the real act.
+                let cancellation = LedgerEntry(
+                    id: LedgerEntryID(rawValue: "reversal:" + entryID.rawValue),
+                    kind: .adjustment,
+                    occurredAtUnixMilliseconds: candidate.proposedEntry?.occurredAtUnixMilliseconds ?? original.occurredAtUnixMilliseconds,
+                    postings: try original.postings.map { Posting(accountID: $0.accountID, delta: try $0.delta.negated()) },
+                    budgetImpact: BudgetImpact(kind: .return, amount: impact.amount, attributedMonth: impact.attributedMonth),
+                    adjustment: AdjustmentLink(originalEntryID: entryID, reason: .cancellation)
+                )
+                do {
+                    switch try ledger.commit(cancellation, expectedRevision: ledgerRevision) {
+                    case let .committed(revision), let .alreadyCommitted(revision): ledgerRevision = revision
+                    }
+                } catch let error as LedgerStorageError {
+                    throw CandidateProcessingError.ledger(error)
+                }
+                put(stored.linked(
+                    to: CorrelationMatch(candidateID: candidate.id, rule: replaced.rule), reversal: cancellation.id
+                ), id: replaced.candidateID)
+            }
             return .promoted(candidateRevision: revisionBefore, ledgerRevision: ledgerRevision)
 
         case let .corroborates(match):
