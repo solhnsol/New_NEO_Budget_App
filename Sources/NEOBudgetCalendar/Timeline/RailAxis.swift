@@ -48,8 +48,9 @@ public struct RailAxis: Equatable, Sendable {
         for event in events {
             add(event.start, event.isCard ? needs.other : needs.pastEventStart)
             add(event.end, event.isCard ? needs.cardEnd : needs.other)
-            // The name of an event that has begun sits under its start: nothing else may be drawn in that room.
-            if !event.isCard { add(event.start + 1, needs.nameRoom) }
+            // The name of an event that has begun sits under its start: nothing else may be drawn in that room. (The event that is going on now
+            // keeps its true proportion instead, below: its name has the room the rest of its stretch has.)
+            if !event.isCard, !(now.map { event.start <= $0 && $0 < event.end } ?? false) { add(event.start + 1, needs.nameRoom) }
         }
         for minute in transactions { add(minute, needs.transaction) }
         // Rows at the very minute a past event began stand under its name: the minute that follows is that far away.
@@ -62,12 +63,31 @@ public struct RailAxis: Equatable, Sendable {
             add(minute + 1, Double(count - 1) * needs.stackStep)
         }
         if let now { add(now, needs.other) }
-        let sorted = need.keys.sorted()
-        var ys = [0.0]
-        for index in sorted.indices.dropFirst() {
-            let gap = Double(sorted[index] - sorted[index - 1])
-            ys.append(ys[index - 1] + max(need[sorted[index]] ?? 0, gap * needs.emptyPointsPerMinute))
+        func layout() -> (keys: [Int], ys: [Double]) {
+            let sorted = need.keys.sorted()
+            var ys = [0.0]
+            for index in sorted.indices.dropFirst() {
+                let gap = Double(sorted[index] - sorted[index - 1])
+                ys.append(ys[index - 1] + max(need[sorted[index]] ?? 0, gap * needs.emptyPointsPerMinute))
+            }
+            return (sorted, ys)
         }
+        // The event that is going on now keeps its true proportion: the time since it began and the time left are drawn at the same points per
+        // minute (the longer-stretched side sets it), so the now-line reads how far along the event is.
+        if let now, let running = events.first(where: { !$0.isCard && $0.start <= now && now < $0.end }),
+           running.start >= firstMinute, running.end <= lastMinute {
+            add(running.start, 0); add(running.end, 0)
+            let natural = layout()
+            func at(_ minute: Int) -> Double {
+                let upper = natural.keys.firstIndex { $0 >= minute } ?? natural.keys.count - 1
+                return natural.ys[upper]
+            }
+            let (done, left) = (at(now) - at(running.start), at(running.end) - at(now))
+            let scale = max(needs.emptyPointsPerMinute, done / Double(max(1, now - running.start)), left / Double(max(1, running.end - now)))
+            if done < scale * Double(now - running.start) { need[now] = (need[now] ?? 0) + scale * Double(now - running.start) - done }
+            if left < scale * Double(running.end - now) { need[running.end] = (need[running.end] ?? 0) + scale * Double(running.end - now) - left }
+        }
+        let (sorted, ys) = layout()
         (self.firstMinute, self.lastMinute, keys, self.ys) = (firstMinute, lastMinute, sorted, ys)
     }
 

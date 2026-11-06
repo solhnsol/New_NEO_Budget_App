@@ -31,7 +31,7 @@ struct DayListView: View {
                     case let .row(row): pickable(row, inEvent: false)
                     case let .bundle(bundle): bundleView(bundle)
                     case let .event(block, rows, isFuture):
-                        EventBox(block: block, rows: rows, isFuture: isFuture, onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
+                        EventBox(block: block, rows: rows, isFuture: isFuture, isLive: isGoingOn(block, timeline), onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
                     }
                 }
                 if plan.items.isEmpty {
@@ -42,6 +42,13 @@ struct DayListView: View {
             }
         }
         .padding(.bottom, Theme.Space.xl)
+    }
+
+    /// The event is going on now (the design's 진행 중): today, begun and not over.
+    private func isGoingOn(_ block: EventBlock, _ timeline: DayTimeline?) -> Bool {
+        guard let timeline, day == model.today else { return false }
+        let now = Int((model.nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000)
+        return block.displayStartMinute <= now && now < block.displayEndMinute
     }
 
     /// A transaction row: a tap opens it (or, in selection mode, picks it); a long press starts selection with it.
@@ -185,6 +192,7 @@ private struct EventBox: View {
     let block: EventBlock
     let rows: [DayListView.Plan.Row]
     let isFuture: Bool
+    var isLive = false
     let onSelect: () -> Void
     let rowView: (DayListView.Plan.Row) -> AnyView
 
@@ -199,6 +207,10 @@ private struct EventBox: View {
                     Text(range).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary)
                 } else {
                     Text(block.title).font(.onAll(size: 13, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                    if isLive {
+                        Text("진행 중").font(.onAll(size: 12, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                            .padding(.horizontal, 8).padding(.vertical, 2).background(Theme.accentSoft, in: Capsule())
+                    }
                     Spacer(minLength: Theme.Space.s)
                     Text(range).font(.onAll(size: 12)).foregroundStyle(Theme.textTertiary)
                 }

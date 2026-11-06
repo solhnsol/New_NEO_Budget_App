@@ -46,3 +46,13 @@ import Testing
     // The name is 22 high under the start, then the row (38): the next minute is at least that far on.
     #expect(axis.y(10 * 60 + 1) - axis.y(10 * 60) >= 22 + 38)
 }
+
+@Test func theEventGoingOnNowIsDrawnInItsTrueProportion() {
+    // 09:00-11:00 at 10:05: about 54% of it is behind. With a name room under the start it used to look 75% done.
+    let axis = RailAxis(
+        events: [.init(start: 9 * 60, end: 11 * 60, isCard: false)], transactions: [],
+        now: 10 * 60 + 5, firstMinute: 8 * 60, lastMinute: 12 * 60
+    )
+    let share = (axis.y(10 * 60 + 5) - axis.y(9 * 60)) / (axis.y(11 * 60) - axis.y(9 * 60))
+    #expect(abs(share - 65.0 / 120.0) < 0.02)
+}
