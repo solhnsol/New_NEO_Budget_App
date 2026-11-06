@@ -147,6 +147,15 @@ private let received: Int64 = 1_790_936_040_000
         #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
     }
 
+    @Test func aTossPersonWithdrawalWhoseNameEndsInAStrayParenthesisIsStillTheTossRule() {
+        let text = "우리WON뱅킹 입출금알림\n[출금] 토스 김석우（    30,000원 1002-967-767***계좌 잔액 1,710,796원"
+        let draft = try! TransactionCandidateDraft(
+            rawNotificationID: "n", parserID: "p", parserVersion: "1", ruleID: "withdrawal", kind: .withdrawal, direction: .outflow,
+            amount: Money(minorUnits: 30_000, currency: "KRW"), occurredAt: ObservedTimestamp(unixMilliseconds: 0, precision: .second, source: .notificationTime),
+            instrument: InstrumentHint(kind: .bankAccount), counterparty: DraftCounterparty(), evidence: [], issues: [], confidence: .high)
+        #expect(NotificationIntake.asTossPersonTransfer(draft, text: text)?.counterparty.payeeRaw == "김석우")
+    }
+
     @Test func aNotificationThatIsNotAPaymentChangesNothing() throws {
         var setup = IntakeSetup()
         let ad = try decoder.decode(payload("Toss", body: "이번 주 혜택을 확인해 보세요"), receivedAtUnixMilliseconds: received)[0]

@@ -274,7 +274,7 @@ public struct NotificationIntake: Sendable {
 
     /// Woori's `[출금] 토스    김의근 10,000원`: the person's name sits between `토스` and the amount.
     private static let tossPersonPatterns = [
-        #"\[출금\]\s*토스\s+([가-힣]{2,4})\s+[0-9][0-9,]*\s*원"#,
+        #"\[출금\]\s*토스\s+([가-힣]{2,4})[（(]?\s+[0-9][0-9,]*\s*원"#,
         // The SMS layout: the name follows the masked account number.
         #"\*\S*\s+토스\s+([가-힣]{2,4})\s+(?:잔액|잔고|[0-9]{1,2}/)"#,
     ].map { try! NSRegularExpression(pattern: $0) }
