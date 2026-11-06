@@ -56,3 +56,12 @@ import Testing
     let share = (axis.y(10 * 60 + 5) - axis.y(9 * 60)) / (axis.y(11 * 60) - axis.y(9 * 60))
     #expect(abs(share - 65.0 / 120.0) < 0.02)
 }
+
+@Test func theEventGoingOnNowIsAtLeastAsLongAsItsNameNeedsAndStillInProportion() {
+    let axis = RailAxis(
+        events: [.init(start: 9 * 60, end: 9 * 60 + 20, isCard: false)], transactions: [],
+        now: 9 * 60 + 10, firstMinute: 8 * 60, lastMinute: 12 * 60
+    )
+    #expect(axis.y(9 * 60 + 20) - axis.y(9 * 60) >= 22)
+    #expect(abs((axis.y(9 * 60 + 10) - axis.y(9 * 60)) / (axis.y(9 * 60 + 20) - axis.y(9 * 60)) - 0.5) < 0.02)
+}

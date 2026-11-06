@@ -83,9 +83,16 @@ public struct RailAxis: Equatable, Sendable {
                 return natural.ys[upper]
             }
             let (done, left) = (at(now) - at(running.start), at(running.end) - at(now))
-            let scale = max(needs.emptyPointsPerMinute, done / Double(max(1, now - running.start)), left / Double(max(1, running.end - now)))
-            if done < scale * Double(now - running.start) { need[now] = (need[now] ?? 0) + scale * Double(now - running.start) - done }
-            if left < scale * Double(running.end - now) { need[running.end] = (need[running.end] ?? 0) + scale * Double(running.end - now) - left }
+            // The name's room is added to the whole stretch, evenly, so the proportion stays true and the name still has its room.
+            let duration = Double(max(1, running.end - running.start))
+            let scale = max(needs.emptyPointsPerMinute, done / Double(max(1, now - running.start)), left / Double(max(1, running.end - now))) + needs.nameHeight / duration
+            // The last gap of each side is the one that grows, from what it measured in the first pass.
+            func lastGap(_ key: Int) -> Double {
+                guard let index = natural.keys.firstIndex(of: key), index > 0 else { return 0 }
+                return natural.ys[index] - natural.ys[index - 1]
+            }
+            if done < scale * Double(now - running.start) { need[now] = lastGap(now) + scale * Double(now - running.start) - done }
+            if left < scale * Double(running.end - now) { need[running.end] = lastGap(running.end) + scale * Double(running.end - now) - left }
         }
         let (sorted, ys) = layout()
         (self.firstMinute, self.lastMinute, keys, self.ys) = (firstMinute, lastMinute, sorted, ys)
