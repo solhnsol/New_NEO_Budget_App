@@ -23,6 +23,7 @@ struct DayTimelineScreen: View {
     @State private var receivable: Int64 = 0
     @State private var showsSettlement = false
     @State private var openTransaction: TransactionRef?
+    @State private var openIncome: IncomeItem?
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -173,6 +174,13 @@ struct DayTimelineScreen: View {
                 _ = model.moveTo(day)
                 Task { await model.loadMissing() }
             },
+            onCreate: { day in
+                // A hold let go on a day of the month: that day is picked and the new event sheet opens for it.
+                _ = model.moveTo(day)
+                Task { await model.loadMissing() }
+                model.newEventSeed = (day, nil)
+                model.creatingEvent = true
+            },
             loadMonth: { await model.loadMonth(startingAt: $0) },
             selected: model.selectedDay,
             income: { model.income(on: $0) },
@@ -192,7 +200,7 @@ struct DayTimelineScreen: View {
           }
           DayPagerView(
               model: model, topInset: 0, showsList: showsList,
-              onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
+              onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onOpenIncome: { id in openIncome = model.incomeByDay.values.flatMap { $0 }.first { $0.id == id } }, onScrollToDay: onScrollToDay
           )
           .id(showsList)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -240,6 +248,7 @@ struct DayTimelineScreen: View {
         }
         .modifier(CalendarSelectionLayer(model: model))
         .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
+        .sheet(item: $openIncome) { item in IncomeSheet(item: item, model: model) }
         .sheet(isPresented: Binding(get: { model.creatingTransaction }, set: { model.creatingTransaction = $0 })) { ManualTransactionSheet(model: model) }
         .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
         .task(id: model.dataGeneration) {

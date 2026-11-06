@@ -15,6 +15,8 @@ struct MonthUnfoldHeader<Top: View>: View {
     let onSelect: (LocalDate) -> Void
     /// A swipe settled on another week or month (its day, the selected day moved by 7 days or a month); called once, as it lands.
     let onPage: (LocalDate) -> Void
+    /// A hold on a day of the open month was let go on it: a new event there.
+    var onCreate: (LocalDate) -> Void = { _ in }
     let loadMonth: (LocalDate) async -> Void
     let selected: LocalDate
     var income: (LocalDate) -> Int64 = { _ in 0 }
@@ -27,7 +29,7 @@ struct MonthUnfoldHeader<Top: View>: View {
             top()
             CalendarCard(
                 state: state, today: today, selected: selected, cells: cells, color: color, income: income, dataVersion: dataVersion,
-                onSelect: onSelect, onPage: onPage, loadMonth: loadMonth
+                onSelect: onSelect, onPage: onPage, onCreate: onCreate, loadMonth: loadMonth
             )
             .padding(.horizontal, Theme.cardMargin)
             .padding(.top, Theme.Space.m)
@@ -49,6 +51,7 @@ struct CalendarCard: View {
     let dataVersion: Int
     let onSelect: (LocalDate) -> Void
     let onPage: (LocalDate) -> Void
+    let onCreate: (LocalDate) -> Void
     let loadMonth: (LocalDate) async -> Void
 
     private enum Axis { case horizontal, vertical }
@@ -57,6 +60,8 @@ struct CalendarCard: View {
     @State private var dragX: CGFloat = 0
     @State private var paging = false
     @State private var width: CGFloat = 0
+    /// A hold on a day of the open month: where the finger is (in the card) and the day under it. A bar for the new event follows the finger.
+    @State private var hold: (point: CGPoint, day: LocalDate)?
 
     private var first: LocalDate { MonthUnfold.firstOfMonth(selected) }
     private var rows: Int { MonthUnfold.rows(for: first) }
@@ -78,10 +83,12 @@ struct CalendarCard: View {
                 .clipped()
                 handle
             }
+            .overlay(alignment: .topLeading) { holdPreview(p: p, rows: rows) }
         }
         .background(UnevenRoundedRectangle(topLeadingRadius: Theme.Radius.card, topTrailingRadius: Theme.Radius.card).fill(Theme.surface))
         .background(GeometryReader { proxy in Color.clear.onAppear { width = proxy.size.width }.onChange(of: proxy.size.width) { _, new in width = new } })
         .simultaneousGesture(drag)
+        .modifier(HoldToCreate(enabled: state.progress > 0.5) { phase in holdChanged(phase) })
         .task(id: first) {
             await loadMonth(first)
         }
@@ -116,11 +123,62 @@ struct CalendarCard: View {
         return (try? LocalDate(year: target.year, month: target.month, day: min(selected.day, LocalDate.daysInMonth(year: target.year, month: target.month)))) ?? target
     }
 
+    // MARK: Hold to create
+
+    enum HoldPhase { case began(CGPoint), moved(CGPoint), ended(CGPoint, cancelled: Bool) }
+
+    /// The day under a point of the open month.
+    private func day(at point: CGPoint) -> LocalDate {
+        let cell = max(1, (width - 8) / 7)
+        let column = max(0, min(6, Int((point.x - 4) / cell)))
+        let start = MonthUnfold.gridStart(of: first)
+        let selectedRow = (selected.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+        let y = point.y - 28 + CGFloat(selectedRow) * rowHeight * (1 - state.progress)
+        let row = max(0, min(rows - 1, Int(y / rowHeight)))
+        return start.adding(days: row * 7 + column)
+    }
+
+    private func holdChanged(_ phase: HoldPhase) {
+        switch phase {
+        case let .began(point), let .moved(point): hold = (point, day(at: point))
+        case let .ended(point, cancelled):
+            let target = day(at: point)
+            hold = nil
+            axis = nil
+            if !cancelled { onCreate(target) }
+        }
+    }
+
+    @ViewBuilder
+    private func holdPreview(p: CGFloat, rows: Int) -> some View {
+        if let hold {
+            let cell = max(1, (width - 8) / 7)
+            let start = MonthUnfold.gridStart(of: first)
+            let offset = (hold.day.daysSinceUnixEpoch - start.daysSinceUnixEpoch)
+            let selectedRow = (selected.daysSinceUnixEpoch - start.daysSinceUnixEpoch) / 7
+            ZStack(alignment: .topLeading) {
+                // The day it would land on.
+                RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.accentStrong.opacity(0.07))
+                    .frame(width: cell, height: rowHeight)
+                    .offset(x: 4 + CGFloat(offset % 7) * cell, y: 28 + CGFloat(offset / 7) * rowHeight - CGFloat(selectedRow) * rowHeight * (1 - p))
+                // The new event, a bar like the month's own, following the finger.
+                Text("새 일정").font(.onAll(size: 10)).foregroundStyle(.white).lineLimit(1).padding(.horizontal, 3)
+                    .frame(width: cell - 4, height: 13, alignment: .leading)
+                    .background(Theme.caution, in: RoundedRectangle(cornerRadius: 3, style: .continuous))
+                    .shadow(color: Theme.textPrimary.opacity(0.22), radius: 8, y: 6)
+                    .position(x: hold.point.x, y: hold.point.y - 34)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .allowsHitTesting(false)
+        }
+    }
+
     // MARK: Gestures
 
     private var drag: some Gesture {
         DragGesture(minimumDistance: 6, coordinateSpace: .global)
             .onChanged { value in
+                guard hold == nil else { return }
                 if axis == nil {
                     guard hypot(value.translation.width, value.translation.height) >= 6 else { return }
                     axis = abs(value.translation.width) > abs(value.translation.height) ? .horizontal : .vertical
@@ -329,4 +387,18 @@ private struct ProgressDriven<Content: View>: View, Animatable {
     }
 
     var body: some View { content(value) }
+}
+
+/// Attaches the hold-and-follow to the open month (iOS 18 and later).
+private struct HoldToCreate: ViewModifier {
+    let enabled: Bool
+    let phase: (CalendarCard.HoldPhase) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.gesture(HapticHoldDrag(isEnabled: enabled, began: { phase(.began($0)) }, moved: { phase(.moved($0)) }, ended: { phase(.ended($0, cancelled: $1)) }))
+        } else {
+            content
+        }
+    }
 }

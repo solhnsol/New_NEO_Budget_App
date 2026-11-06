@@ -11,6 +11,7 @@ struct DayListView: View {
     let model: AppModel
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
+    var onOpenIncome: (LedgerEntryID) -> Void = { _ in }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -47,7 +48,8 @@ struct DayListView: View {
     private func pickable(_ row: Plan.Row, inEvent: Bool) -> some View {
         TransactionRow(row: row, inEvent: inEvent, selected: model.selection.contains(row.id), selecting: model.selection.isActive && !row.isIncome)
             .listTap {
-                guard !row.isIncome, !HapticHold.justHeld(row.id.rawValue) else { return }
+                if row.isIncome { return onOpenIncome(row.id) }
+                guard !HapticHold.justHeld(row.id.rawValue) else { return }
                 if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggle(row.id) } } else { onOpenTransaction(row.id) }
             }
             .hapticLongPress(id: row.id.rawValue, enabled: !model.selection.isActive && !row.isIncome) {

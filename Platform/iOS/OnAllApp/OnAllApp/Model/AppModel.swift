@@ -44,7 +44,7 @@ final class AppModel {
 
     func ungroupTransactions(_ ids: [LedgerEntryID]) { editMany(ids) { $0.group = nil } }
     /// Where a long press on the day started a new event (day and minute); the create sheet opens with that start.
-    var newEventSeed: (day: LocalDate, minute: Int)?
+    var newEventSeed: (day: LocalDate, minute: Int?)?
     /// The manual-transaction sheet, opened from the create sheet's 거래 switch.
     var creatingTransaction = false
     private(set) var selectedDay: LocalDate
@@ -309,7 +309,9 @@ final class AppModel {
     func reload() async {
         guard let service else { return }
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
-        let incomes = (try? await ledger.incomes()) ?? []
+        let incomes = ((try? await ledger.incomes()) ?? []).map { item in
+            IncomeItem(id: item.id, occurredAtUnixMilliseconds: item.occurredAtUnixMilliseconds, minorUnits: item.minorUnits, title: transactionOverrides[item.id]?.title ?? item.title)
+        }
         incomeByDay = Dictionary(grouping: incomes, by: { dayZone.localDate(of: $0.occurredAtUnixMilliseconds) })
         dataGeneration += 1
         let mine = dataGeneration
@@ -511,6 +513,7 @@ final class AppModel {
         switch result {
         case .unchanged, .needsScope: break
         case .saved, .refused, .failed:                         // a refusal or failure may mean the calendar changed: show what it holds now
+            if case .saved = result { await releaseStaleTimeBindings(of: request.original.key) }
             await bindSpendingByTime()
             await reload()
         }
@@ -518,6 +521,22 @@ final class AppModel {
     }
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
+
+    /// An event whose time moved no longer holds the spending that was put in it by time alone: those automated links are released, so binding by time
+    /// can place them again (in another event, or in none). What the user decided is never touched (`TimeBinding.origin` only).
+    private func releaseStaleTimeBindings(of key: CalendarEventKey) async {
+        guard let service, let life = try? await service.lifeSnapshot().state, let activity = life.activity(forEvent: key),
+              let event = try? await provider.event(key), case let .timed(range) = event.time,
+              let markers = try? await ledger.transactions() else { return }
+        let byID = Dictionary(markers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for set in life.allocationSets.values {
+            guard set.allocations.count == 1, let allocation = set.allocations.first, allocation.activityID == activity.id,
+                  allocation.provenance.origin == TimeBinding.origin, let marker = byID[allocation.transactionID] else { continue }
+            let time = marker.occurredAtUnixMilliseconds
+            guard time < range.startUnixMilliseconds || time >= range.endUnixMilliseconds else { continue }
+            _ = await service.perform(.unlinkTransaction(UnlinkTransactionInput(transactionID: marker.id, by: ActivityEditing.provenance(now: nowMilliseconds), keepOut: false)))
+        }
+    }
 
     /// Only a screenshot demo sets this (`DemoSettlement`): the settlement hub reads the time this much later, to show what an old request looks like.
     var displayClockOffsetMilliseconds: Int64 = 0

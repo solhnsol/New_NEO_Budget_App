@@ -24,7 +24,7 @@ struct EventCreateSheet: View {
     @State private var isOpen = false
     @FocusState private var titleFocused: Bool
 
-    init(model: AppModel, seed: (day: LocalDate, minute: Int)? = nil, close: @escaping () -> Void, switchToTransaction: (() -> Void)? = nil) {
+    init(model: AppModel, seed: (day: LocalDate, minute: Int?)? = nil, close: @escaping () -> Void, switchToTransaction: (() -> Void)? = nil) {
         self.model = model
         self.close = close
         self.switchToTransaction = switchToTransaction

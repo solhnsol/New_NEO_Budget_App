@@ -20,8 +20,8 @@ public struct RailAxis: Equatable, Sendable {
         public var other = 14.0
         /// How far apart rows that share a minute are drawn (a row and the gap to the next): the axis makes room for the stack.
         public var stackStep = 38.0
-        /// Room under a past event's start for its name (it stands beside the rail there).
-        public var nameRoom = 22.0
+        /// Room under a past event's start for its name (it stands beside the rail there, 22 high) plus half a row, since the next row is centred on its key.
+        public var nameRoom = 40.0
         /// Points per minute where nothing needs more room.
         public var emptyPointsPerMinute = 0.35
         public init() {}

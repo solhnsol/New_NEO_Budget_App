@@ -16,6 +16,7 @@ struct DaySection: View {
     let zone: DisplayTimeZone
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
+    var onOpenIncome: (LedgerEntryID) -> Void = { _ in }
 
     var body: some View {
         if isToday {
@@ -50,7 +51,7 @@ struct DaySection: View {
             if let timeline {
                 RailTimeline(
                     timeline: timeline, nowMilliseconds: nowMilliseconds, zone: zone, incomes: model.incomeByDay[day] ?? [], onSelect: onSelect, onOpenTransaction: onOpenTransaction,
-                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }, model: model
+                    onCreate: { minute in model.newEventSeed = (day, minute); model.creatingEvent = true }, onOpenIncome: onOpenIncome, model: model
                 )
                     .padding(.trailing, Theme.Space.l)
             } else {
@@ -188,7 +189,7 @@ struct RailPlan {
         return bands
     }
 
-    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }) {
+    init(_ timeline: DayTimeline, nowMilliseconds: Int64, incomes: [IncomeItem] = [], groupOf: (LedgerEntryID) -> String? = { _ in nil }, isOpen: (String) -> Bool = { _ in false }) {
         let raw = (nowMilliseconds - timeline.dayStartUnixMilliseconds) / 60_000
         let cutoff = Int(max(-1, min(Int64(timeline.totalMinutes + 1), raw)))
         let blocks = timeline.blocks.sorted { ($0.displayStartMinute, $0.id.rawValue) < ($1.displayStartMinute, $1.id.rawValue) }
@@ -242,13 +243,29 @@ struct RailPlan {
         }
 
         let events = blocks.map { RailAxis.Event(start: $0.displayStartMinute, end: $0.displayEndMinute, isCard: $0.displayStartMinute >= cutoff) }
-        var covered = events.flatMap { [$0.start, $0.end] } + rows.map(\.minute)
+        // Where each row is laid out: a bundle that is opened stacks its legs one under another at its first leg's time (its legs' own times are in
+        // their text); a bundle that is closed is one row, at its first leg. So a bundle is one point of the day, with nothing else between its legs.
+        var layoutMinute = rows.map(\.minute)
+        var included = [Bool](repeating: true, count: rows.count)
+        for bundle in bundles {
+            let open = isOpen(bundle.key)
+            for index in bundle.indices {
+                if open { layoutMinute[index] = rows[bundle.first].minute } else if index != bundle.first { included[index] = false }
+            }
+        }
+        let order = rows.indices.filter { included[$0] }.sorted { (layoutMinute[$0], $0) < (layoutMinute[$1], $1) }
+        var covered = events.flatMap { [$0.start, $0.end] } + order.map { layoutMinute[$0] }
         if let now { covered.append(now) }
         let range = RailAxis.hourRange(covering: covered, totalMinutes: timeline.totalMinutes)
-        let axis = RailAxis(events: events, transactions: rows.map(\.minute), now: now, firstMinute: range.first, lastMinute: range.last)
-        var ys: [CGFloat] = []
+        let axis = RailAxis(events: events, transactions: order.map { layoutMinute[$0] }, now: now, firstMinute: range.first, lastMinute: range.last)
+        var ys = [CGFloat](repeating: 0, count: rows.count)
         // Rows sharing a minute stack downward; the axis already made room for that (`RailAxis.Needs.stackStep`).
-        for row in rows { ys.append(max(CGFloat(axis.y(row.minute)), (ys.last ?? -.infinity) + Self.rowHeight + 2)) }
+        var lastY = -CGFloat.infinity
+        for index in order {
+            ys[index] = max(CGFloat(axis.y(layoutMinute[index])), lastY + Self.rowHeight + 2)
+            lastY = ys[index]
+        }
+        for bundle in bundles where !isOpen(bundle.key) { for index in bundle.indices where index != bundle.first { ys[index] = ys[bundle.first] } }
         self.past = past
         self.cards = blocks.filter { $0.displayStartMinute >= cutoff }
         self.rows = rows
@@ -257,7 +274,7 @@ struct RailPlan {
         self.rowBundle = rowBundle
         self.axis = axis
         self.nowMinute = now
-        self.height = max(CGFloat(axis.height), (ys.last ?? 0) + Self.rowHeight)
+        self.height = max(CGFloat(axis.height), (lastY.isFinite ? lastY : 0) + Self.rowHeight)
     }
 
     /// The row's amount as the design writes it: the number alone, with a minus for money spent and a plus for money coming in.
@@ -299,11 +316,12 @@ private struct RailTimeline: View {
     let onOpenTransaction: (LedgerEntryID) -> Void
     /// A long press on empty time: a new event there (snapped to 15 minutes).
     var onCreate: (Int) -> Void = { _ in }
+    var onOpenIncome: (LedgerEntryID) -> Void = { _ in }
     /// Selection mode lives on the model: a row picks itself there.
     var model: AppModel?
 
     var body: some View {
-        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) })
+        let plan = RailPlan(timeline, nowMilliseconds: nowMilliseconds, incomes: incomes, groupOf: { model?.bundleGroup(of: $0) }, isOpen: { model?.openBundles.contains($0) ?? false })
         let axis = plan.axis
         let height = plan.height
         ZStack(alignment: .topLeading) {
@@ -315,11 +333,8 @@ private struct RailTimeline: View {
             ForEach(plan.past, id: \.id) { block in PastEventBar(block: block, axis: axis) { onSelect(.event(block)) } }
             ForEach(plan.cards, id: \.id) { block in EventCardView(block: block, axis: axis) { onSelect(.event(block)) } }
             // The spine of each bundle, under its rows: from its first leg to its last.
-            ForEach(plan.bundles) { bundle in
-                BundleSpine(
-                    top: plan.rowYs[bundle.first], bottom: max(plan.rowYs[bundle.first], CGFloat(axis.y(plan.rows[bundle.last].minute))),
-                    capped: !(model?.openBundles.contains(bundle.key) ?? false)
-                )
+            ForEach(plan.bundles.filter { model?.openBundles.contains($0.key) ?? false }) { bundle in
+                BundleSpine(top: plan.rowYs[bundle.first], bottom: plan.rowYs[bundle.last], capped: false)
             }
             ForEach(Array(plan.rows.enumerated()), id: \.element.id) { index, row in
                 let bundle = plan.rowBundle[index].map { plan.bundles[$0] }
@@ -333,7 +348,8 @@ private struct RailTimeline: View {
                         selected: pickedState(index, bundle, plan),
                         selecting: model?.selection.isActive ?? false,
                         onTap: {
-                            guard !row.isIncome, !HapticHold.justHeld(row.id) else { return }
+                            if row.isIncome { return onOpenIncome(row.transactionID) }
+                            guard !HapticHold.justHeld(row.id) else { return }
                             guard let model else { return onOpenTransaction(row.transactionID) }
                             if let bundle, !isOpen {
                                 if model.selection.isActive { withAnimation(Theme.Motion.selectSlide) { model.selection.toggleAll(ids(of: bundle, plan)) } } else { toggleOpen(bundle) }
@@ -371,7 +387,10 @@ private struct RailTimeline: View {
 
     private func toggleOpen(_ bundle: RailPlan.Bundle) {
         guard let model else { return }
-        withAnimation(.snappy(duration: 0.28)) {
+        // No animation: the rows move to their new places at once (an animated move left the legs' dots off the rail).
+        var noAnimation = Transaction()
+        noAnimation.disablesAnimations = true
+        withTransaction(noAnimation) {
             if model.openBundles.contains(bundle.key) { model.openBundles.remove(bundle.key) } else { model.openBundles.insert(bundle.key) }
         }
     }

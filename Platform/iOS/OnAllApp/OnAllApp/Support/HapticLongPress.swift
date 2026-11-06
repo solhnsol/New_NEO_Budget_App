@@ -67,6 +67,41 @@ struct HapticLongPress: UIGestureRecognizerRepresentable {
     }
 }
 
+/// A Haptic-Touch-style hold that then follows the finger: `began` when the hold is recognised (the tick is made then), `moved` as the finger goes on,
+/// `ended` when it lets go (`cancelled` when the system took the touch away).
+@available(iOS 18.0, *)
+struct HapticHoldDrag: UIGestureRecognizerRepresentable {
+    var isEnabled = true
+    let began: (CGPoint) -> Void
+    let moved: (CGPoint) -> Void
+    let ended: (CGPoint, _ cancelled: Bool) -> Void
+
+    func makeUIGestureRecognizer(context: Context) -> HapticLongPress.Recognizer {
+        let recognizer = HapticLongPress.Recognizer()
+        recognizer.minimumPressDuration = Theme.Motion.longPressSeconds
+        recognizer.allowableMovement = 10
+        return recognizer
+    }
+
+    func updateUIGestureRecognizer(_ recognizer: HapticLongPress.Recognizer, context: Context) {
+        if recognizer.isEnabled != isEnabled { recognizer.isEnabled = isEnabled }
+    }
+
+    func handleUIGestureRecognizerAction(_ recognizer: HapticLongPress.Recognizer, context: Context) {
+        let location = context.converter.localLocation
+        switch recognizer.state {
+        case .began:
+            recognizer.feedback.impactOccurred()
+            HapticLongPress.lastRecognised = Date()
+            began(location)
+        case .changed: moved(location)
+        case .ended: ended(location, false)
+        case .cancelled, .failed: ended(location, true)
+        default: break
+        }
+    }
+}
+
 /// Whether a hold was recognised a moment ago: the tap that the same finger's lift can still produce is to be ignored.
 enum HapticHold {
     /// The row a hold was last recognised on, so only the lift of that same finger on that same row is ignored (a quick tap on another row is not).
