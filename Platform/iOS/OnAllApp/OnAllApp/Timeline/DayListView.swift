@@ -32,7 +32,7 @@ struct DayListView: View {
                     case let .bundle(bundle): bundleView(bundle)
                     case .nowLine: NowLine(minute: Int((model.nowMilliseconds - (timeline?.dayStartUnixMilliseconds ?? 0)) / 60_000))
                     case let .event(block, rows, isFuture):
-                        EventBox(block: block, rows: rows, isFuture: isFuture, isLive: isGoingOn(block, timeline), onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
+                        EventBox(block: block, rows: rows, isFuture: isFuture, isLive: isGoingOn(block, timeline), isOpenEnd: model.openEndMarks.isOpenEnd(block.eventKey), onSelect: { onSelect(.event(block)) }, rowView: { AnyView(pickable($0, inEvent: true)) })
                     }
                 }
                 if plan.items.isEmpty {
@@ -212,12 +212,13 @@ private struct EventBox: View {
     let rows: [DayListView.Plan.Row]
     let isFuture: Bool
     var isLive = false
+    var isOpenEnd = false
     let onSelect: () -> Void
     let rowView: (DayListView.Plan.Row) -> AnyView
 
     var body: some View {
         let color = Color(hex: block.calendarColorHex) ?? Theme.accent
-        let range = clockText(block.displayStartMinute) + " – " + clockText(block.displayEndMinute)
+        let range = clockText(block.displayStartMinute) + " –" + (isOpenEnd ? "" : " " + clockText(block.displayEndMinute))
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .firstTextBaseline, spacing: Theme.Space.s) {
                 if isFuture {

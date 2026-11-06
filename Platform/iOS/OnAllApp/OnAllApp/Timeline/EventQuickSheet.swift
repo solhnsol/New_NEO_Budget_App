@@ -19,6 +19,8 @@ struct EventQuickSheet: View {
     @State private var failure: String?
     /// Set once the changes are written, so closing the sheet does not write them again.
     @State private var saved = false
+    /// False for a 종료 미정 event until the person picks an end: the saved end is only a placeholder, so it is shown as 미정.
+    @State private var endSet = true
     @State private var scopeChoices: [RecurrenceScope] = []
     @State private var pendingRequest: EventSaveRequest?
     @State private var confirmsDelete = false
@@ -31,6 +33,7 @@ struct EventQuickSheet: View {
         self.onEditInfo = onEditInfo
         self.onSettle = onSettle
         _title = State(initialValue: block.title)
+        _endSet = State(initialValue: !model.openEndMarks.isOpenEnd(block.eventKey))
         _start = State(initialValue: Date(timeIntervalSince1970: Double(block.startUnixMilliseconds) / 1000))
         _end = State(initialValue: Date(timeIntervalSince1970: Double(block.endUnixMilliseconds) / 1000))
     }
@@ -64,7 +67,7 @@ struct EventQuickSheet: View {
                     pill(Self.dayText(start, zone), hasDate: true)
                     pill(Self.clock(start, zone), time: timeBinding($start, isStart: true))
                     Text("–").foregroundStyle(Theme.disabled)
-                    pill(Self.clock(end, zone), time: timeBinding($end, isStart: false))
+                    pill(endSet ? Self.clock(end, zone) : "미정", time: timeBinding($end, isStart: false))
                     Spacer(minLength: 0)
                 }
                 .padding(.top, Theme.Space.m)
@@ -98,7 +101,8 @@ struct EventQuickSheet: View {
     /// A pill with the date or time in it and the system picker laid invisibly over it.
     private func pill(_ text: String, hasDate: Bool = false, time: Binding<Date>? = nil) -> some View {
         Text(text).font(.onAll(size: 15, weight: .medium).monospacedDigit()).foregroundStyle(Theme.textPrimary)
-            .padding(.horizontal, Theme.Space.m).frame(height: Theme.smallButtonHeight)
+            // minWidth: the clear picker over a time pill is about as wide as "22:00"; the narrower 미정 pill would clip it and its tap does nothing.
+            .padding(.horizontal, Theme.Space.m).frame(minWidth: time == nil ? 0 : 68).frame(height: Theme.smallButtonHeight)
             .background(Theme.fill, in: RoundedRectangle(cornerRadius: Theme.Radius.smallButton, style: .continuous))
             .overlay {
                 // The system picker over the pill, drawn clear: its tap opens the picker, the pill stays as designed.
@@ -125,7 +129,9 @@ struct EventQuickSheet: View {
                 let anchor = isStart ? start : end
                 guard let moved = calendar.date(bySettingHour: clock.hour ?? 0, minute: clock.minute ?? 0, second: 0, of: anchor) else { return }
                 binding.wrappedValue = moved
-                if isStart, end <= moved { end = moved.addingTimeInterval(15 * 60) }
+                if !isStart { endSet = true }
+                if isStart, !endSet { end = moved.addingTimeInterval(originalEnd.timeIntervalSince(originalStart)) }
+                else if isStart, end <= moved { end = moved.addingTimeInterval(15 * 60) }
             }
         )
     }

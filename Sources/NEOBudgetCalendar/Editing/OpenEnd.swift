@@ -113,6 +113,14 @@ public struct OpenEndMarks: Codable, Equatable, Sendable {
 
     public var count: Int { durations.count }
 
+    /// Every marked event, to look each up again (`reconcile`).
+    public var keys: [CalendarEventKey] {
+        durations.keys.compactMap { id in
+            let parts = id.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
+            return parts.count == 2 ? CalendarEventKey(calendarID: CalendarID(rawValue: parts[0]), eventID: CalendarEventID(rawValue: parts[1])) : nil
+        }
+    }
+
     /// After the calendar may have changed elsewhere: `lookup` returns the event as it is now (`nil`: gone). A mark stays only while the
     /// event is timed, not recurring, and still the placeholder length (moved is fine); anything else means the person set an end.
     public mutating func reconcile(_ keys: [CalendarEventKey], lookup: (CalendarEventKey) -> CalendarEvent?) {

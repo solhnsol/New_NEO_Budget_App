@@ -322,6 +322,7 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
+        await reconcileOpenEnds()
         await refreshSpendReductions(service)
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
         // A deposit that paid back someone's share belongs to the purchase it settled, not to income.
@@ -644,6 +645,26 @@ final class AppModel {
         openEndMarks = marks
     }
 
+    private func saveOpenEndMarks() {
+        if let url = openEndURL, let data = try? JSONEncoder().encode(openEndMarks) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// The calendar may have been changed elsewhere (an end set, the event deleted or made recurring): drop the marks that no longer hold.
+    /// A failed read keeps every mark: not knowing is not a reason to forget.
+    private func reconcileOpenEnds() async {
+        let keys = openEndMarks.keys
+        guard !keys.isEmpty else { return }
+        var found: [CalendarEventKey: CalendarEvent] = [:]
+        for key in keys {
+            do { if let event = try await provider.event(key) { found[key] = event } } catch { return }
+        }
+        var marks = openEndMarks
+        marks.reconcile(keys) { found[$0] }
+        guard marks != openEndMarks else { return }
+        openEndMarks = marks
+        saveOpenEndMarks()
+    }
+
     /// Creates the event the new-event sheet describes (all-day, open end or timed; `NewEventInput.plan`). `nil` on success, else what to tell the person.
     func createEvent(_ input: NewEventInput, location: String? = nil, notes: String? = nil, people: [PersonID] = []) async -> String? {
         guard let plan = try? input.plan(in: dayZone) else { return "종료 시각이 시작보다 늦어야 해요." }
@@ -655,7 +676,7 @@ final class AppModel {
         case let .applied(applied)?, let .partiallyApplied(applied, _)?:
             if plan.isOpenEnd, let event = applied.event {
                 openEndMarks.mark(event.key)
-                if let url = openEndURL, let data = try? JSONEncoder().encode(openEndMarks) { try? data.write(to: url, options: .atomic) }
+                saveOpenEndMarks()
             }
             if let event = applied.event {
                 // One after another: each edit reloads the days, and two at once would read each other's half-written state.
