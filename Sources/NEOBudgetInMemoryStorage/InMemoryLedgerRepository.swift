@@ -35,6 +35,9 @@ public struct InMemoryLedgerRepository: LedgerRepository {
     /// How many commits the ledger has accepted.
     public var currentRevision: UInt64 { revision }
 
+    /// Every accepted entry, in the order it was committed (feeding them back through `commit` rebuilds this ledger).
+    public var committedEntries: [LedgerEntry] { entries }
+
     /// The accepted entry with this ID, if there is one.
     public func entry(withID id: LedgerEntryID) -> LedgerEntry? {
         entryIndex[id].map { entries[$0] }

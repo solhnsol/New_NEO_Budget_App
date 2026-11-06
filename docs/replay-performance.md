@@ -55,8 +55,8 @@ x86_64 Linux container, release build; a phone will differ but the shape does no
 | 30,000 | about 2 hours (extrapolated) | 40.6 s |
 | `status(of:)` per call at 1,000 | 2.3 ms | 0.004 ms |
 
-About 1.2 to 1.4 ms per notification at every size (1.2 s, 3.5 s, 13 s, 40.6 s for 1k, 3k, 10k, 30k). Most of that is parsing (regular expressions), so the next saving would be
-persisting the derived ledger instead of replaying it (not done here; the notification file and its format are unchanged).
+About 1.2 to 1.4 ms per notification at every size (1.2 s, 3.5 s, 13 s, 40.6 s for 1k, 3k, 10k, 30k). Most of that is parsing (regular expressions), so the next saving was
+persisting the derived ledger instead of replaying it (see "Saved ledger" below).
 
 Run it yourself: `cd tools/replay-bench && swift run -c release ReplayBench 1000 3000 10000`.
 
@@ -70,3 +70,29 @@ entries are the same ones in both. Until the swap, balances and account statemen
 refund of a purchase older than the window waits, and changes to the setup wait for the full replay. While partial,
 `notifications.json` is written as the launch's full list plus the new ones, so nothing older is lost. Design and alternatives
 (a persisted snapshot): `records/20261025-단계적-불러오기-설계.md`.
+
+## Saved ledger
+
+`IntakeLedger.snapshot()` is the built ledger (candidates, ledger entries, outcomes, the setup the replay left, the IDs of the
+notifications it covers). `NotificationStore` keeps it in `ledger-snapshot.json`; a launch calls
+`IntakeLedger(restoring:...)` and only the notifications after the covered ones are processed, so launch cost follows the
+number of new notifications, not the history. Entries go back through the ledger's own validation; indexes are rebuilt by `put`.
+The notification file stays the source of truth, and the snapshot is derived data.
+
+It is used only when everything it depends on is unchanged, else the app replays everything (and saves a new snapshot):
+
+| Checked | Why |
+|---|---|
+| format, parser id/version, policy version, time zone and `IntakeLedger.rulesRevision` | the rules that turn a notification into a candidate |
+| the imported history (FNV-1a of its JSON) | the seeded rows and the import cutover |
+| the setup equals the one the snapshot left | an account answer or a rule change re-binds older notifications |
+| the covered IDs are the start of the notification file, in order | a deleted or reordered notification |
+| the entries pass the ledger's validation | a snapshot that does not fit its configuration |
+
+A missing, torn or undecodable file reads as nil and the app replays everything. **When the parser, assembler, correlator or
+deduplication behave differently, bump `IntakeLedger.rulesRevision`** (for example after a deposit-name parsing fix) so existing
+snapshots are dropped and the ledger is rebuilt once. Settlements, event links and other user edits live in the life
+store, not in the replay, so a rebuild does not touch them.
+
+`IntakeLedgerSnapshotTests` checks that a snapshot taken after any prefix of a stream, plus the rest, equals a full replay
+(candidates, entries, setup, every notification's status), and that snapshots made under other inputs are refused.
