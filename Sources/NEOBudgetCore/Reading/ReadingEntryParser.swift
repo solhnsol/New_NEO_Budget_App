@@ -24,18 +24,32 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
     }
 
     public func parse(_ notification: RawNotification, context: NotificationParsingContext) throws -> NotificationParseOutcome {
+        try decide(notification, context: context).outcome
+    }
+
+    /// 어느 항목이 이 알림을 읽었는지. 아무 항목도 맞지 않으면 nil. 항목 목록의 "지난 알림 N건"에 쓴다.
+    public func entryID(for notification: RawNotification) -> String? {
+        guard !notification.id.isEmpty, let context = try? NotificationParsingContext(
+            timeZoneIdentifier: "UTC", referenceTimeUnixMilliseconds: 0, parserID: "probe", parserVersion: "1"
+        ) else { return nil }
+        return (try? decide(notification, context: context))?.entryID
+    }
+
+    private func decide(_ notification: RawNotification, context: NotificationParsingContext) throws -> (outcome: NotificationParseOutcome, entryID: String?) {
         guard !notification.id.isEmpty else { throw NotificationParserContractError.invalidRawNotificationID }
         let view = NotificationView(notification)
         let app = notification.source.applicationIdentifier
         for entry in entries where entry.entry.applicationIdentifier == nil || entry.entry.applicationIdentifier == app {
             guard let values = entry.match(view) else { continue }
             switch entry.entry.action {
-            case let .ignore(reason): return .notTransaction(reason)
+            case let .ignore(reason): return (.notTransaction(reason), entry.entry.id)
             case let .read(outcome):
-                if let result = try read(outcome, values: values, notification: notification, view: view, context: context) { return result }
+                if let result = try read(outcome, values: values, notification: notification, view: view, context: context) {
+                    return (result, entry.entry.id)
+                }
             }
         }
-        return .notTransaction(.unrecognized)
+        return (.notTransaction(.unrecognized), nil)
     }
 
     // MARK: Reading

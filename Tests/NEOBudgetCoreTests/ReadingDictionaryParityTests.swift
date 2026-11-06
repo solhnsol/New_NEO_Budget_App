@@ -170,3 +170,10 @@ private func appNote(_ app: String, _ title: String?, _ subtitle: String?, _ bod
                 "\(input.title ?? "") | \(input.subtitle ?? "") | \(input.body ?? "")\nold: \(old.evidence(from: input))\nnew: \(new.evidence(from: input))")
     }
 }
+
+@Test func theParserSaysWhichEntryReadEachNotification() {
+    let parser = ReadingEntryParser()
+    #expect(parser.entryID(for: note("은행", nil, "입금 1,000원")) == "official.deposit")
+    #expect(parser.entryID(for: note("은행", nil, "광고 입금")) == "official.promotion")
+    #expect(parser.entryID(for: note("은행", nil, "그냥 아무 알림")) == nil)
+}
