@@ -104,6 +104,8 @@ struct DayPagerView: View {
         }
         .task(id: position) { await readAround(position) }
         .onChange(of: model.dataGeneration) { _, _ in Task { await refreshAll() } }
+        // The reload put what it read in the cache: read the pages from it now (an unlink or link shows behind the open sheet, not after it closes).
+        .onChange(of: model.reloadsFinished) { _, _ in Task { await refreshAll() } }
         // A transaction renamed or re-filed shows at once (the edit changes how the days are drawn, not what the calendar holds).
         .onChange(of: model.overrideRevision) { _, _ in Task { await refreshAll() } }
     }

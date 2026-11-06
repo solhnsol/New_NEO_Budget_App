@@ -20,9 +20,7 @@ struct TransactionQuickSheet: View {
     @State private var popular: [String] = []
     @State private var detent = PresentationDetent.height(Self.quickHeight)
 
-    static let quickHeight: CGFloat = 152
-    /// Options that open under a row must be reachable: the small sheet grows to the middle one.
-    private func raiseIfOpen(_ open: Bool) { if open, detent != .large { detent = .medium } }
+    static let quickHeight: CGFloat = 300
     private var current: LedgerListEntry { fresh ?? entry }
     private var zone: String { model.dayZone.identifier }
 
@@ -47,14 +45,14 @@ struct TransactionQuickSheet: View {
                             CategoryTile(category: entry.categoryID, size: 24)
                             Text(CategoryIcon.name(for: entry.categoryID) ?? "안 함")
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle(); raiseIfOpen(opensCategory) } }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensCategory.toggle()} }
                     if opensCategory && !incoming { categoryChips(entry) }
                     row("연결된 일정", open: opensEvent, tappable: true) {
                         HStack(spacing: 6) {
                             if let linked { Circle().fill(Color(hex: linked.colorHex) ?? Theme.accent).frame(width: 8, height: 8) }
                             Text(linked?.title ?? (entry.portions.compactMap(\.activityTitle).first ?? "없음"))
                         }
-                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle(); raiseIfOpen(opensEvent) } }
+                    } action: { withAnimation(Theme.Motion.sheet) { opensEvent.toggle()} }
                     if opensEvent { eventChips(entry, linked: linked) }
                 }
                 .padding(.top, 6)
@@ -78,7 +76,7 @@ struct TransactionQuickSheet: View {
         .scrollIndicators(.hidden)
         .background(Theme.surface)
         .tint(Theme.accent)
-        .presentationDetents([.height(Self.quickHeight), .medium, .large], selection: $detent)
+        .presentationDetents([.height(Self.quickHeight), .large], selection: $detent)
         .presentationCornerRadius(Theme.Radius.sheet)
         .presentationDragIndicator(.visible)
         .presentationBackground(Theme.surface)

@@ -114,6 +114,8 @@ final class AppModel {
     /// The data generation: moves only when the calendar may have changed (`reload`). A day read in an earlier generation is stale and is never kept. A move does
     /// not touch it, so a read that a move outran is still kept (the day is still that day).
     private(set) var dataGeneration = 0
+    /// Counts reloads that have put what they read in the cache: screens that re-read days on `dataGeneration` alone read the old cache.
+    private(set) var reloadsFinished = 0
     /// The move requests (`prefetch`): moves with every one, and says which days the move needs now. Separate from `dataGeneration`.
     private(set) var navigationRevision = 0
     private var navigationNeeded: Set<LocalDate> = []
@@ -343,6 +345,7 @@ final class AppModel {
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state); nettedSpending = state.nettedSpending() }
             phase = .ready
+            reloadsFinished += 1
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == dataGeneration else { return }
             phase = .denied
