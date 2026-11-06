@@ -134,4 +134,51 @@ private let card = AccountID(rawValue: "check-card")
         let rides = try run([try fare("9,330", time: "11:27:00 AM"), try fare("9,230", time: "11:29:00 AM")])
         #expect(rides.ledger.entries.count == 2 && open(rides) == 0)
     }
+
+    // MARK: Own-account transfer: a withdrawal and a deposit of one amount at once
+
+    private func twoBanks() throws -> IntakeSetup {
+        var setup = try bankSetup()
+        var repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
+        _ = try intake.ingest(try note("우리WON뱅킹", body: "[입금] 설정용 1,000원 1002-777-888***계좌 잔액 5,000원 10/02 14:00:00", time: "2:00:00 PM"),
+                              setup: &setup, repository: &repository)
+        let other = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(other.id, displayName: "저축", kind: .account(.bank, openingBalance: Money(minorUnits: 0, currency: "KRW")), makeID: { "saving" })
+        return setup
+    }
+
+    private func replayTwoBanks(_ list: [RawNotification]) throws -> CandidateProcessingSnapshot {
+        var setup = try twoBanks()
+        var repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
+        for n in list { _ = try intake.ingest(n, setup: &setup, repository: &repository) }
+        return try repository.processingSnapshot()
+    }
+
+    private func out(_ name: String, time: String = "1:01:00 PM") throws -> RawNotification {
+        try note("우리WON뱅킹", body: "[출금] \(name) 10,000원 1002-663-019***계좌 잔액 3,861,435원 10/02 13:01:00", time: time)
+    }
+    private func inn(time: String = "1:01:02 PM") throws -> RawNotification {
+        try note("우리WON뱅킹", body: "[입금] 김의근 10,000원 1002-777-888***계좌 잔액 15,000원 10/02 13:01:02", time: time)
+    }
+
+    @Test func aWithdrawalAndADepositOfOneAmountOnTwoOwnAccountsAreOneTransferInEitherOrder() throws {
+        for name in ["토스    김의근", "가상이체"] {
+            let withdrawal = try out(name), deposit = try inn()
+            for order in [[withdrawal, deposit], [deposit, withdrawal]] {
+                let snapshot = try replayTwoBanks(order)
+                #expect(balance(snapshot, living) == -10_000)
+                #expect(balance(snapshot, AccountID(rawValue: "saving")) == 10_000)
+                #expect(snapshot.ledger.entries.filter { $0.kind == .transfer }.count == 1)
+                // Whatever was booked in between is cancelled out: nothing is left as spending.
+                let spent = snapshot.ledger.entries.compactMap(\.budgetImpact).reduce(0) { $0 + ($1.kind == .expense ? $1.amount.minorUnits : -$1.amount.minorUnits) }
+                #expect(spent == 0)
+                #expect(open(snapshot) == 0)
+            }
+        }
+    }
+
+    @Test func aDepositFarFromTheWithdrawalIsNotATransfer() throws {
+        let snapshot = try replayTwoBanks([try out("토스    김의근"), try inn(time: "1:05:00 PM")])
+        #expect(snapshot.ledger.entries.filter { $0.kind == .transfer }.isEmpty)
+    }
 }

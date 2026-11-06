@@ -200,6 +200,12 @@ public struct NotificationIntake: Sendable {
             recordedDraft = recording.draft
             recordedResolution = .resolved(recording.binding)
             binding = recording.binding
+        } else if earlier == nil, transferCounterpart == nil, let own = correlator.ownTransferCounterpart(of: draft, binding: binding, among: waiting),
+                  let transfer = Self.asTransfer(draft) {
+            // A withdrawal and a deposit of one amount on two of the user's accounts at the same moment are one transfer, whatever name
+            // the bank prints (`토스 <이름>`, a bare `출금`).
+            recordedDraft = transfer
+            transferCounterpart = own
         } else if earlier == nil, case .account? = binding, let person = Self.asTossPersonTransfer(draft, text: NotificationText.joined(notification)) {
             // A bank withdrawal `토스 <이름>` with no Toss alert to pair with (Toss sends none while its app is open) is the user's own
             // transfer to that person. The Toss payment pairing above wins when its alert is already here.

@@ -76,7 +76,9 @@ public struct NotificationCorrelator: Sendable {
             return .newAct(NewAct(
                 transferCounterpart: counterpart,
                 closes: closes,
-                replacesIncome: replaced.map { CorrelationMatch(candidateID: $0.candidateID, rule: .transferLegs) }
+                replacesIncome: replaced.map { CorrelationMatch(candidateID: $0.candidateID, rule: .transferLegs) },
+                replacesPersonSpend: replaced == nil ? nearest(open.filter { isPersonSpendLeg($0, oppositeOf: incoming, counterpart: counterpart) }, to: incoming)
+                    .map { CorrelationMatch(candidateID: $0.candidateID, rule: .transferLegs) } : nil
             ))
         }
         if !closes.isEmpty { return .newAct(NewAct(closes: closes)) }
@@ -458,6 +460,32 @@ public struct NotificationCorrelator: Sendable {
             && record.draft.direction != incoming.draft.direction && sameMoney(record, incoming)
     }
 
+    /// A withdrawal on the transfer's other account that was recorded as spending on a person before this deposit leg arrived.
+    private func isPersonSpendLeg(_ record: CorrelationRecord, oppositeOf incoming: CorrelationObservation, counterpart: AccountID) -> Bool {
+        record.entryID != nil && record.corroborates == nil && record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+            && record.binding == .account(counterpart) && incoming.draft.direction == .inflow
+            && pairs(record.draft, incoming.draft, within: tossPairToleranceMilliseconds)
+    }
+
+    /// The other leg of an own-account transfer that no message names: a withdrawal and a deposit of one amount on two registered
+    /// accounts at (nearly) the same moment. Nil when there is none or more than one candidate (then nothing is guessed).
+    public func ownTransferCounterpart(of incoming: TransactionCandidateDraft, binding: ResolvedLedgerBinding?, among records: [CorrelationRecord]) -> AccountID? {
+        guard case let .account(own)? = binding, incoming.kind == .withdrawal || incoming.kind == .deposit else { return nil }
+        let partners = records.compactMap { record -> AccountID? in
+            guard case let .account(other)? = record.binding, other != own, record.corroborates == nil, record.transferCounterpart == nil,
+                  record.draft.direction != incoming.direction,
+                  pairs(record.draft, incoming, within: tossPairToleranceMilliseconds) else { return nil }
+            if incoming.direction == .inflow {
+                // A withdrawal still waiting for review, or one already booked as spending on a person.
+                let waiting = record.entryID == nil && record.draft.kind == .withdrawal
+                let person = record.entryID != nil && record.draft.ruleID == NotificationIntake.tossPersonTransferRuleID
+                return waiting || person ? other : nil
+            }
+            return record.entryID != nil && record.recordedAsIncome ? other : nil
+        }
+        return Set(partners).count == 1 ? partners.first : nil
+    }
+
     private func claimed(_ record: CorrelationRecord, by rule: CorrelationRule, in records: [CorrelationRecord]) -> Bool {
         records.contains { $0.corroborates == record.candidateID && $0.corroborationRule == rule }
     }
@@ -624,11 +652,15 @@ public struct NewAct: Equatable, Sendable {
     public let closes: [CorrelationMatch]
     /// The other leg of this transfer, already committed as income: it must be corrected into this transfer.
     public let replacesIncome: CorrelationMatch?
+    /// The other leg of this transfer, already committed as spending on a person (`토스 <이름>`): the spending is cancelled out.
+    public let replacesPersonSpend: CorrelationMatch?
 
-    public init(transferCounterpart: AccountID? = nil, closes: [CorrelationMatch] = [], replacesIncome: CorrelationMatch? = nil) {
+    public init(transferCounterpart: AccountID? = nil, closes: [CorrelationMatch] = [], replacesIncome: CorrelationMatch? = nil,
+                replacesPersonSpend: CorrelationMatch? = nil) {
         self.transferCounterpart = transferCounterpart
         self.closes = closes
         self.replacesIncome = replacesIncome
+        self.replacesPersonSpend = replacesPersonSpend
     }
 }
 
