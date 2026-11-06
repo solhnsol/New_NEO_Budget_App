@@ -163,7 +163,9 @@ struct EventQuickSheet: View {
     @ViewBuilder
     private var below: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Color.clear.frame(height: Theme.Space.xl)
+            Color.clear.frame(height: Theme.Space.s)
+            SheetRow(label: "알림", value: Self.alarmText(block.alarmLeadMinutes))
+            SheetRow(label: "반복", value: Self.repeatText(block.repeatRule))
             if !block.allocations.isEmpty {
                 ForEach(block.allocatedSpend, id: \.currency) { total in
                     Text(Formatting.grouped(total.knownMinorUnits) + "원").font(Theme.Typo.hero).foregroundStyle(Theme.accent).padding(.top, Theme.Space.s)
@@ -224,6 +226,25 @@ struct EventQuickSheet: View {
         switch await model.perform(.deleteEvent(input)) {
         case .applied?, .partiallyApplied?: saved = true; panel.run()
         default: failure = "지우지 못했어요."
+        }
+    }
+
+    private static func alarmText(_ minutes: Int?) -> String {
+        guard let minutes else { return "없음" }
+        if minutes <= 0 { return "정각" }
+        if minutes % 1440 == 0 { return "\(minutes / 1440)일 전" }
+        if minutes % 60 == 0 { return "\(minutes / 60)시간 전" }
+        return "\(minutes)분 전"
+    }
+
+    private static func repeatText(_ rule: EventRepeat?) -> String {
+        switch rule {
+        case nil: "안 함"
+        case .daily?: "매일"
+        case .weekly?: "매주"
+        case .monthly?: "매월"
+        case .yearly?: "매년"
+        case .other?: "반복"
         }
     }
 

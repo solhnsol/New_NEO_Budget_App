@@ -136,6 +136,9 @@ public struct EventBlock: Equatable, Sendable {
     /// `nil` for events that no longer exist.
     public let revisionToken: String?
     public let state: BlockState
+    /// Minutes before the start of the first alarm (`nil`: none), and how the event repeats (`nil`: it does not).
+    public let alarmLeadMinutes: Int?
+    public let repeatRule: EventRepeat?
 }
 
 public struct AllDayItem: Equatable, Sendable {

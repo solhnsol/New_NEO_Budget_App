@@ -58,7 +58,8 @@ public enum DayTimelineBuilder {
                 timed.append(TimedCandidate(
                     key: event.key, calendar: calendar, title: event.title, range: range, activity: activity,
                     isRecurringInstance: event.isRecurringInstance, isEditable: event.isEditable,
-                    revisionToken: event.revisionToken, state: .normal
+                    revisionToken: event.revisionToken, state: .normal,
+                    alarmLeadMinutes: event.alarmLeadMinutes, repeatRule: event.repeatRule
                 ))
             case let .allDay(range):
                 guard range.contains(input.day) else { continue }
@@ -193,7 +194,9 @@ public enum DayTimelineBuilder {
                 isRecurringInstance: candidate.isRecurringInstance,
                 isEditable: candidate.isEditable,
                 revisionToken: candidate.revisionToken,
-                state: candidate.state
+                state: candidate.state,
+                alarmLeadMinutes: candidate.alarmLeadMinutes,
+                repeatRule: candidate.repeatRule
             ))
         }
 
@@ -340,6 +343,8 @@ public enum DayTimelineBuilder {
         let isEditable: Bool
         let revisionToken: String?
         let state: BlockState
+        var alarmLeadMinutes: Int?
+        var repeatRule: EventRepeat?
     }
 
     private struct AllDayCandidate {

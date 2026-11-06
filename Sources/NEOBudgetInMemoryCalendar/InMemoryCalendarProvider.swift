@@ -181,7 +181,9 @@ public actor InMemoryCalendarProvider: CalendarProvider {
             timeZoneIdentifier: draft.timeZoneIdentifier,
             location: draft.location,
             notes: draft.notes,
-            revisionToken: "r\(nextRevision)"
+            revisionToken: "r\(nextRevision)",
+            alarmLeadMinutes: event.alarmLeadMinutes,
+            repeatRule: event.repeatRule
         )
         nextEventNumber += 1
         nextRevision += 1
