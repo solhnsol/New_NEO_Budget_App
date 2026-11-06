@@ -118,3 +118,55 @@ private func ctx() throws -> NotificationParsingContext {
     #expect(NotificationIntake(timeZoneIdentifier: "Asia/Seoul").readingKey
         != NotificationIntake(timeZoneIdentifier: "Asia/Seoul", readingDictionary: ReadingDictionary(userEntries: [entry])).readingKey)
 }
+
+private func src(_ name: String, app: String = "x") -> NotificationSource {
+    NotificationSource(applicationIdentifier: app, displayName: name, providerHint: nil)
+}
+private func appNote(_ app: String, _ title: String?, _ subtitle: String?, _ body: String?) -> RawNotification {
+    RawNotification(
+        id: UUID().uuidString, source: src(app), sourceDeliveryID: nil, capturedAtUnixMilliseconds: 1, notificationAtUnixMilliseconds: 1,
+        title: title, subtitle: subtitle, body: body
+    )
+}
+
+@Test func evidenceEntriesMatchTheOldExtractorOnEveryShape() throws {
+    let red = try load("redteam-parser-fixtures", as: AllFixtures.self)
+    var all = try load("raw-notifications", as: [RawNotification].self)
+        + load("synthetic-notification-coverage", as: Synthetic.self).notifications
+        + red.negative + red.directions.map(\.input) + red.amounts.map(\.input)
+    all += [
+        appNote("우리WON뱅킹", "입출금알림", nil, "우리 입금 67,035원 1002-123-456*** 차유진 잔액 1,234,000원"),
+        appNote("우리WON뱅킹", nil, nil, "[출금] 1002-9*-7 5,000원"),
+        appNote("우리WON뱅킹", nil, nil, "잔액 1,000원"),
+        appNote("우리WON뱅킹", nil, nil, "광고"),
+        appNote("현대카드", nil, nil, "현대 MM 승인\n12,300원"),
+        appNote("현대카드", nil, nil, "현대 체크 승인취소 12,300원"),
+        appNote("현대카드", nil, nil, "현대 M3 취소"),
+        appNote("Toss", "결제", nil, "현대카드 MM 12,000원"),
+        appNote("Toss", "토스", nil, "토스페이머니・ 12,000원 결제"),
+        appNote("Toss", nil, nil, "우리・ 1234 12,000원 결제"),
+        appNote("Toss", nil, nil, "알수없은・ 1234 결제"),
+        appNote("Toss", nil, nil, "결제 완료 5,000원"),
+        appNote("Toss", nil, "결제", "5,000원"),
+        appNote("Toss", nil, nil, "내 토스뱅크 통장 → 우리 계좌로 입금"),
+        appNote("Toss", nil, nil, "토스뱅크 통장 이자 100원 입금"),
+        appNote("Toss", nil, nil, "우리 계좌로 입금 홍길동"),
+        appNote("Kakaopay", nil, nil, "충전이 완료되었어요 10,000원 충전계좌: 우리은행 1234"),
+        appNote("Kakaopay", nil, nil, "충전 10,000원 충전계좌:모름은행 1234"),
+        appNote("Kakaopay", nil, nil, "송금했어요 5,000원 우리은행 1234 (홍길동)"),
+        appNote("Kakaopay", nil, nil, "홍길동님이 보냈어요"),
+        appNote("Wallet", "교통카드", "₩1,550 for Metro", "Your new balance is ₩10,000."),
+        appNote("Wallet", "교통카드", nil, "Your new balance is ₩10,000. No Charge"),
+        appNote("Wallet", "교통카드", nil, "Your new balance is ₩10,000."),
+        appNote("Wallet", "현대카드", "스타벅스, 서울특별시", "₩4,500"),
+        appNote("Wallet", "삼성카드", "스타벅스", "₩4,500"),
+        appNote("Wallet", "메모", nil, "₩4,500"),
+        appNote("Other", "현대카드", nil, "현대 MM 승인"),
+    ]
+    let old = LegacyAccountEvidenceExtractor()
+    let new = AccountEvidenceExtractor()
+    for input in all {
+        #expect(old.evidence(from: input) == new.evidence(from: input),
+                "\(input.title ?? "") | \(input.subtitle ?? "") | \(input.body ?? "")\nold: \(old.evidence(from: input))\nnew: \(new.evidence(from: input))")
+    }
+}

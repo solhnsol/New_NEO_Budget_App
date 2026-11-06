@@ -107,7 +107,7 @@ public struct ReadingOutcome: Codable, Equatable, Sendable {
 public enum ReadingSlot: String, Codable, Sendable, CaseIterable {
     case amount = "금액", balance = "잔액", merchant = "가맹점", payee = "입금자명"
     case memo = "메모", accountName = "통장이름", accountNumber = "계좌번호"
-    case cardName = "카드이름", cardNumber = "카드번호", approvalNumber = "승인번호"
+    case institution = "기관", cardName = "카드이름", cardNumber = "카드번호", approvalNumber = "승인번호"
 
     var pattern: String {
         switch self {

@@ -46,10 +46,12 @@ struct ReadingFrame {
                 pattern += #"[\s\S]*?"#
             } else if inner.hasPrefix("re:") {
                 pattern += String(inner.dropFirst(3))
-            } else if let slot = ReadingSlot(rawValue: inner) {
+            } else if let slot = ReadingSlot(rawValue: inner.split(separator: "=", maxSplits: 1).first.map(String.init) ?? inner) {
+                // `{칸=정규식}`은 그 칸의 글자 모양을 직접 정한다.
+                let custom = inner.contains("=") ? String(inner[inner.index(after: inner.firstIndex(of: "=")!)...]) : nil
                 let key = "s\(slots.count)"
                 slots[key] = slot
-                pattern += "(?<\(key)>\(slot.pattern))"
+                pattern += "(?<\(key)>\(custom ?? slot.pattern))"
             } else {
                 return nil
             }

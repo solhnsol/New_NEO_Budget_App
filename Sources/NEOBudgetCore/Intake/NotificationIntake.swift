@@ -132,13 +132,13 @@ public struct NotificationIntake: Sendable {
         timeZoneIdentifier: String,
         policyVersion: String = "intake-v1",
         readingDictionary: ReadingDictionary = .official,
-        extractor: AccountEvidenceExtractor = AccountEvidenceExtractor(),
+        extractor: AccountEvidenceExtractor? = nil,
         correlator: NotificationCorrelator = NotificationCorrelator()
     ) {
         self.timeZoneIdentifier = timeZoneIdentifier
         self.policyVersion = policyVersion
         self.parser = ReadingEntryParser(dictionary: readingDictionary)
-        self.extractor = extractor
+        self.extractor = extractor ?? AccountEvidenceExtractor(evidenceEntries: readingDictionary.evidenceEntries)
         self.assembler = DefaultTransactionCandidateAssembler()
         self.correlator = correlator
     }

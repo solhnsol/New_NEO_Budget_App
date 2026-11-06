@@ -11,14 +11,18 @@ public struct ReadingDictionary: Codable, Equatable, Sendable {
     /// 사용자가 고친 공식 항목(`공식 · 수정됨`). 되돌리면 지운다. 키는 공식 항목 id.
     public var officialOverrides: [String: ReadingEntry]
     public var settings: ReadingReaderSettings
+    /// 어느 계좌·카드에 대한 알림인지 읽는 항목.
+    public var evidenceEntries: [ReadingEvidenceEntry]
 
     public init(
         officialEntries: [ReadingEntry] = OfficialReadingEntries.all,
         userEntries: [ReadingEntry] = [],
         disabledOfficialIDs: Set<String> = [],
         officialOverrides: [String: ReadingEntry] = [:],
-        settings: ReadingReaderSettings = .official
+        settings: ReadingReaderSettings = .official,
+        evidenceEntries: [ReadingEvidenceEntry] = OfficialEvidenceEntries.all
     ) {
+        self.evidenceEntries = evidenceEntries
         self.officialEntries = officialEntries
         self.userEntries = userEntries
         self.disabledOfficialIDs = disabledOfficialIDs
