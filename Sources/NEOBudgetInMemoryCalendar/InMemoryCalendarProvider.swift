@@ -297,7 +297,9 @@ public actor InMemoryCalendarProvider: CalendarProvider {
             notes: event.notes,
             isRecurringInstance: event.isRecurringInstance,
             isEditable: event.isEditable,
-            revisionToken: "r\(nextRevision)"
+            revisionToken: "r\(nextRevision)",
+            alarmLeadMinutes: event.alarmLeadMinutes,
+            repeatRule: event.repeatRule
         )
     }
 }

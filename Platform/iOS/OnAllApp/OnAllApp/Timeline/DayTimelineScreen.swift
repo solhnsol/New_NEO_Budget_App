@@ -174,6 +174,7 @@ struct DayTimelineScreen: View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
         let isList = true
+        let monthRows = MonthUnfold.rows(for: MonthUnfold.firstOfMonth(model.selectedDay))
         return VStack(spacing: 0) {
           // The calendar is one grid that grows from the week to the month (`UnifiedCalendar.swift`); the day sits under it and is pushed down as it grows.
           MonthUnfoldHeader(
@@ -203,6 +204,8 @@ struct DayTimelineScreen: View {
           ) {
             DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { model.creatingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle() }, onToday: { unfold.close(); Task { await goTo(model.today) } })
           }
+          // Over the day list: the open month draws down across it.
+          .zIndex(1)
           let onScrollToDay: (LocalDate) -> Void = { day in
               // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
               guard model.moveTo(day) else { return }
@@ -213,13 +216,17 @@ struct DayTimelineScreen: View {
                   await model.loadMissing()
               }
           }
-          DayPagerView(
-              model: model, topInset: 0, showsList: showsList,
-              onSelect: present, onOpenTransaction: { model.quickSheet = .transaction($0) }, onOpenIncome: { id in if let item = model.incomeByDay.values.flatMap({ $0 }).first(where: { $0.id == id }) { model.quickSheet = .income(item) } }, onScrollToDay: onScrollToDay
-          )
-          .id(showsList)
+          // The calendar grows over the list and the list slides down by as much (a transform), its bottom cut where the screen's was.
+          UnfoldPush(state: unfold, rows: monthRows) {
+              DayPagerView(
+                  model: model, topInset: 0, showsList: showsList,
+                  onSelect: present, onOpenTransaction: { model.quickSheet = .transaction($0) }, onOpenIncome: { id in if let item = model.incomeByDay.values.flatMap({ $0 }).first(where: { $0.id == id }) { model.quickSheet = .income(item) } }, onScrollToDay: onScrollToDay
+              )
+              .id(showsList)
+              .frame(maxWidth: .infinity, maxHeight: .infinity)
+              .background(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+          }
           .frame(maxWidth: .infinity, maxHeight: .infinity)
-          .background(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
           .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous))
           .padding(.horizontal, Theme.cardMargin)
         }

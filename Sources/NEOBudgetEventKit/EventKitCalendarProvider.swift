@@ -391,7 +391,18 @@ public actor EventKitCalendarProvider: CalendarProvider {
             notes: nonEmpty(event.notes),
             isRecurringInstance: isOccurrence(event),
             isEditable: calendar.allowsContentModifications,
-            revisionToken: token(of: event)
+            revisionToken: token(of: event),
+            // An alarm's offset is negative seconds before the start; an alarm at a fixed date has none.
+            alarmLeadMinutes: event.alarms?.compactMap { $0.absoluteDate == nil ? Int(-$0.relativeOffset / 60) : nil }.first,
+            repeatRule: event.recurrenceRules?.first.map { rule in
+                switch rule.frequency {
+                case .daily: .daily
+                case .weekly: .weekly
+                case .monthly: .monthly
+                case .yearly: .yearly
+                @unknown default: .other
+                }
+            }
         )
     }
 

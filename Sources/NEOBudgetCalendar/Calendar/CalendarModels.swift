@@ -114,6 +114,11 @@ public struct CalendarEventKey: Codable, Hashable, Comparable, Sendable {
     }
 }
 
+/// How an event repeats, only as far as the screens say it ("매주"). The rule's details stay with the provider.
+public enum EventRepeat: String, Codable, Hashable, Sendable {
+    case daily, weekly, monthly, yearly, other
+}
+
 /// A snapshot of one event as reported by the calendar provider.
 public struct CalendarEvent: Codable, Hashable, Sendable {
     public let id: CalendarEventID
@@ -129,6 +134,9 @@ public struct CalendarEvent: Codable, Hashable, Sendable {
     public let isEditable: Bool
     /// Opaque token the provider can use to detect that the event changed since this snapshot.
     public let revisionToken: String?
+    /// Minutes before the start that the first alarm goes off; `nil` when the event has no alarm.
+    public let alarmLeadMinutes: Int?
+    public let repeatRule: EventRepeat?
 
     public init(
         id: CalendarEventID,
@@ -140,8 +148,12 @@ public struct CalendarEvent: Codable, Hashable, Sendable {
         notes: String? = nil,
         isRecurringInstance: Bool = false,
         isEditable: Bool = true,
-        revisionToken: String? = nil
+        revisionToken: String? = nil,
+        alarmLeadMinutes: Int? = nil,
+        repeatRule: EventRepeat? = nil
     ) {
+        self.alarmLeadMinutes = alarmLeadMinutes
+        self.repeatRule = repeatRule
         self.id = id
         self.calendarID = calendarID
         self.title = title
@@ -241,7 +253,9 @@ public struct CalendarEventUpdate: Codable, Hashable, Sendable {
             notes: notes.applied(to: event.notes),
             isRecurringInstance: event.isRecurringInstance,
             isEditable: event.isEditable,
-            revisionToken: event.revisionToken
+            revisionToken: event.revisionToken,
+            alarmLeadMinutes: event.alarmLeadMinutes,
+            repeatRule: event.repeatRule
         )
     }
 }
