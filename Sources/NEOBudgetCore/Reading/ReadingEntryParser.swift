@@ -79,7 +79,9 @@ public struct ReadingEntryParser: TransactionCandidateParser, Sendable {
         }
 
         let counterparty: DraftCounterparty
-        if values[.merchant] != nil || values[.payee] != nil || values[.memo] != nil {
+        if let name = outcome.fixedName {
+            counterparty = outcome.direction == .inflow ? DraftCounterparty(payeeRaw: name) : DraftCounterparty(merchantRaw: name)
+        } else if values[.merchant] != nil || values[.payee] != nil || values[.memo] != nil {
             counterparty = DraftCounterparty(
                 merchantRaw: values[.merchant].flatMap { $0.isEmpty ? nil : $0 },
                 payeeRaw: values[.payee].flatMap { $0.isEmpty ? nil : $0 },

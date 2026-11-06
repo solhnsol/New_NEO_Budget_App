@@ -87,11 +87,13 @@ public struct ReadingOutcome: Codable, Equatable, Sendable {
     public var evidenceFromText: Bool
     /// 메모로 가져올 글(정규식). 예: 출금 알림의 `토스…` 받는 사람.
     public var memoPattern: String?
+    /// 알림에서 읽지 않고 사용자가 직접 붙인 이름(가맹점 또는 받는 사람).
+    public var fixedName: String?
 
     public init(
         ruleID: String, kind: DraftEventKind, direction: TransactionDirection,
         instrument: Instrument = .byText, nonPositiveAmount: NonPositiveAmount = .fail,
-        evidenceFromText: Bool = true, memoPattern: String? = nil
+        evidenceFromText: Bool = true, memoPattern: String? = nil, fixedName: String? = nil
     ) {
         self.ruleID = ruleID
         self.kind = kind
@@ -100,6 +102,7 @@ public struct ReadingOutcome: Codable, Equatable, Sendable {
         self.nonPositiveAmount = nonPositiveAmount
         self.evidenceFromText = evidenceFromText
         self.memoPattern = memoPattern
+        self.fixedName = fixedName
     }
 }
 

@@ -143,8 +143,20 @@ private let received: Int64 = 1_790_936_040_000
         let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
         try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
         let premium = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 건강정한솔 22,800원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
-        let (snapshot, _) = try replay([premium], setup: &setup)
+        // 건강보험료 이름은 코드가 아니라 사용자가 만든 읽기 항목이 붙인다.
+        let rule = ReadingEntry(
+            id: "user.health", name: "건강보험료", origin: .user,
+            conditions: [.frameContained(.all, "[출금]{re:\\s*}건강{re:[가-힣]{2,4}\\s+[0-9]}")],
+            action: .read(ReadingOutcome(ruleID: "user.health", kind: .purchase, direction: .outflow, fixedName: "건강보험료"))
+        )
+        let custom = NotificationIntake(timeZoneIdentifier: "Asia/Seoul", readingDictionary: ReadingDictionary(userEntries: [rule]))
+        var repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
+        _ = try custom.ingest(premium, setup: &setup, repository: &repository)
+        let snapshot = try repository.processingSnapshot()
         #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+        let context = try NotificationParsingContext(timeZoneIdentifier: "Asia/Seoul", referenceTimeUnixMilliseconds: 0, parserID: "p", parserVersion: "1")
+        guard case let .candidate(draft) = try custom.parser.parse(premium, context: context) else { Issue.record("no draft"); return }
+        #expect(draft.counterparty.merchantRaw == "건강보험료")
     }
 
     @Test func aTossPersonWithdrawalWhoseNameEndsInAStrayParenthesisIsStillTheTossRule() {
