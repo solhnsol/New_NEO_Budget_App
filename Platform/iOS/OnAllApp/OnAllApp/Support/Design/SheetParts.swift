@@ -457,6 +457,8 @@ struct PanelSheet<Small: View, More: View>: View {
                     .background(GeometryReader { proxy in Color.clear.preference(key: PanelSmallHeightKey.self, value: proxy.size.height) })
                     if canOpen {
                         ScrollView { more().background(GeometryReader { proxy in Color.clear.preference(key: PanelMoreHeightKey.self, value: proxy.size.height) }) }.scrollIndicators(.hidden).frame(height: range)
+                            // At rest the panel's lower part hangs into the home-indicator strip, so `more` stays unseen until the panel is pulled.
+                            .opacity(progress > 0 ? 1 : 0)
                     }
                 }
                 .padding(.horizontal, Theme.Space.xl)
