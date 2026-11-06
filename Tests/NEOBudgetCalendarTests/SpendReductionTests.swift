@@ -36,11 +36,30 @@ import NEOBudgetCore
 
 @Test func noChargeTapsKeepATransferTripOpen() {
     let board = marker("board", at: at(today, 8, 0), amount: 1_550, title: "지하철")
-    let end = marker("end", at: at(today, 10, 0), amount: 100, title: "버스")
+    let end = marker("end", at: at(today, 10, 0), amount: 100, title: "지하철")
     let all = [board, end]
     func trips(_ taps: [Int64]) -> [TransitTrip] {
         TransitTripMerge.trips(in: all, accountOf: { _ in "tmoney" }, isTransit: { _ in true }, noChargeTaps: taps)
     }
     #expect(trips([]).isEmpty)                                   // 2h apart: more than the 90 min gap
     #expect(trips([at(today, 9, 0), at(today, 9, 40)]).map(\.legs) == [[txID("board"), txID("end")]])
+}
+
+@Test func aTripReadsAsBoardingAndAlightingLines() {
+    let board = marker("board", at: at(today, 8, 24), amount: 1_550, title: "Metro")
+    let end = marker("end", at: at(today, 9, 2), amount: 100, title: "Metro")
+    let lines = TransitTripLine.lines(of: [board, end], noChargeTaps: [at(today, 8, 50)])
+    #expect(lines.map(\.kind) == [.boarding, .alighting, .alighting])
+    #expect(lines.map(\.minorUnits) == [1_550, 0, 100])
+    #expect(TransitMode.groupName(for: ["Metro", nil]) == "지하철")
+    #expect(TransitMode.groupName(for: ["Bus"]) == "버스")
+}
+
+@Test func aSubwayToBusTransferStaysTwoTrips() {
+    let all = [
+        marker("m1", at: at(today, 8, 0), amount: 1_550, title: "Metro"), marker("m2", at: at(today, 8, 30), amount: 100, title: "Metro"),
+        marker("b1", at: at(today, 8, 40), amount: 1_500, title: "Bus"), marker("b2", at: at(today, 9, 0), amount: 100, title: "Bus"),
+    ]
+    let trips = TransitTripMerge.trips(in: all, accountOf: { _ in "t" }, isTransit: { _ in true })
+    #expect(trips.map(\.legs) == [[txID("m1"), txID("m2")], [txID("b1"), txID("b2")]])
 }
