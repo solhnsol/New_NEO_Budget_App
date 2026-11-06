@@ -179,11 +179,13 @@ public struct NotificationIntake: Sendable {
         var recordedResolution = resolution
         var binding = observationWithoutID.binding
         var transferCounterpart = observationWithoutID.transferCounterpart
+        var cardInstrument: CreditInstrumentID?
         let waiting = try repository.correlationRecords(near: draft.occurredAt.unixMilliseconds, within: correlator.searchRadiusMilliseconds)
         let earlier = try repository.storedCandidate(ofNotification: draft.rawNotificationID, eventIndex: draft.eventIndex)
         if let recorded = earlier?.observation, Self.rewrittenRuleIDs.contains(recorded.draft.ruleID) {
             recordedDraft = recorded.draft
             transferCounterpart = recorded.transferCounterpart
+            if recorded.draft.ruleID == Self.cardBillRuleID { cardInstrument = Self.cardInstrument(for: recorded.draft, in: setup.configuration.creditInstruments) }
         } else if earlier == nil, transferCounterpart == nil, case let .account(own)? = binding,
                   let wallet = setup.registry.counterpartAlias(in: NotificationText.joined(notification)), wallet != own,
                   let transfer = Self.asTransfer(draft) {
@@ -210,6 +212,11 @@ public struct NotificationIntake: Sendable {
             // A bank withdrawal `토스 <이름>` with no Toss alert to pair with (Toss sends none while its app is open) is the user's own
             // transfer to that person. The Toss payment pairing above wins when its alert is already here.
             recordedDraft = person
+        } else if earlier == nil, case let .account(own)? = binding, let bill = Self.asCardBillPayment(draft, text: NotificationText.joined(notification), cards: setup.configuration.creditInstruments),
+                  !waiting.contains(where: { $0.draft.kind == .purchase && $0.binding == .account(own) && $0.draft.amount == draft.amount }) {
+            // `[출금] 현대카드 1,069,690원` with no card approval of that money: the monthly bill, paid from this account.
+            recordedDraft = bill.draft
+            cardInstrument = bill.card
         } else if earlier == nil, case .account? = binding, let charge = Self.asPrepaidChargeSpending(draft, text: NotificationText.joined(notification)) {
             // The user has not registered that prepaid wallet (a registered one is the alias transfer above): the top-up stays spending.
             recordedDraft = charge
@@ -234,6 +241,7 @@ public struct NotificationIntake: Sendable {
         let candidate = try assembler.assemble(recordedDraft, resolution: recordedResolution, context: CandidateAssemblyContext(
             timeZoneIdentifier: timeZoneIdentifier,
             transferCounterpartAccountID: transferCounterpart,
+            cardPaymentInstrumentID: cardInstrument,
             cancelledPurchase: cancelled,
             policyVersion: policyVersion
         ))
@@ -256,7 +264,9 @@ public struct NotificationIntake: Sendable {
     static let aliasTransferRuleID = "alias-transfer"
     public static let tossPersonTransferRuleID = "toss-person-transfer"
     static let prepaidChargeSpendingRuleID = "prepaid-charge-spending"
-    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID]
+    private static let rewrittenRuleIDs: Set<String> = [aliasTransferRuleID, tossPersonTransferRuleID, prepaidChargeSpendingRuleID, cardBillRuleID]
+    static let cardBillRuleID = "card-bill-withdrawal"
+    private static let cardBillPattern = try! NSRegularExpression(pattern: #"\[출금\]\s*([가-힣]*카드)\s+[0-9][0-9,]*\s*원"#)
 
     /// Woori's `[출금] 토스    김의근 10,000원`: the person's name sits between `토스` and the amount.
     private static let tossPersonPatterns = [
@@ -287,10 +297,26 @@ public struct NotificationIntake: Sendable {
         return rewritten(draft, ruleID: prepaidChargeSpendingRuleID, counterparty: DraftCounterparty(merchantRaw: "카카오페이", memoRaw: "충전"))
     }
 
-    private static func rewritten(_ draft: TransactionCandidateDraft, ruleID: String, counterparty: DraftCounterparty) -> TransactionCandidateDraft? {
+    /// A bank withdrawal named after a registered card (`[출금] 현대카드 …`) is that card's bill. shortcut: a bill arriving before
+    /// the approval of a same-money check-card purchase would be booked as a bill; none seen, since approvals precede the bank alert.
+    static func asCardBillPayment(_ draft: TransactionCandidateDraft, text: String, cards: [CreditInstrument]) -> (draft: TransactionCandidateDraft, card: CreditInstrumentID)? {
+        guard draft.kind == .withdrawal, draft.direction == .outflow,
+              let match = cardBillPattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range(at: 1), in: text),
+              let card = cards.first(where: { $0.name.contains(String(text[range])) }),
+              let bill = rewritten(draft, ruleID: cardBillRuleID, counterparty: DraftCounterparty(merchantRaw: card.name, memoRaw: "카드 대금"), kind: .cardBillPayment)
+        else { return nil }
+        return (bill, card.id)
+    }
+
+    private static func cardInstrument(for draft: TransactionCandidateDraft, in cards: [CreditInstrument]) -> CreditInstrumentID? {
+        cards.first(where: { $0.name == draft.counterparty.merchantRaw })?.id
+    }
+
+    private static func rewritten(_ draft: TransactionCandidateDraft, ruleID: String, counterparty: DraftCounterparty, kind: DraftEventKind = .purchase) -> TransactionCandidateDraft? {
         try? TransactionCandidateDraft(
             rawNotificationID: draft.rawNotificationID, eventIndex: draft.eventIndex, parserID: draft.parserID,
-            parserVersion: draft.parserVersion, ruleID: ruleID, kind: .purchase, direction: .outflow,
+            parserVersion: draft.parserVersion, ruleID: ruleID, kind: kind, direction: .outflow,
             amount: draft.amount, balanceAfter: draft.balanceAfter, occurredAt: draft.occurredAt, instrument: draft.instrument,
             counterparty: counterparty, evidence: draft.evidence, issues: draft.issues.filter { $0 != .merchantMissing },
             confidence: draft.confidence

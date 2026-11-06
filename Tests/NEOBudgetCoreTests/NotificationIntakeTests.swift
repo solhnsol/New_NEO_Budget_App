@@ -122,6 +122,20 @@ private let received: Int64 = 1_790_936_040_000
         }
     }
 
+    @Test func aBankWithdrawalNamedAfterARegisteredCardWithNoApprovalIsThatCardsBill() throws {
+        var setup = IntakeSetup()
+        let bill = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 출금 1,069,690원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received)[0]
+        _ = try replay([bill], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
+        _ = try setup.addAccount(displayName: "현대카드 MM", institution: nil, kind: .creditInstrument(currency: "KRW"), makeID: { "card-1" })
+        // The bank prints the card's name where a merchant would be.
+        let named = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 현대카드 1,069,690원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
+        let (snapshot, _) = try replay([named], setup: &setup)
+        #expect(snapshot.ledger.entries.map(\.kind) == [.cardPayment])
+        #expect(snapshot.ledger.accountBalances[AccountID(rawValue: "account-1")] == (try Money(minorUnits: 930_310, currency: "KRW")))
+    }
+
     @Test func aNotificationThatIsNotAPaymentChangesNothing() throws {
         var setup = IntakeSetup()
         let ad = try decoder.decode(payload("Toss", body: "이번 주 혜택을 확인해 보세요"), receivedAtUnixMilliseconds: received)[0]
