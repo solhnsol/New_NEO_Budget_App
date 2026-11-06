@@ -31,7 +31,8 @@ public enum WeekStripBuilder {
         timeZone: DisplayTimeZone,
         events: [CalendarEvent],
         life: LifeState,
-        transactions: [TransactionMarker]
+        transactions: [TransactionMarker],
+        reductions: [LedgerEntryID: Int64] = [:]
     ) -> [WeekStripDay] {
         let offset = ((day.weekday - firstWeekday) % 7 + 7) % 7
         let first = day.adding(days: -offset)
@@ -51,7 +52,7 @@ public enum WeekStripBuilder {
                 $0.occurredAtUnixMilliseconds >= bounds.start && $0.occurredAtUnixMilliseconds < bounds.end
             }
             var byCurrency: [String: Int64] = [:]
-            for transaction in dayTransactions { byCurrency[transaction.amount.currency, default: 0] += transaction.signedMinorUnits }
+            for transaction in dayTransactions { byCurrency[transaction.amount.currency, default: 0] += transaction.signedMinorUnits - (transaction.flow == .spend ? min(reductions[transaction.id] ?? 0, transaction.amount.minorUnits) : 0) }
             return WeekStripDay(
                 day: current,
                 eventCount: eventCount,

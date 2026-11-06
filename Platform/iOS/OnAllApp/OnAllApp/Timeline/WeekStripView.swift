@@ -33,6 +33,8 @@ struct WeekStripView: View {
     var unfold: CGFloat = 0
     /// A calendar's colour, for the dots and bars.
     var color: (CalendarID) -> Color = { _ in Theme.accent }
+    /// What came in on a day (0: nothing).
+    var income: (LocalDate) -> Int64 = { _ in 0 }
 
     private static let numberRow: CGFloat = 36
     private static let ball: CGFloat = 32
@@ -65,7 +67,7 @@ struct WeekStripView: View {
 
     private static let capsuleSpring = Animation.interpolatingSpring(stiffness: 190, damping: 19)
 
-    private var stripRowHeight: CGFloat { Self.numberRow + MonthUnfold.barsRow * unfold + MonthUnfold.dotsRow + MonthUnfold.spendRow }
+    private var stripRowHeight: CGFloat { Self.numberRow + (MonthUnfold.barsRow + MonthUnfold.monthGap) * unfold + MonthUnfold.dotsRow + MonthUnfold.spendRow }
     /// The open week's bars (nil while the strip is closed, or before the week's days are all read).
     private var openWeek: MonthWeekLayout? {
         guard unfold > 0 else { return nil }
@@ -122,7 +124,7 @@ struct WeekStripView: View {
                             }
                         }
                     }
-                    .animation(dragging ? nil : .snappy(duration: 0.34), value: viewOffset)
+                    .animation(dragging ? nil : .spring(response: 0.32, dampingFraction: 0.90), value: viewOffset)
                 }
                 .frame(width: geometry.size.width, height: stripRowHeight, alignment: .topLeading)
             }
@@ -143,8 +145,8 @@ struct WeekStripView: View {
                         dragging = false
                         tapsBlockedUntil = Date().addingTimeInterval(0.3)
                         let width = max(1, stripWidth)
-                        let flick = abs(value.velocity.width) > 500 && (value.velocity.width < 0) == (value.translation.width < 0)
-                        let far = abs(value.translation.width) > width * 0.3
+                        let flick = abs(value.velocity.width) > 400 && (value.velocity.width < 0) == (value.translation.width < 0)
+                        let far = abs(value.translation.width) > width * 0.25
                         if far || flick, abs(value.translation.width) > 8 {
                             // The page changes with the day the strip's selection moves to (see `move`).
                             swipedWeek = true
@@ -293,19 +295,19 @@ struct WeekStripView: View {
                 .accessibilityAddTraits(isShown(day) ? .isSelected : [])
             }
             .frame(height: Self.numberRow)
+            .overlay { IncomeDot(show: day < today && income(day) > 0, y: 4) }
+            .offset(y: 2)
             .animation(roleAnimation(role), value: role)
             Color.clear.frame(height: MonthUnfold.barsRow * unfold)
             // Closed: every event of the day as a dot. Open: only those the week's bars left out, as in the month's other weeks.
             let column = day.daysSinceUnixEpoch - weekStart.daysSinceUnixEpoch
             ZStack {
-                EventDots(events: info?.events ?? [], color: color).opacity(1 - unfold)
-                if let layout = openWeek, (0..<7).contains(column) { EventDots(events: layout.overflow[column], color: color).opacity(unfold) }
+                EventDots(events: day < today ? [] : (info?.events ?? []), color: color).opacity(1 - unfold).offset(y: 7.5 * (1 - unfold))
+                if let layout = openWeek, (0..<7).contains(column) { EventDots(events: day < today && income(day) > 0 && MonthUnfold.spendText(of: info) != nil ? [] : layout.overflow[column], color: color).opacity(unfold) }
             }
-            Text(MonthUnfold.spendText(of: info) ?? " ")
-                .font(.onAll(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(Theme.accent)
-                .lineLimit(1).minimumScaleFactor(0.6)
-                .frame(height: MonthUnfold.spendRow)
+            Color.clear.frame(height: MonthUnfold.monthGap * unfold)
+            AmountLines(spent: day < today ? MonthUnfold.spendText(of: info) : nil, income: day < today && income(day) > 0 ? MonthUnfold.amountText(income(day)) : nil, open: unfold)
+                .offset(y: -4 * (1 - unfold))
         }
         .frame(width: cell)
     }

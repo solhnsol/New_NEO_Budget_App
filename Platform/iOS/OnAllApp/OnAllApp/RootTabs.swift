@@ -19,7 +19,21 @@ struct RootTabs: View {
         }
         .background(Theme.background)
         .tint(Theme.accent)
-        .overlay { if model.creatingEvent { EventCreateSheet(model: model, close: { model.creatingEvent = false }) } }
+        .overlay { quickSheet }
+        .overlay { if model.creatingEvent { EventCreateSheet(model: model, seed: model.newEventSeed, close: { model.creatingEvent = false; model.newEventSeed = nil }, switchToTransaction: { model.creatingEvent = false; model.creatingTransaction = true }) } }
+    }
+}
+
+extension RootTabs {
+    /// The calendar's small sheets (a transaction, a deposit, an event), over the whole screen like the create sheet.
+    @ViewBuilder fileprivate var quickSheet: some View {
+        let close = { model.quickSheet = nil }
+        switch model.quickSheet {
+        case let .transaction(id)?: LedgerEntryLoader(id: id, model: model, close: close)
+        case let .income(item)?: IncomeSheet(item: item, model: model, close: close)
+        case let .event(block, onEditInfo, onSettle)?: EventQuickSheet(block: block, model: model, close: close, onEditInfo: onEditInfo, onSettle: onSettle)
+        case nil: EmptyView()
+        }
     }
 }
 

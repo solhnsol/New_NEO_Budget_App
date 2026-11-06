@@ -30,7 +30,9 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
             )
             issues.append(.timeAbsentFallback)
         }
-        let counterparty = parseCounterparty(lines, direction: classification.direction, text: text, kind: classification.kind)
+        let counterparty = parseCounterparty(
+            lines, direction: classification.direction, text: text, kind: classification.kind, title: notification.title.map(NotificationText.normalize)
+        )
         if counterparty.merchantRaw == nil, counterparty.payeeRaw == nil { issues.append(.merchantMissing) }
         let instrument = parseInstrumentHint(text)
         if instrument.kind == .unknown { issues.append(.instrumentHintMissing) }
@@ -317,11 +319,40 @@ public struct KoreanFinancialNotificationParser: TransactionCandidateParser, Sen
     /// a withdrawal with a Toss payment of the same amount.
     private static let tossWithdrawalName = #"(?<![가-힣A-Za-z0-9])토스(?!뱅크)\S*"#
 
-    private func parseCounterparty(_ lines: [String], direction: TransactionDirection, text: String, kind: DraftEventKind) -> DraftCounterparty {
+    /// A bank's one-line text (`우리 입금 67,035원 1002-123-456*** 차유진 잔액 1,234,000원 10/02 19:10`): what sits between the masked account
+    /// number and the balance or date is the sender's name (or the memo). The app's title line is never that.
+    private static let afterMaskedAccount = try! NSRegularExpression(pattern: #"\S*\*{2,}\S*\s+(.+?)\s*(?:잔액|잔고|[0-9]{1,2}/[0-9]{1,2}\b|$)"#)
+
+    /// `쿠팡에서 76,570원 결제`: with no line of its own, the shop is what stands before the amount.
+    private static let shopBeforeAmount = try! NSRegularExpression(pattern: #"^(?:\[[^\]]*\]\s*)?(.+?)\s*(?:에서|에)?\s*[0-9][0-9,]*\s*원"#)
+
+    /// Woori's `[입금] 차유진        67,035원 1002-967-767***계좌 잔액 …`: the name sits between the tag and the amount.
+    private static let nameAfterTag = try! NSRegularExpression(pattern: #"\[(?:입금|이체입금)\]\s*(.+?)\s+[0-9][0-9,]*\s*원"#)
+
+    private func parseCounterparty(
+        _ lines: [String], direction: TransactionDirection, text: String, kind: DraftEventKind, title: String? = nil
+    ) -> DraftCounterparty {
         let labels = ["승인번호", "거래번호", "거래ID", "원승인번호", "원거래번호", "잔액"]
-        let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제"]
-        let candidate = lines.first {
+        // A bare status headline names nobody: `결제 완료` as the name of a purchase.
+        let markerLines = ["승인", "취소", "환불", "입금", "출금", "이체", "결제", "결제 완료", "결제완료", "승인 완료", "승인완료", "이체 완료", "이체완료", "송금 완료", "송금완료", "출금 완료", "입금 완료", "충전 완료"]
+        let candidates = lines.filter {
             !$0.contains("원") && !labels.contains(where: $0.contains) && !markerLines.contains($0) && !Self.matches(Self.issuerApprovalHeader, $0)
+                && !$0.hasPrefix("[Web발신]")
+        }
+        // The app's own title line (`우리WON뱅킹 입출금알림`) names the sender of nothing; use it only when no other line can be the name.
+        var candidate = direction == .inflow ? (candidates.first { $0 != title } ?? candidates.first) : candidates.first
+        if candidate == nil, direction == .outflow, kind == .purchase {
+            candidate = lines.lazy.compactMap { Self.captures(Self.shopBeforeAmount, $0)?.first?.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty && $0.rangeOfCharacter(from: .letters) != nil && !markerLines.contains($0) }
+        }
+        if direction == .inflow, let name = lines.lazy.compactMap({ Self.captures(Self.nameAfterTag, $0)?.first?.trimmingCharacters(in: .whitespaces) }).first,
+           !name.isEmpty, name.rangeOfCharacter(from: .letters) != nil {
+            candidate = name
+        } else if direction == .inflow, kind != .refund, kind != .cancellation,
+           let line = lines.first(where: { $0.contains("원") && $0.contains("*") }),
+           let name = Self.captures(Self.afterMaskedAccount, line)?.first.map({ $0.trimmingCharacters(in: .whitespaces) }),
+           !name.isEmpty, name.rangeOfCharacter(from: .letters) != nil, !name.contains("원") {
+            candidate = name
         }
         let tossName: String? = kind == .withdrawal
             ? text.range(of: Self.tossWithdrawalName, options: .regularExpression).map { String(text[$0]) }

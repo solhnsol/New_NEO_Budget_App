@@ -90,6 +90,22 @@ actor AppLedger {
         LedgerTimelineProjection.transactions(in: try snapshot())
     }
 
+    /// Money that came in, for the calendar (the design shows income in red beside what was spent): `income` entries not undone by a reversal.
+    /// The timeline's spending views never include these.
+    func incomes() throws -> [IncomeItem] {
+        let snapshot = try snapshot()
+        let entries = snapshot.ledger.entries
+        let undone = Set(entries.compactMap(\.reverses))
+        let titles = LedgerTimelineProjection.details(from: snapshot).titles
+        return entries.compactMap { entry -> IncomeItem? in
+            guard entry.kind == .income, !undone.contains(entry.id) else { return nil }
+            let received = entry.postings.map(\.delta.minorUnits).filter { $0 > 0 }.reduce(0, +)
+            guard received > 0 else { return nil }
+            return IncomeItem(id: entry.id, occurredAtUnixMilliseconds: entry.occurredAtUnixMilliseconds, minorUnits: received, title: titles[entry.id])
+        }
+        .sorted { ($0.occurredAtUnixMilliseconds, $0.id.rawValue) < ($1.occurredAtUnixMilliseconds, $1.id.rawValue) }
+    }
+
     /// Entries that look like a private person's transfer; rules must not file them.
     func personEntryIDs() throws -> Set<LedgerEntryID> {
         LedgerTimelineProjection.personEntryIDs(from: try snapshot())
@@ -107,6 +123,20 @@ actor AppLedger {
 
     static func refundLinks(in ledger: LedgerSnapshot) -> [LedgerEntryID: LedgerEntryID] {
         Dictionary(ledger.entries.compactMap { entry in entry.adjustment.map { (entry.id, $0.originalEntryID) } }, uniquingKeysWith: { first, _ in first })
+    }
+
+    /// The notification a ledger entry was made from (the first one recorded as it), to show the user what the app had to read.
+    func originalNotification(for entry: LedgerEntryID) -> RawNotification? {
+        inbox().last { if case let .recorded(id) = $0.status { id == entry } else { false } }?.notification
+    }
+
+    /// When the transit card said "no charge for this transaction" (an alighting or a transfer); `TransitTripMerge` keeps the trip open across them.
+    func noChargeTapTimes() -> [Int64] {
+        inbox().compactMap { item in
+            let text = NotificationText.joined(item.notification)
+            guard text.contains("no charge for this transaction") else { return nil }
+            return item.notification.notificationAtUnixMilliseconds ?? item.notification.capturedAtUnixMilliseconds
+        }
     }
 
     /// Received notifications, newest first, with where each ended up. Empty outside the real ledger.
@@ -307,4 +337,12 @@ struct AccountQuestion: Identifiable, Sendable {
     /// The latest notification that mentioned it, to show the user what it looked like.
     let example: RawNotification?
     var id: AccountCandidateID { candidate.id }
+}
+
+/// One deposit as the calendar shows it: when, how much (KRW), and the name the notification gave.
+struct IncomeItem: Equatable, Identifiable, Sendable {
+    let id: LedgerEntryID
+    let occurredAtUnixMilliseconds: Int64
+    let minorUnits: Int64
+    let title: String?
 }

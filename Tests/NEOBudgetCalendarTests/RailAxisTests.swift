@@ -27,6 +27,34 @@ import Testing
     #expect(padded.first == 540 && padded.last == 780)
 }
 
+@Test func aRowAtTheMinuteAPastEventBeganStandsUnderItsName() {
+    let axis = RailAxis(
+        events: [.init(start: 10 * 60, end: 11 * 60, isCard: false)], transactions: [10 * 60],
+        now: nil, firstMinute: 9 * 60, lastMinute: 12 * 60
+    )
+    // The name is 22 high under the start, then the row (46): the next minute is at least that far on.
+    #expect(axis.y(10 * 60 + 1) - axis.y(10 * 60) >= 22 + 46)
+}
+
+@Test func theEventGoingOnNowIsDrawnInItsTrueProportion() {
+    // 09:00-11:00 at 10:05: about 54% of it is behind. With a name room under the start it used to look 75% done.
+    let axis = RailAxis(
+        events: [.init(start: 9 * 60, end: 11 * 60, isCard: false)], transactions: [],
+        now: 10 * 60 + 5, firstMinute: 8 * 60, lastMinute: 12 * 60
+    )
+    let share = (axis.y(10 * 60 + 5) - axis.y(9 * 60)) / (axis.y(11 * 60) - axis.y(9 * 60))
+    #expect(abs(share - 65.0 / 120.0) < 0.02)
+}
+
+@Test func theEventGoingOnNowIsAtLeastAsLongAsItsNameNeedsAndStillInProportion() {
+    let axis = RailAxis(
+        events: [.init(start: 9 * 60, end: 9 * 60 + 20, isCard: false)], transactions: [],
+        now: 9 * 60 + 10, firstMinute: 8 * 60, lastMinute: 12 * 60
+    )
+    #expect(axis.y(9 * 60 + 20) - axis.y(9 * 60) >= 22)
+    #expect(abs((axis.y(9 * 60 + 10) - axis.y(9 * 60)) / (axis.y(9 * 60 + 20) - axis.y(9 * 60)) - 0.5) < 0.02)
+}
+
 @Test func railAxisStretchesASharedMinuteSoEveryRowKeepsItsRealMinute() {
     let axis = RailAxis(events: [], transactions: [1063, 1063, 1063, 1100], now: 1067, firstMinute: 1000, lastMinute: 1200)
     #expect(axis.y(1064) - axis.y(1063) >= 2 * 28 + 46)

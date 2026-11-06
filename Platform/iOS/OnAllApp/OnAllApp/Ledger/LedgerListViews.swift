@@ -89,6 +89,9 @@ struct LedgerDayCard<Row: View>: View {
                             Text(group.title).font(Theme.Typo.label).foregroundStyle(Theme.textSecondary).lineLimit(1)
                             Spacer(minLength: Theme.Space.s)
                             if let time = group.time { Text(Self.timeText(time, zone: zoneIdentifier)).font(Theme.Typo.label).foregroundStyle(Theme.textTertiary) }
+                            // What the event cost the user (after settlements), so an event can be read as one amount.
+                            Text(LedgerList.totals(block.entries).map { LedgerRow.amountText(abs($0.minorUnits), currency: $0.currency, isIncoming: $0.minorUnits < 0) }.joined(separator: " · "))
+                                .font(Theme.Typo.label).monospacedDigit().foregroundStyle(Theme.textSecondary)
                         }
                         .padding(.horizontal, Theme.Space.l).padding(.top, Theme.Space.m).padding(.bottom, Theme.Space.xxs)
                         rows(block, inGroup: true)

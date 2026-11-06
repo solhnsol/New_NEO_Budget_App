@@ -29,6 +29,26 @@ final class AppModel {
     private(set) var phase: Phase = .loading
     /// The new-event panel is open. Drawn by `RootTabs`, over the tab bar, so it can rest on the keyboard.
     var creatingEvent = false
+    /// The transactions picked in selection mode on the calendar (a long press on a row starts it).
+    var selection = LedgerSelection()
+    /// The bundles shown open (their transactions listed), by bundle key.
+    var openBundles: Set<String> = []
+    /// The bundle the user put a transaction in, if any.
+    func bundleGroup(of id: LedgerEntryID) -> String? { transactionOverrides[id]?.group }
+
+    /// Puts the picked transactions in one new bundle (`묶기`), or takes them out of theirs (`풀기`).
+    func groupTransactions(_ ids: [LedgerEntryID]) {
+        let group = "g" + UUID().uuidString
+        editMany(ids) { $0.group = group }
+    }
+
+    func ungroupTransactions(_ ids: [LedgerEntryID]) { editMany(ids) { $0.group = nil } }
+    /// Where a long press on the day started a new event (day and minute); the create sheet opens with that start.
+    var newEventSeed: (day: LocalDate, minute: Int?)?
+    /// The manual-transaction sheet, opened from the create sheet's 거래 switch.
+    var creatingTransaction = false
+    /// The small sheet a transaction, a deposit or an event opens from the calendar: drawn over the whole screen (`RootTabs`), like the create sheet.
+    var quickSheet: QuickSheet?
     private(set) var selectedDay: LocalDate
     /// The first of the two days on screen. `selectedDay` is its date.
     var timeline: DayTimeline? { cache[selectedDay] }
@@ -70,6 +90,11 @@ final class AppModel {
     /// The days of the months the month panel has been opened on (events and what was spent), read when it opens or moves to a month.
     private(set) var monthCells: [LocalDate: WeekStripDay] = [:]
     private(set) var calendars: [CalendarDescriptor] = []
+    /// The deposits of the ledger by day, for the calendar's red income marks and rows.
+    private(set) var incomeByDay: [LocalDate: [IncomeItem]] = [:]
+    /// When the transit card said "no charge" (an alighting or a transfer): keeps a trip open across them (`TransitTripMerge`).
+    private(set) var noChargeTaps: [Int64] = []
+    func income(on day: LocalDate) -> Int64 { incomeByDay[day]?.reduce(0) { $0 + $1.minorUnits } ?? 0 }
     /// What an event's info sheet can choose from (types, places, people).
     private(set) var catalog = ActivityCatalog()
     /// My owed money closed by netting, counted as spending on the netting day (display only; `LifeState.nettedSpending`).
@@ -93,6 +118,8 @@ final class AppModel {
     /// The data generation: moves only when the calendar may have changed (`reload`). A day read in an earlier generation is stale and is never kept. A move does
     /// not touch it, so a read that a move outran is still kept (the day is still that day).
     private(set) var dataGeneration = 0
+    /// Counts reloads that have put what they read in the cache: screens that re-read days on `dataGeneration` alone read the old cache.
+    private(set) var reloadsFinished = 0
     /// The move requests (`prefetch`): moves with every one, and says which days the move needs now. Separate from `dataGeneration`.
     private(set) var navigationRevision = 0
     private var navigationNeeded: Set<LocalDate> = []
@@ -207,7 +234,9 @@ final class AppModel {
         }
         let service = CalendarCommandService(
             provider: provider,
-            repository: InMemoryLifeRepository(initialState: initialLife),
+            repository: isDemo
+                ? InMemoryLifeRepository(initialState: initialLife)
+                : FileLifeRepository(url: URL.applicationSupportDirectory.appending(path: "life-state.json"), initialState: initialLife),
             transactions: source,
             configuration: CalendarServiceConfiguration(displayTimeZone: dayZone),
             makeID: { kind in "\(kind.rawValue)-\(UUID().uuidString)" },
@@ -287,7 +316,15 @@ final class AppModel {
     /// change notification, the app coming back, a saved edit). Days kept beyond the required ones may be stale after a change and are dropped.
     func reload() async {
         guard let service else { return }
+        await refreshSpendReductions(service)
         personEntries = (try? await ledger.personEntryIDs()) ?? personEntries
+        // A deposit that paid back someone's share belongs to the purchase it settled, not to income.
+        let settled = (try? await service.lifeSnapshot().state)?.settledDepositIDs ?? []
+        let incomes = ((try? await ledger.incomes()) ?? []).filter { !settled.contains($0.id) }.map { item in
+            IncomeItem(id: item.id, occurredAtUnixMilliseconds: item.occurredAtUnixMilliseconds, minorUnits: item.minorUnits, title: transactionOverrides[item.id]?.title ?? item.title)
+        }
+        noChargeTaps = await ledger.noChargeTapTimes()
+        incomeByDay = Dictionary(grouping: incomes, by: { dayZone.localDate(of: $0.occurredAtUnixMilliseconds) })
         dataGeneration += 1
         let mine = dataGeneration
         fullReloadsInFlight += 1
@@ -313,6 +350,7 @@ final class AppModel {
             calendars = loadedCalendars
             if let state = try? await service.lifeSnapshot().state { catalog = ActivityCatalog(state); nettedSpending = state.nettedSpending() }
             phase = .ready
+            reloadsFinished += 1
         } catch CalendarProviderFailure.accessUnavailable {
             guard mine == dataGeneration else { return }
             phase = .denied
@@ -320,6 +358,14 @@ final class AppModel {
             guard mine == dataGeneration else { return }
             phase = .failed("일정과 거래를 불러오지 못했어요")
         }
+    }
+
+    /// Tells the calendar reads what settlements took off each purchase, so a settled purchase shows the user's share everywhere at once.
+    private func refreshSpendReductions(_ service: CalendarCommandService) async {
+        guard let sections = await ledgerSections() else { return }
+        var reductions: [LedgerEntryID: Int64] = [:]
+        for entry in sections.flatMap(\.entries) where entry.shareReductionMinorUnits > 0 { reductions[entry.id] = entry.shareReductionMinorUnits }
+        await service.setSpendReductions(reductions)
     }
 
     /// Reads the weeks of the month `first` begins, for the month panel. A failed read leaves those days blank. What was read is kept in one go (and only
@@ -488,6 +534,7 @@ final class AppModel {
         switch result {
         case .unchanged, .needsScope: break
         case .saved, .refused, .failed:                         // a refusal or failure may mean the calendar changed: show what it holds now
+            if case .saved = result { await releaseStaleTimeBindings(of: request.original.key) }
             await bindSpendingByTime()
             await reload()
         }
@@ -495,6 +542,22 @@ final class AppModel {
     }
 
     var nowMilliseconds: Int64 { Self.nowMilliseconds() }
+
+    /// An event whose time moved no longer holds the spending that was put in it by time alone: those automated links are released, so binding by time
+    /// can place them again (in another event, or in none). What the user decided is never touched (`TimeBinding.origin` only).
+    private func releaseStaleTimeBindings(of key: CalendarEventKey) async {
+        guard let service, let life = try? await service.lifeSnapshot().state, let activity = life.activity(forEvent: key),
+              let event = try? await provider.event(key), case let .timed(range) = event.time,
+              let markers = try? await ledger.transactions() else { return }
+        let byID = Dictionary(markers.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for set in life.allocationSets.values {
+            guard set.allocations.count == 1, let allocation = set.allocations.first, allocation.activityID == activity.id,
+                  allocation.provenance.origin == TimeBinding.origin, let marker = byID[allocation.transactionID] else { continue }
+            let time = marker.occurredAtUnixMilliseconds
+            guard time < range.startUnixMilliseconds || time >= range.endUnixMilliseconds else { continue }
+            _ = await service.perform(.unlinkTransaction(UnlinkTransactionInput(transactionID: marker.id, by: ActivityEditing.provenance(now: nowMilliseconds), keepOut: false)))
+        }
+    }
 
     /// Only a screenshot demo sets this (`DemoSettlement`): the settlement hub reads the time this much later, to show what an old request looks like.
     var displayClockOffsetMilliseconds: Int64 = 0
@@ -804,6 +867,8 @@ final class AppModel {
     /// Received notifications, newest first, with where each ended up. Empty in the demo.
     func inbox() async -> [InboxItem] { await ledger.inbox() }
 
+    func originalNotification(for entry: LedgerEntryID) async -> RawNotification? { await ledger.originalNotification(for: entry) }
+
     /// Accounts and cards the notifications mention that the user has not answered for yet.
     func accountQuestions() async -> [AccountQuestion] { await ledger.accountQuestions() }
 
@@ -866,9 +931,9 @@ final class AppModel {
     /// decided is never looked at again.
     func bindSpendingByTime() async {
         guard let service, let transactions = try? await ledger.transactions() else { return }
-        let life = (try? await service.lifeSnapshot().state) ?? .empty
+        // Every month with spending, not only unallocated ones: an event whose time moved must release what it took by time.
         let months = Set(transactions
-            .filter { $0.flow == .spend && (life.allocationSet(for: $0.id)?.isEmpty ?? true) }
+            .filter { $0.flow == .spend }
             .compactMap { marker -> LocalDate? in
                 let day = dayZone.localDate(of: marker.occurredAtUnixMilliseconds)
                 return try? LocalDate(year: day.year, month: day.month, day: 1)
@@ -899,4 +964,12 @@ final class AppModel {
     }
 
     private static func nowMilliseconds() -> Int64 { Int64(Date().timeIntervalSince1970 * 1_000) }
+}
+
+
+/// What the calendar's small sheet shows.
+enum QuickSheet {
+    case transaction(LedgerEntryID)
+    case income(IncomeItem)
+    case event(EventBlock, onEditInfo: (EventBlock) -> Void, onSettle: (EventBlock) -> Void)
 }

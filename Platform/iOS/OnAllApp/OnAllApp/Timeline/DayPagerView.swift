@@ -14,7 +14,10 @@ struct DayPagerView: View {
     var topInset: CGFloat = 0
     let onSelect: (TimelineSelection) -> Void
     let onOpenTransaction: (LedgerEntryID) -> Void
+    var onOpenIncome: (LedgerEntryID) -> Void = { _ in }
     let onScrollToDay: (LocalDate) -> Void
+    /// The day as the design's list (events and transactions in order) instead of the rail.
+    var showsList = false
 
     static let reach = 1825
     static let readAhead = 2
@@ -24,12 +27,17 @@ struct DayPagerView: View {
     @State private var position: Int?
     @State private var timelines: [Int: DayTimeline] = [:]
     @State private var reading: Set<Int> = []
+    /// The day the pager is being turned to (by a pick elsewhere, 오늘, a week swipe) and has not reached yet: the days it passes through on the way are
+    /// not the reader's own scrolling, so they must not move the selected day (they dragged it back, a week at a time).
+    @State private var turningTo: Int?
 
-    init(model: AppModel, topInset: CGFloat = 0, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onScrollToDay: @escaping (LocalDate) -> Void) {
+    init(model: AppModel, topInset: CGFloat = 0, showsList: Bool = false, onSelect: @escaping (TimelineSelection) -> Void, onOpenTransaction: @escaping (LedgerEntryID) -> Void, onOpenIncome: @escaping (LedgerEntryID) -> Void = { _ in }, onScrollToDay: @escaping (LocalDate) -> Void) {
         self.model = model
         self.topInset = topInset
+        self.showsList = showsList
         self.onSelect = onSelect
         self.onOpenTransaction = onOpenTransaction
+        self.onOpenIncome = onOpenIncome
         self.onScrollToDay = onScrollToDay
         let start = model.selectedDay.daysSinceUnixEpoch
         _center = State(initialValue: start)
@@ -45,15 +53,21 @@ struct DayPagerView: View {
                         let day = LocalDate(daysSinceUnixEpoch: epoch)
                         ScrollViewReader { scroller in
                             ScrollView {
-                                DaySection(
-                                    day: day, timeline: timelines[epoch], isToday: day == model.today,
-                                    model: model, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction
-                                )
-                                .padding(.bottom, Theme.Space.xl)
+                                if showsList {
+                                    DayListView(day: day, timeline: timelines[epoch], model: model, onSelect: onSelect, onOpenTransaction: onOpenTransaction, onOpenIncome: onOpenIncome)
+                                } else {
+                                    DaySection(
+                                        day: day, timeline: timelines[epoch], isToday: day == model.today,
+                                        model: model, zone: zone, onSelect: onSelect, onOpenTransaction: onOpenTransaction, onOpenIncome: onOpenIncome
+                                    )
+                                    .padding(.bottom, Theme.Space.xl)
+                                }
                             }
                             // A day that fits has nothing to scroll: without the bounce the vertical scroll cannot grab a sideways drag.
                             .scrollBounceBehavior(.basedOnSize, axes: .vertical)
                             .contentMargins(.top, topInset, for: .scrollContent)
+                            // The selection bar rises over the bottom: the day keeps room to scroll past it.
+                            .contentMargins(.bottom, model.selection.isActive ? 96 : 0, for: .scrollContent)
                             .contentMargins(.top, topInset, for: .scrollIndicators)
                             .ignoresSafeArea(edges: .top)
                             // Today opens with the now line at 40% of the screen's height.
@@ -74,6 +88,10 @@ struct DayPagerView: View {
             .scrollIndicators(.hidden)
         }
         .onChange(of: position) { old, new in
+            if let target = turningTo {
+                if new == target { turningTo = nil }
+                return
+            }
             guard let new, new != model.selectedDay.daysSinceUnixEpoch else { return }
             if old != nil { Haptics.snap() }
             onScrollToDay(LocalDate(daysSinceUnixEpoch: new))
@@ -81,10 +99,15 @@ struct DayPagerView: View {
         .onChange(of: model.selectedDay) { _, day in
             let epoch = day.daysSinceUnixEpoch
             guard epoch != position, abs(epoch - center) <= Self.reach else { return }
+            turningTo = epoch
             withAnimation(abs(epoch - (position ?? epoch)) <= 1 ? .easeOut(duration: 0.25) : nil) { position = epoch }
         }
         .task(id: position) { await readAround(position) }
         .onChange(of: model.dataGeneration) { _, _ in Task { await refreshAll() } }
+        // The reload put what it read in the cache: read the pages from it now (an unlink or link shows behind the open sheet, not after it closes).
+        .onChange(of: model.reloadsFinished) { _, _ in Task { await refreshAll() } }
+        // A transaction renamed or re-filed shows at once (the edit changes how the days are drawn, not what the calendar holds).
+        .onChange(of: model.overrideRevision) { _, _ in Task { await refreshAll() } }
     }
 
     private func readAround(_ top: Int?) async {

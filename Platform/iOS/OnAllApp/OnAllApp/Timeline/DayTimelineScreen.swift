@@ -22,8 +22,6 @@ struct DayTimelineScreen: View {
     /// What others still owe the user, in KRW; the 정산 chip under the month in the list.
     @State private var receivable: Int64 = 0
     @State private var showsSettlement = false
-    @State private var openTransaction: TransactionRef?
-    @State private var addingTransaction = false
     /// Reads what the week strip and the grid need once the list's scrolling comes to rest.
     @State private var listSettle: Task<Void, Never>?
     /// Where the top chrome (month, week strip) is on screen. The grid and the list run under it, so what scrolled up shows through it.
@@ -33,6 +31,23 @@ struct DayTimelineScreen: View {
 
     private var style: Binding<CalendarStyle> {
         Binding(get: { CalendarStyle(rawValue: styleRaw) ?? .pager }, set: { styleRaw = $0.rawValue })
+    }
+
+    /// An event opens the small sheet over the whole screen; the other selections open the details sheet.
+    private func present(_ item: TimelineSelection) {
+        guard case let .event(block) = item else { selection = item; return }
+        // The sheet closes itself first (it slides down); the next one opens when it is gone.
+        model.quickSheet = .event(block, onEditInfo: { block in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                infoEvent = block.eventKey
+            }
+        }, onSettle: { block in
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(400))
+                settleEvent = block.eventKey
+            }
+        })
     }
 
     var body: some View {
@@ -159,70 +174,62 @@ struct DayTimelineScreen: View {
         let zoneIdentifier = model.dayZone.identifier
         let chromeHeight = chromeFrame.height
         let isList = true
-        return ZStack(alignment: .top) {
-          Theme.background.ignoresSafeArea()
-          // The design's one white card under the week strip: the day's title and timeline sit on it.
-          RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface)
-              .padding(.horizontal, Theme.cardMargin).padding(.top, headerBottom + Theme.Space.m)
-          VStack(spacing: 0) {
-            if isList {
-                let onScrollToDay: (LocalDate) -> Void = { day in
-                    // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
-                    guard model.moveTo(day) else { return }
-                    listSettle?.cancel()
-                    listSettle = Task { @MainActor in
-                        try? await Task.sleep(for: .milliseconds(250))
-                        guard !Task.isCancelled else { return }
-                        await model.loadMissing()
-                    }
-                }
-                if showsList {
-                    DayListView(model: model, topInset: chromeFrame.maxY, onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) })
-                        .padding(.horizontal, Theme.cardMargin)
-                } else {
-                    DayPagerView(
-                        model: model, topInset: chromeFrame.maxY,
-                        onSelect: { selection = $0 }, onOpenTransaction: { openTransaction = TransactionRef(id: $0) }, onScrollToDay: onScrollToDay
-                    )
-                    .padding(.horizontal, Theme.cardMargin)
-                }
-            }
-          }
-          MonthScrim(state: unfold).zIndex(0.5)
+        return VStack(spacing: 0) {
+          // The calendar is one grid that grows from the week to the month (`UnifiedCalendar.swift`); the day sits under it and is pushed down as it grows.
           MonthUnfoldHeader(
             state: unfold, today: model.today,
-            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) }, showsRule: isList,
+            cells: { model.weekCells[$0] ?? model.monthCells[$0] }, color: { model.calendarColor($0) },
             onSelect: { day in
                 unfold.close()
                 Task { await goTo(day) }
             },
+            onPage: { day in
+                // A swipe settled on another week or month: the day moves with the days already read; what is missing is read once it rests.
+                Haptics.snap()
+                _ = model.moveTo(day)
+                Task { await model.loadMissing() }
+            },
+            onCreate: { day in
+                // A hold let go on a day of the month: that day is picked and the new event sheet opens for it.
+                _ = model.moveTo(day)
+                Task { await model.loadMissing() }
+                model.newEventSeed = (day, nil)
+                model.creatingEvent = true
+            },
             loadMonth: { await model.loadMonth(startingAt: $0) },
-            selected: model.selectedDay
+            selected: model.selectedDay,
+            income: { model.income(on: $0) },
+            dataVersion: model.dataGeneration &* 31 &+ model.weekCells.count &* 7 &+ model.monthCells.count &* 3 &+ model.incomeByDay.count &+ model.overrideRevision
           ) {
-            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { addingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle(selected: model.selectedDay) })
-                .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).maxY } action: { if !unfold.isOpen { headerBottom = $0 } }
-          } strip: { opened in
-            WeekStripView(
-                cells: model.weekCells, selected: model.selectedDay, today: model.today, showsNextDay: !isList, pendingShift: pendingDays,
-                onSelect: { day in
-                    guard unfold.allowsTap else { return }
-                    unfold.close()
-                    Task { await goTo(day) }
-                },
-                onPage: { weeks in Task { await goTo(model.selectedDay.adding(days: 7 * weeks)) } },
-                unfold: opened, color: { model.calendarColor($0) }
-            )
+            DayHeader(model: model, unfold: unfold, menu: CalendarMenu(showsList: $showsList, onAdd: { model.creatingTransaction = true }, onAddEvent: { model.creatingEvent = true }), receivable: showsList ? receivable : 0, onSettlement: { showsSettlement = true }, onTitle: { unfold.toggle() }, onToday: { unfold.close(); Task { await goTo(model.today) } })
           }
-          // While the month is open the header is taller than the chrome the screen runs under: the screen keeps the inset it had.
-          .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { if !unfold.isOpen { chromeFrame = $0 } }
-          .zIndex(1)
+          let onScrollToDay: (LocalDate) -> Void = { day in
+              // Scrolling moves the selected day with the days already read; what the new window is missing is read once it rests.
+              guard model.moveTo(day) else { return }
+              listSettle?.cancel()
+              listSettle = Task { @MainActor in
+                  try? await Task.sleep(for: .milliseconds(250))
+                  guard !Task.isCancelled else { return }
+                  await model.loadMissing()
+              }
+          }
+          DayPagerView(
+              model: model, topInset: 0, showsList: showsList,
+              onSelect: present, onOpenTransaction: { model.quickSheet = .transaction($0) }, onOpenIncome: { id in if let item = model.incomeByDay.values.flatMap({ $0 }).first(where: { $0.id == id }) { model.quickSheet = .income(item) } }, onScrollToDay: onScrollToDay
+          )
+          .id(showsList)
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
+          .background(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous).fill(Theme.surface))
+          .clipShape(UnevenRoundedRectangle(bottomLeadingRadius: Theme.Radius.card, bottomTrailingRadius: Theme.Radius.card, style: .continuous))
+          .padding(.horizontal, Theme.cardMargin)
         }
+        .background(Theme.background.ignoresSafeArea())
         .background {
             GeometryReader { proxy in
                 Color.clear.onAppear { screenWidth = proxy.size.width }.onChange(of: proxy.size.width) { _, width in screenWidth = width }
             }
         }
-        .sheet(item: $selection) { item in
+        .sheet(item: Binding(get: { if case .event = selection { nil } else { selection } }, set: { selection = $0 })) { item in
             EventDetailView(selection: item, zoneIdentifier: zoneIdentifier, onEditInfo: { block in
                 // One sheet at a time: the details close, then the Activity sheet opens.
                 selection = nil
@@ -238,8 +245,8 @@ struct DayTimelineScreen: View {
                 }
             })
         }
-        .sheet(item: $openTransaction) { ref in LedgerEntryLoader(id: ref.id, model: model) }
-        .sheet(isPresented: $addingTransaction) { ManualTransactionSheet(model: model) }
+        .modifier(CalendarSelectionLayer(model: model))
+        .sheet(isPresented: Binding(get: { model.creatingTransaction }, set: { model.creatingTransaction = $0 })) { ManualTransactionSheet(model: model) }
         .sheet(isPresented: $showsSettlement) { NavigationStack { SettlementHubView(model: model) } }
         .task(id: model.dataGeneration) {
             if let life = await model.lifeState() {
@@ -286,16 +293,34 @@ private struct DayHeader: View {
     var receivable: Int64 = 0
     var onSettlement: () -> Void = {}
     var onTitle: () -> Void = {}
+    var onToday: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 0) {
+            if model.selection.isActive {
+                // Selection mode: how many are picked and what they come to, and 취소.
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("\(model.selection.ids.count)건 선택").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                }
+                Spacer()
+                Button("취소") { withAnimation(Theme.Motion.selectSlide) { model.selection.end() } }
+                    .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                    .frame(minHeight: Theme.hitTarget).contentShape(Rectangle())
+            } else {
             // Only the month: the days themselves are named once, over their columns.
-            Text("\((unfold.isOpen ? unfold.month : model.selectedDay).month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            Text("\(model.selectedDay.month)월").font(Theme.Typo.h1).tracking(-0.5).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 .contentTransition(.numericText()).animation(.easeOut(duration: 0.15), value: model.selectedDay.month)
                 .onTapGesture(perform: onTitle)
             Spacer()
+            // The design's "오늘": there while another day than today is selected, gone (faded) on today.
+            Button("오늘", action: onToday)
+                .font(.onAll(size: 15, weight: .semibold)).foregroundStyle(Theme.accentStrong)
+                .padding(.horizontal, 10).frame(height: Theme.hitTarget)
+                .opacity(model.selectedDay == model.today ? 0 : 1).allowsHitTesting(model.selectedDay != model.today)
+                .animation(.easeOut(duration: 0.2), value: model.selectedDay == model.today)
             menu
+            }
         }
         .padding(.leading, 24).padding(.trailing, 14)
         .padding(.top, 16)

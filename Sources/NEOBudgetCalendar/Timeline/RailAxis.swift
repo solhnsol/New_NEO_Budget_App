@@ -20,6 +20,10 @@ public struct RailAxis: Equatable, Sendable {
         public var other = 14.0
         /// Row pitch for transactions sharing one minute: that minute is stretched on the axis so each gets its own place inside it.
         public var sameMinutePitch = 28.0
+        /// Room under a past event's start for its name (it stands beside the rail there, 22 high) plus half a row, since the next row is centred on its key.
+        public var nameRoom = 40.0
+        /// A past event's name is this high; a row at the very minute the event began is drawn under it (`nameHeight` below its start).
+        public var nameHeight = 22.0
         /// Points per minute where nothing needs more room.
         public var emptyPointsPerMinute = 0.35
         public init() {}
@@ -44,19 +48,53 @@ public struct RailAxis: Equatable, Sendable {
         for event in events {
             add(event.start, event.isCard ? needs.other : needs.pastEventStart)
             add(event.end, event.isCard ? needs.cardEnd : needs.other)
+            // The name of an event that has begun sits under its start: nothing else may be drawn in that room. (The event that is going on now
+            // keeps its true proportion instead, below: its name has the room the rest of its stretch has.)
+            if !event.isCard, !(now.map { event.start <= $0 && $0 < event.end } ?? false) { add(event.start + 1, needs.nameRoom) }
         }
         for minute in transactions { add(minute, needs.transaction) }
+        // Rows at the very minute a past event began stand under its name: the minute that follows is that far away.
+        for event in events where !event.isCard {
+            let count = transactions.filter { $0 == event.start }.count
+            if count > 0 { add(event.start + 1, needs.nameHeight + Double(count - 1) * needs.sameMinutePitch + needs.transaction) }
+        }
         // k transactions in one minute stretch that minute (not the dots): the next key sits (k-1) pitches further on.
         for (minute, count) in Dictionary(transactions.map { ($0, 1) }, uniquingKeysWith: +) where count > 1 {
             add(minute + 1, Double(count - 1) * needs.sameMinutePitch + needs.transaction)
         }
         if let now { add(now, needs.other) }
-        let sorted = need.keys.sorted()
-        var ys = [0.0]
-        for index in sorted.indices.dropFirst() {
-            let gap = Double(sorted[index] - sorted[index - 1])
-            ys.append(ys[index - 1] + max(need[sorted[index]] ?? 0, gap * needs.emptyPointsPerMinute))
+        func layout() -> (keys: [Int], ys: [Double]) {
+            let sorted = need.keys.sorted()
+            var ys = [0.0]
+            for index in sorted.indices.dropFirst() {
+                let gap = Double(sorted[index] - sorted[index - 1])
+                ys.append(ys[index - 1] + max(need[sorted[index]] ?? 0, gap * needs.emptyPointsPerMinute))
+            }
+            return (sorted, ys)
         }
+        // The event that is going on now keeps its true proportion: the time since it began and the time left are drawn at the same points per
+        // minute (the longer-stretched side sets it), so the now-line reads how far along the event is.
+        if let now, let running = events.first(where: { !$0.isCard && $0.start <= now && now < $0.end }),
+           running.start >= firstMinute, running.end <= lastMinute {
+            add(running.start, 0); add(running.end, 0)
+            let natural = layout()
+            func at(_ minute: Int) -> Double {
+                let upper = natural.keys.firstIndex { $0 >= minute } ?? natural.keys.count - 1
+                return natural.ys[upper]
+            }
+            let (done, left) = (at(now) - at(running.start), at(running.end) - at(now))
+            // The name's room is added to the whole stretch, evenly, so the proportion stays true and the name still has its room.
+            let duration = Double(max(1, running.end - running.start))
+            let scale = max(needs.emptyPointsPerMinute, done / Double(max(1, now - running.start)), left / Double(max(1, running.end - now))) + needs.nameHeight / duration
+            // The last gap of each side is the one that grows, from what it measured in the first pass.
+            func lastGap(_ key: Int) -> Double {
+                guard let index = natural.keys.firstIndex(of: key), index > 0 else { return 0 }
+                return natural.ys[index] - natural.ys[index - 1]
+            }
+            if done < scale * Double(now - running.start) { need[now] = lastGap(now) + scale * Double(now - running.start) - done }
+            if left < scale * Double(running.end - now) { need[running.end] = lastGap(running.end) + scale * Double(running.end - now) - left }
+        }
+        let (sorted, ys) = layout()
         (self.firstMinute, self.lastMinute, keys, self.ys) = (firstMinute, lastMinute, sorted, ys)
     }
 
@@ -68,6 +106,17 @@ public struct RailAxis: Equatable, Sendable {
         while keys[upper] < minute { upper += 1 }
         let (k0, k1) = (keys[upper - 1], keys[upper])
         return ys[upper - 1] + (ys[upper] - ys[upper - 1]) * Double(minute - k0) / Double(k1 - k0)
+    }
+
+    /// The minute at a height (the inverse of `y`): what a finger held at that point on the rail means. Held at the ends of the range.
+    public func minute(atY y: Double) -> Int {
+        if y <= 0 { return keys[0] }
+        if y >= ys[ys.count - 1] { return keys[keys.count - 1] }
+        var upper = 1
+        while ys[upper] < y { upper += 1 }
+        let span = ys[upper] - ys[upper - 1]
+        guard span > 0 else { return keys[upper - 1] }
+        return keys[upper - 1] + Int(((y - ys[upper - 1]) / span * Double(keys[upper] - keys[upper - 1])).rounded())
     }
 
     /// The whole hours to label: one per hour in range, dropping a label closer than `minimumGap` to the one before it, or to `avoiding`
