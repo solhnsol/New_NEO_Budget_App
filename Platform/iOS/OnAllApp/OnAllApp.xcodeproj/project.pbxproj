@@ -271,6 +271,7 @@
 				DEVELOPMENT_TEAM = 2BGP32NAC9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ProMotion.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OnAll;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "일정을 타임라인에 보여 주고 일정과 지출을 연결하려면 캘린더 전체 접근이 필요해요.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -297,6 +298,7 @@
 				DEVELOPMENT_TEAM = 2BGP32NAC9;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ProMotion.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = OnAll;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "일정을 타임라인에 보여 주고 일정과 지출을 연결하려면 캘린더 전체 접근이 필요해요.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -321,6 +323,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ProMotion.plist;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -336,6 +339,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = ProMotion.plist;
 				MARKETING_VERSION = 0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = dev.onall.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
