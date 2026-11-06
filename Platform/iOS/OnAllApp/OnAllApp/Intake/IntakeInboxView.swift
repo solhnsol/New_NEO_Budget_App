@@ -142,7 +142,8 @@ struct InboxDetailScreen: View {
     let model: AppModel
     let item: InboxItem
     @State private var choosingAccount: RuleQuestion?
-    @State private var makingRule = false
+    @State private var teaching = false
+    @State private var ignoring = false
 
     var body: some View {
         let notification = item.notification
@@ -163,10 +164,12 @@ struct InboxDetailScreen: View {
             if IntakeText.asksForAccount(item.status) {
                 SButton(title: "계좌 정하기", light: true) { Task { choosingAccount = await model.ruleQuestion(for: item.id) } }
             }
-            SButton(title: "이 알림으로 새 규칙 만들기", top: 10) { makingRule = true }
+            SButton(title: "이 알림 읽는 법 알려주기", top: 10) { teaching = true }
+            SButton(title: "이 알림 무시하기", light: true, top: 10) { ignoring = true }
         }
         .sheet(item: $choosingAccount) { question in RuleAnswerSheet(model: model, question: question) }
-        .navigationDestination(isPresented: $makingRule) { RuleEditScreen(rule: nil, sample: IntakeText.preview(notification)) }
+        .navigationDestination(isPresented: $teaching) { TeachReadingScreen(model: model, notification: notification) }
+        .navigationDestination(isPresented: $ignoring) { TeachIgnoreScreen(model: model, notification: notification) }
     }
 }
 
