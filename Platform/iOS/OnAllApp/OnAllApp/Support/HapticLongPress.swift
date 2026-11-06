@@ -133,23 +133,25 @@ extension View {
 
     /// A row (or any view) that answers a Haptic Touch: it dips a little while it is held, ticks when the hold is recognised, then calls `perform`.
     /// `enabled` false drops the hold altogether (selection mode: the row only takes taps).
-    func hapticLongPress(id: String, enabled: Bool = true, perform: @escaping () -> Void) -> some View {
-        modifier(HapticLongPressRow(id: id, enabled: enabled, perform: perform))
+    /// With `pressing` given the view does not dip itself: the caller dips what should (a row's content, not the dot it keeps on the rail).
+    func hapticLongPress(id: String, enabled: Bool = true, pressing: Binding<Bool>? = nil, perform: @escaping () -> Void) -> some View {
+        modifier(HapticLongPressRow(id: id, enabled: enabled, outerPressing: pressing, perform: perform))
     }
 }
 
 private struct HapticLongPressRow: ViewModifier {
     let id: String
     let enabled: Bool
+    var outerPressing: Binding<Bool>?
     let perform: () -> Void
     @State private var pressing = false
 
     func body(content: Content) -> some View {
         if #available(iOS 18.0, *) {
             content
-                .scaleEffect(pressing ? 0.97 : 1)
+                .scaleEffect(outerPressing == nil && pressing ? 0.97 : 1)
                 .animation(.easeOut(duration: 0.18), value: pressing)
-                .gesture(HapticLongPress(isEnabled: enabled, isPressing: { pressing = $0 }, perform: { _ in HapticHold.heldID = id; perform() }))
+                .gesture(HapticLongPress(isEnabled: enabled, isPressing: { pressing = $0; outerPressing?.wrappedValue = $0 }, perform: { _ in HapticHold.heldID = id; perform() }))
         } else {
             content.onLongPressGesture(minimumDuration: Theme.Motion.longPressSeconds, maximumDistance: 8) { if enabled { HapticHold.heldID = id; perform() } }
         }

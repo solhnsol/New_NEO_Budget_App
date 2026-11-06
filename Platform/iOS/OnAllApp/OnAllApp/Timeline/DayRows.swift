@@ -553,6 +553,7 @@ private struct TransactionRailRow: View {
     /// The chevron on the first leg of an opened bundle.
     var onCollapse: () -> Void = {}
     var onLongPress: () -> Void = {}
+    @State private var pressing = false
 
     var body: some View {
         let dot = Color(hex: row.colorHex) ?? Theme.textPrimary
@@ -567,6 +568,9 @@ private struct TransactionRailRow: View {
                     .foregroundStyle(Theme.amountColor(isIncoming: row.isIncoming)).lineLimit(1).fixedSize()
             }
             .padding(.leading, leading).frame(height: RailMetrics.rowHeight)
+            // The row dips while it is held; the dot stays where it is on the rail.
+            .scaleEffect(pressing ? 0.97 : 1, anchor: .center)
+            .animation(.easeOut(duration: 0.18), value: pressing)
             .animation(Theme.Motion.selectSlide, value: selecting)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -578,7 +582,7 @@ private struct TransactionRailRow: View {
         }
         .contentShape(Rectangle())
         .onTapGesture(perform: onTap)
-        .hapticLongPress(id: row.id, enabled: !selecting && !row.isIncome, perform: onLongPress)
+        .hapticLongPress(id: row.id, enabled: !selecting && !row.isIncome, pressing: $pressing, perform: onLongPress)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(row.title), \(row.amountText), \(clockText(row.minute))")
         .accessibilityAddTraits(.isButton)
@@ -690,9 +694,15 @@ struct LedgerEntryLoader: View {
     var body: some View {
         Group {
             if let entry {
-                TransactionQuickSheet(entry: entry, model: model, close: close)
-            } else if missing {
-                Color.clear.onAppear { close() }
+                TransactionQuickSheet(entry: entry, model: model, close: close, appearsShown: true)
+            } else {
+                // The panel is up at once while the entry is read (the whole ledger list is built for it), as the design's is.
+                PanelSheet(isOpen: .constant(false), canOpen: false, close: close) {
+                    Group {
+                        if missing { Text("이 거래를 찾지 못했어요").foregroundStyle(Theme.textTertiary) } else { ProgressView() }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 120)
+                }
             }
         }
         .task(id: model.overrideRevision) {

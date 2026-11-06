@@ -8,6 +8,7 @@ struct TransactionQuickSheet: View {
     let entry: LedgerListEntry
     let model: AppModel
     let close: () -> Void
+    var appearsShown = false
     @Environment(\.panelDismiss) private var panel
     @State private var isOpen = false
     @State private var fresh: LedgerListEntry?
@@ -30,7 +31,7 @@ struct TransactionQuickSheet: View {
         let incoming = transaction.flow == .refund
         let linkedIDs = Set(entry.portions.compactMap(\.activityID))
         let linked = nearby.first { $0.activityID.map(linkedIDs.contains) ?? false }
-        PanelSheet(isOpen: $isOpen, close: close, content: {
+        PanelSheet(isOpen: $isOpen, close: close, appearsShown: appearsShown, content: {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: Theme.Space.s) {
                     Text(transaction.title ?? "거래").font(Theme.Typo.sheetTitle).foregroundStyle(Theme.textPrimary).lineLimit(1)

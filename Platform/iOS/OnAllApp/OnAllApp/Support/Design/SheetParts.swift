@@ -412,6 +412,8 @@ struct PanelSheet<Small: View, More: View>: View {
     let close: () -> Void
     /// Asked when the user closes it (a tap outside, pulled down); `false` keeps it open (the caller asks what to do about unsaved changes).
     var shouldClose: () -> Bool = { true }
+    /// Already up when it appears (it takes the place of a panel that was showing the same thing while it loaded).
+    var appearsShown = false
     @ViewBuilder let small: () -> Small
     @ViewBuilder let more: () -> More
     @State private var shown = false
@@ -425,8 +427,10 @@ struct PanelSheet<Small: View, More: View>: View {
     @State private var moreHeight: CGFloat = 0
     private var spring: Animation { .spring(response: 0.38, dampingFraction: 0.86) }
 
-    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
+    init(isOpen: Binding<Bool>, canOpen: Bool = true, close: @escaping () -> Void, shouldClose: @escaping () -> Bool = { true }, appearsShown: Bool = false, @ViewBuilder content: @escaping () -> Small, @ViewBuilder more: @escaping () -> More) {
         _isOpen = isOpen
+        self.appearsShown = appearsShown
+        _shown = State(initialValue: appearsShown)
         self.canOpen = canOpen
         self.close = close
         self.shouldClose = shouldClose
@@ -462,7 +466,7 @@ struct PanelSheet<Small: View, More: View>: View {
                         .fill(Theme.surface).ignoresSafeArea(.all, edges: .bottom)
                 )
                 .contentShape(Rectangle())
-                .simultaneousGesture(
+                .highPriorityGesture(
                     DragGesture(minimumDistance: 10, coordinateSpace: .global)
                         .onChanged { drag in
                             let start = dragStart ?? progress
@@ -496,7 +500,7 @@ struct PanelSheet<Small: View, More: View>: View {
         .onPreferenceChange(PanelMoreHeightKey.self) { moreHeight = $0 }
         .tint(Theme.accent)
         .environment(\.panelDismiss, PanelDismiss(run: { dismiss() }))
-        .onAppear { withAnimation(spring) { shown = true } }
+        .onAppear { if !appearsShown { withAnimation(spring) { shown = true } } }
         .onChange(of: isOpen) { _, open in if (progress > 0.5) != open { withAnimation(spring) { progress = open ? 1 : 0 } } }
     }
 
