@@ -925,6 +925,18 @@ final class AppModel {
     /// Received notifications, newest first, with where each ended up. Empty in the demo.
     func inbox() async -> [InboxItem] { await ledger.inbox() }
 
+    func readingDictionary() async -> ReadingDictionary { await ledger.readingDictionary() }
+
+    func readingCounts() async -> [String: Int] { await ledger.readingCounts() }
+
+    /// 읽기 사전을 바꾸고 장부를 다시 읽는다. `false`면 적용하지 못한 것(데모이거나 장부가 아직 준비 안 됨).
+    @discardableResult
+    func setReadingDictionary(_ dictionary: ReadingDictionary) async -> Bool {
+        do { try await ledger.setReadingDictionary(dictionary) } catch { return false }
+        await ledgerDidChange()
+        return true
+    }
+
     func originalNotification(for entry: LedgerEntryID) async -> RawNotification? { await ledger.originalNotification(for: entry) }
 
     /// Accounts and cards the notifications mention that the user has not answered for yet.

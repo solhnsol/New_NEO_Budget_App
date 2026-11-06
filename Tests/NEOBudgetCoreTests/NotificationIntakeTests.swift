@@ -122,6 +122,77 @@ private let received: Int64 = 1_790_936_040_000
         }
     }
 
+    @Test func aBankWithdrawalNamedAfterARegisteredCardWithNoApprovalIsThatCardsBill() throws {
+        var setup = IntakeSetup()
+        let bill = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 출금 1,069,690원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received)[0]
+        _ = try replay([bill], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
+        _ = try setup.addAccount(displayName: "현대카드 MM", institution: nil, kind: .creditInstrument(currency: "KRW"), makeID: { "card-1" })
+        // The bank prints the card's name where a merchant would be.
+        let named = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 현대카드 1,069,690원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
+        let (snapshot, _) = try replay([named], setup: &setup)
+        #expect(snapshot.ledger.entries.map(\.kind) == [.cardPayment])
+        #expect(snapshot.ledger.accountBalances[AccountID(rawValue: "account-1")] == (try Money(minorUnits: 930_310, currency: "KRW")))
+    }
+
+    @Test func aBankWithdrawalNamedHealthIsTheInsurancePremiumAndSpending() throws {
+        var setup = IntakeSetup()
+        let first = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 출금 1,000원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received)[0]
+        _ = try replay([first], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
+        let premium = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 건강정한솔 22,800원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
+        // 건강보험료 이름은 코드가 아니라 사용자가 만든 읽기 항목이 붙인다.
+        let rule = ReadingEntry(
+            id: "user.health", name: "건강보험료", origin: .user,
+            conditions: [.frameContained(.all, "[출금]{re:\\s*}건강{re:[가-힣]{2,4}\\s+[0-9]}")],
+            action: .read(ReadingOutcome(ruleID: "user.health", kind: .purchase, direction: .outflow, fixedName: "건강보험료"))
+        )
+        let custom = NotificationIntake(timeZoneIdentifier: "Asia/Seoul", readingDictionary: ReadingDictionary(userEntries: [rule]))
+        var repository = try InMemoryCandidateProcessingRepository(configuration: setup.configuration)
+        _ = try custom.ingest(premium, setup: &setup, repository: &repository)
+        let snapshot = try repository.processingSnapshot()
+        #expect(snapshot.ledger.entries.map(\.kind) == [.expense])
+        let context = try NotificationParsingContext(timeZoneIdentifier: "Asia/Seoul", referenceTimeUnixMilliseconds: 0, parserID: "p", parserVersion: "1")
+        guard case let .candidate(draft) = try custom.parser.parse(premium, context: context) else { Issue.record("no draft"); return }
+        #expect(draft.counterparty.merchantRaw == "건강보험료")
+    }
+
+    @Test func aTossPersonWithdrawalWhoseNameEndsInAStrayParenthesisIsStillTheTossRule() {
+        let text = "우리WON뱅킹 입출금알림\n[출금] 토스 김석우（    30,000원 1002-967-767***계좌 잔액 1,710,796원"
+        let draft = try! TransactionCandidateDraft(
+            rawNotificationID: "n", parserID: "p", parserVersion: "1", ruleID: "withdrawal", kind: .withdrawal, direction: .outflow,
+            amount: Money(minorUnits: 30_000, currency: "KRW"), occurredAt: ObservedTimestamp(unixMilliseconds: 0, precision: .second, source: .notificationTime),
+            instrument: InstrumentHint(kind: .bankAccount), counterparty: DraftCounterparty(), evidence: [], issues: [], confidence: .high)
+        #expect(NotificationIntake.asTossPersonTransfer(draft, text: text)?.counterparty.payeeRaw == "김석우")
+    }
+
+    @Test func aWithdrawalNothingExplainsBecomesSpendingNamedAfterWhoGotIt() throws {
+        var setup = IntakeSetup()
+        let first = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 출금 1,000원 1002-123-456*** 잔액 930,310원 10/02 19:13:20"), receivedAtUnixMilliseconds: received)[0]
+        _ = try replay([first], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 2_000_000, currency: "KRW")), makeID: { "account-1" })
+        let alone = try decoder.decode(payload("우리WON뱅킹", body: "[Web발신]\n우리 [출금] 가게A 7,000원 1002-123-456*** 잔액 900,000원 10/02 19:13:20"), receivedAtUnixMilliseconds: received + 1)[0]
+        var ledger = try IntakeLedger(notifications: [alone], setup: setup, intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
+        // Nothing waits: the withdrawal is spending the moment it is received.
+        #expect(ledger.snapshot()?.entries.map(\.kind) == [.expense])
+    }
+
+    @Test func theNameOfASpendingIsTheMostSpecificAlertThatIsEvidenceOfIt() throws {
+        var setup = IntakeSetup()
+        _ = try replay([try bankWithdrawal, try cardApproval], setup: &setup)
+        let bank = try #require(setup.registry.openCandidates.first { $0.key.institution == .woori })
+        let card = try #require(setup.registry.openCandidates.first { $0.key.institution == .hyundaiCard })
+        let target = try setup.confirmAsNew(bank.id, displayName: "생활비", kind: .account(.bank, openingBalance: Money(minorUnits: 0, currency: "KRW")), makeID: { "account-1" })
+        try setup.link(card.id, to: target.binding)
+        // The bank's withdrawal comes first and is spending at once; the card's approval then names the shop.
+        let ledger = try IntakeLedger(notifications: [try bankWithdrawal, try cardApproval], setup: setup, intake: NotificationIntake(timeZoneIdentifier: "Asia/Seoul"))
+        let entry = try #require(ledger.snapshot()?.entries.first)
+        #expect(ledger.displayName(of: entry.id) == "가맹점A")
+    }
+
     @Test func aNotificationThatIsNotAPaymentChangesNothing() throws {
         var setup = IntakeSetup()
         let ad = try decoder.decode(payload("Toss", body: "이번 주 혜택을 확인해 보세요"), receivedAtUnixMilliseconds: received)[0]

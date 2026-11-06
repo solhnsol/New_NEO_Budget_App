@@ -94,9 +94,30 @@ public struct IntakeLedger {
 
     public var isComplete: Bool { deferredIDs.isEmpty }
 
+    /// The name to show for an entry: the most specific one among the alerts that are evidence of it. A shop named by a card
+    /// approval or a pay app beats the receiver a bank prints (`토스`, a person), which beats nothing. A default the user can
+    /// override (the rule system); nil when no alert names anyone.
+    public func displayName(of entryID: LedgerEntryID) -> String? {
+        guard let snapshot = try? repository.processingSnapshot() else { return nil }
+        guard let own = snapshot.candidates.values.first(where: { $0.promotedEntryID == entryID }) else { return nil }
+        let related = [own] + snapshot.candidates.values.filter { $0.corroborates?.candidateID == own.candidate.id }
+        func rank(_ draft: TransactionCandidateDraft) -> Int { draft.kind == .withdrawal || draft.kind == .transferOut ? 2 : 1 }
+        return related.compactMap(\.candidate.sourceDraft)
+            .compactMap { draft -> (Int, String)? in
+                guard let name = draft.counterparty.merchantRaw ?? draft.counterparty.payeeRaw, !name.isEmpty else { return nil }
+                return (rank(draft), name)
+            }
+            .min { $0.0 < $1.0 }?.1
+    }
+
+    /// Books the bank withdrawals nothing explained as spending once their wait is over (`now` in Unix milliseconds).
+    public mutating func settleWithdrawals(at now: Int64) throws {
+        try intake.settleStaleWithdrawals(at: now, repository: &repository)
+    }
+
     /// Bump when anything that decides what a notification becomes changes (the parser's reading, the assembler, the
     /// correlator, deduplication): a saved ledger made under another value is not used, and the ledger is replayed once.
-    public static let rulesRevision = 5
+    public static let rulesRevision = 12
 
     /// The ledger as it stands, to save and restore later (`init(restoring:...)`). Nil for a partial replay.
     public func snapshot() -> IntakeLedgerSnapshot? {
@@ -141,7 +162,7 @@ public struct IntakeLedger {
     }
 
     private static func rulesKey(_ intake: NotificationIntake) -> String {
-        [NotificationIntake.parserID, NotificationIntake.parserVersion, intake.policyVersion, intake.timeZoneIdentifier, String(rulesRevision)]
+        [NotificationIntake.parserID, NotificationIntake.parserVersion, intake.policyVersion, intake.timeZoneIdentifier, String(rulesRevision), intake.readingKey]
             .joined(separator: "/")
     }
 

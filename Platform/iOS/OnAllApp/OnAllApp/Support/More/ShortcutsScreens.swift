@@ -30,6 +30,7 @@ struct ShortcutsScreen: View {
             .padding(.horizontal, 16).padding(.top, 12)
             SCard {
                 SLink(row: SRow(icon: "list", tone: .orange, title: "받은 알림 내역", value: items.map { "\($0.count)건" }, chevron: true)) { IntakeInboxView(model: model) }
+                SLink(row: SRow(icon: "file", tone: .purple, title: "알림 읽기 사전", chevron: true)) { ReadingDictionaryScreen(model: model) }
                 SLink(row: SRow(icon: "file", tone: .purple, title: "알림 처리 규칙", value: "\(NotificationRule.samples.count)개", chevron: true)) { RulesScreen() }
             }
             .padding(.top, 12)

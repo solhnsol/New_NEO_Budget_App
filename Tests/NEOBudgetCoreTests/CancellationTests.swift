@@ -171,9 +171,13 @@ import NEOBudgetInMemoryStorage
         let setup = try registeredSetup([withdrawal])
         for order in [[withdrawal, cancellation], [cancellation, withdrawal]] {
             let result = try replay(order, setup: setup)
-            #expect(result.snapshot.ledger.entries.isEmpty)
+            // The withdrawal was spending the moment it arrived; its cancellation takes it back, whichever came first.
+            // Cancellation second: the booked spending is taken back (two entries, net zero). Cancellation first: it waited and the
+            // two close each other without an entry.
+            let kinds = result.snapshot.ledger.entries.map(\.kind).sorted { "\($0)" < "\($1)" }
+            #expect(kinds == [.adjustment, .expense] || kinds.isEmpty)
+            #expect(result.snapshot.ledger.accountBalances[account] == (won(0)))
             #expect(result.open.isEmpty)
-            #expect(result.snapshot.candidates.values.allSatisfy { $0.corroborates?.rule == .cancellationPair })
         }
     }
 
@@ -186,7 +190,7 @@ import NEOBudgetInMemoryStorage
         #expect(waiting.open.flatMap(\.candidate.issues) == [.missingOriginalEntry])
         // A cancellation for a different amount does not close it.
         let other = try bank("출금", "5,100", clock: "10:00:00", delivered: "10:00:01 AM")
-        #expect(try replay([cancellation, other], setup: setup).open.count == 2)
+        #expect(try replay([cancellation, other], setup: setup).open.count == 1)
     }
 
     @Test func aRepeatedNotificationChangesNothing() throws {
