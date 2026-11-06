@@ -169,7 +169,8 @@ struct EventQuickSheet: View {
                     Text(Formatting.grouped(total.knownMinorUnits) + "원").font(Theme.Typo.hero).foregroundStyle(Theme.accent).padding(.top, Theme.Space.s)
                 }
                 ForEach(block.allocations, id: \.allocationID) { item in
-                    HStack(spacing: Theme.Space.s) {
+                    HStack(spacing: Theme.Space.m) {
+                        CategoryTile(category: item.categoryID)
                         Text(item.title ?? "거래").font(.onAll(size: 16, weight: .medium)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         Text(Formatting.clock24(item.occurredAtUnixMilliseconds, zoneIdentifier: model.dayZone.identifier)).font(.onAll(size: 12).monospacedDigit()).foregroundStyle(Theme.textTertiary)
                         Spacer(minLength: 0)
@@ -177,17 +178,15 @@ struct EventQuickSheet: View {
                             .font(.onAll(size: 16, weight: item.flow == .refund ? .semibold : .medium).monospacedDigit())
                             .foregroundStyle(Theme.amountColor(isIncoming: item.flow == .refund))
                     }
-                    .frame(minHeight: Theme.rowHeight)
+                    .frame(minHeight: 64)
                 }
             }
-            Button { panel.run(); onEditInfo(block) } label: { actionLabel("지출 연결과 일정 정보", color: Theme.accentStrong, fill: Theme.accentSoft) }
-                .buttonStyle(.plain).padding(.top, Theme.Space.l)
             if block.activity != nil {
                 Button { panel.run(); onSettle(block) } label: { actionLabel("정산", color: Theme.accentStrong, fill: Theme.accentSoft) }
-                    .buttonStyle(.plain).padding(.top, Theme.Space.s)
+                    .buttonStyle(.plain).padding(.top, Theme.Space.l)
             }
             Button { confirmsDelete = true } label: { actionLabel("일정 삭제", color: Theme.dangerStrong, fill: Theme.dangerSoft) }
-                .buttonStyle(.plain).disabled(!editable).padding(.top, Theme.Space.s)
+                .buttonStyle(.plain).disabled(!editable).padding(.top, Theme.Space.l)
         }
     }
 
