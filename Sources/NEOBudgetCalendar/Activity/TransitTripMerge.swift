@@ -44,6 +44,8 @@ public enum TransitTripMerge {
                 guard isTransit(marker) else { close(); continue }
                 if let first = open.first, let last = open.last,
                    marker.amount.currency == first.amount.currency,
+                   // A subway-to-bus transfer is two trips: a subway group and a bus group.
+                   TransitMode.groupName(for: [first.title]) == TransitMode.groupName(for: [marker.title]),
                    marker.occurredAtUnixMilliseconds - latestActivity(after: last.occurredAtUnixMilliseconds, before: marker.occurredAtUnixMilliseconds, taps: noChargeTaps) <= gap,
                    marker.occurredAtUnixMilliseconds - first.occurredAtUnixMilliseconds <= span,
                    marker.amount.minorUnits < first.amount.minorUnits {
